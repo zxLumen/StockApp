@@ -5,6 +5,7 @@ import HomeView from './components/HomeView'
 import DetailView from './components/DetailView'
 import FundView from './components/FundView'
 import FundHome from './components/FundHome'
+import BoardView from './components/BoardView'
 import Sidebar from './components/Sidebar'
 import SettingsPanel from './components/SettingsPanel'
 import { addWatch, fetchStatus, fetchWatchlist, removeWatch, fetchQuotes } from './api'
@@ -86,7 +87,7 @@ export default function App() {
   )
 
   const toggleWatch = useCallback(async () => {
-    if (!selection) return
+    if (!selection || selection.kind === 'board') return
     const key = watchKey(selection)
     try {
       if (watched) {
@@ -118,6 +119,7 @@ export default function App() {
 
   const stockMarket = market === 'us' ? 'us' : 'cn'
   const showStockDetail = market !== 'fund' && selection?.kind === 'stock'
+  const showBoardDetail = market !== 'fund' && selection?.kind === 'board'
   const showFundDetail = market === 'fund' && selection?.kind === 'fund'
   const fundWatch = watchlist.filter((w) => w.kind === 'fund')
 
@@ -148,6 +150,8 @@ export default function App() {
               onToggleWatch={() => void toggleWatch()}
               onBack={() => setSelection(null)}
             />
+          ) : showBoardDetail && selection ? (
+            <BoardView selection={selection} onPick={pick} onBack={() => setSelection(null)} />
           ) : showFundDetail && selection ? (
             <FundView
               selection={selection}
@@ -174,6 +178,7 @@ export default function App() {
             watchlist={watchlist}
             quotes={quotes}
             onPick={pick}
+            onPickBoard={pick}
             onRemove={(w) => void removeFromWatch(w)}
           />
         )}

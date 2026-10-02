@@ -79,6 +79,14 @@ export interface Board {
   leaderPct: number | null
 }
 
+export interface BoardMember {
+  secid: string
+  code: string
+  name: string
+  price: number | null
+  changePct: number | null
+}
+
 export interface NewsItem {
   title: string
   url: string | null
@@ -135,7 +143,7 @@ export interface WatchItem {
 }
 
 export interface Selection {
-  kind: 'stock' | 'fund'
+  kind: 'stock' | 'fund' | 'board'
   secid: string
   code: string
   name: string

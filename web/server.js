@@ -7,14 +7,12 @@ import { fileURLToPath } from 'node:url'
 
 import {
   searchSuggest,
-  getBoards,
-  getBoardMembers,
   fundSuggest,
   fundQuotes,
   INDEX_GROUPS,
   marketOf,
 } from './lib/eastmoney.js'
-import { getKline, getQuotes, SOURCES, sourceLabel } from './lib/market.js'
+import { getBoards, getBoardMembers, getKline, getQuotes, SOURCES, sourceLabel } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews } from './lib/news.js'
 import { readJson, writeJson } from './lib/store.js'
@@ -160,13 +158,16 @@ route('GET', /^\/api\/market\/quote$/, async (ctx) => {
 route('GET', /^\/api\/market\/board$/, async (ctx) => {
   const kind = ctx.url.searchParams.get('kind') === 'concept' ? 'concept' : 'industry'
   const limit = Math.min(60, Number(ctx.url.searchParams.get('limit')) || 24)
-  return { kind, items: await getBoards(kind, { limit }) }
+  const { items, source } = await getBoards(kind, { limit })
+  return { kind, items, source, sourceLabel: sourceLabel(source) }
 })
 
 route('GET', /^\/api\/market\/board\/members$/, async (ctx) => {
   const name = ctx.url.searchParams.get('name') || ''
-  if (!name) throw new HttpError(400, '缺少 name')
-  return { name, items: await getBoardMembers(name, { limit: 12 }), degraded: true }
+  const code = ctx.url.searchParams.get('code') || ''
+  if (!name && !code) throw new HttpError(400, '缺少 name 或 code')
+  const { items, source } = await getBoardMembers({ code, name }, { limit: 12 })
+  return { name, items, source, sourceLabel: sourceLabel(source) }
 })
 
 route('GET', /^\/api\/fund\/suggest$/, async (ctx) => {

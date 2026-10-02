@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchBoards, fetchQuotes } from '../api'
 import { fmtNum, fmtSigned, trendClass } from '../format'
+import SourceBadge from './SourceBadge'
 import type { Board, BoardKind, Market, Quote, Selection, WatchItem } from '../types'
 
 interface Props {
@@ -8,13 +9,16 @@ interface Props {
   watchlist: WatchItem[]
   quotes: Record<string, Quote>
   onPick: (s: Selection) => void
+  onPickBoard: (s: Selection) => void
   onRemove: (item: WatchItem) => void
 }
 
 /** 侧栏：自选股（含实时行情）+ 行业/概念板块榜。 */
-export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }: Props) {
+export default function Sidebar({ market, watchlist, quotes, onPick, onPickBoard, onRemove }: Props) {
   const [kind, setKind] = useState<BoardKind>('industry')
   const [boards, setBoards] = useState<Board[]>([])
+  const [boardSource, setBoardSource] = useState<string>()
+  const [boardSourceLabel, setBoardSourceLabel] = useState<string>()
   const [err, setErr] = useState('')
 
   const list = watchlist.filter((w) => (market === 'us' ? w.market === 'us' : w.market !== 'us'))
@@ -23,7 +27,11 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }:
     const ac = new AbortController()
     setErr('')
     fetchBoards(kind, 16, ac.signal)
-      .then((r) => setBoards(r.items))
+      .then((r) => {
+        setBoards(r.items)
+        setBoardSource(r.source)
+        setBoardSourceLabel(r.sourceLabel)
+      })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return
         setErr(e instanceof Error ? e.message : '板块加载失败')
@@ -70,7 +78,10 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }:
 
       <section className="side-block">
         <div className="side-head">
-          <h3 className="side-title">板块</h3>
+          <h3 className="side-title">
+            板块
+            <SourceBadge source={boardSource} label={boardSourceLabel} />
+          </h3>
           <div className="mini-tabs">
             <button className={`chip${kind === 'industry' ? ' on' : ''}`} onClick={() => setKind('industry')}>
               行业
@@ -86,8 +97,8 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }:
             <li key={b.code}>
               <button
                 className="board-row"
-                title="按板块名检索相关个股"
-                onClick={() => onPick({ kind: 'stock', secid: b.secid, code: b.code, name: b.name, market })}
+                title="查看板块成分股"
+                onClick={() => onPickBoard({ kind: 'board', secid: b.secid, code: b.code, name: b.name, market })}
               >
                 <span className="board-rank">{i + 1}</span>
                 <span className="board-name">{b.name}</span>
@@ -99,7 +110,7 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }:
             </li>
           ))}
         </ul>
-        <div className="note small">板块成分股接口暂不可用，点击板块会按板块名检索相关个股。</div>
+        <div className="note small">点板块查看成分股；东财受限时自动改用新浪。</div>
       </section>
     </aside>
   )

@@ -4,6 +4,8 @@ import { normTxTime, parseTxBars, parseTxQuote, toTxCode } from '../lib/tencent.
 import { parseSinaLong, toSinaCode } from '../lib/sina.js'
 import { dedupeShares, parseFundNavMobile, parseFundNavSina, parseFundRank } from '../lib/fund.js'
 import { SOURCES, sourceLabel } from '../lib/market.js'
+import { parseEmNewsSearch, filterNewsByKeywords } from '../lib/news.js'
+import { parseSinaBoards, parseSinaBoardMembers, sinaSymbolToSecid } from '../lib/board-sina.js'
 
 test('toTxCode: 沪深 / 港股 / 指数 / 美股映射到腾讯代码', () => {
   assert.equal(toTxCode('1.600519'), 'sh600519')
@@ -267,4 +269,66 @@ test('normTxTime 三种写法都归一到东财格式', () => {
   assert.equal(normTxTime(''), '')
   assert.equal(normTxTime(null), '')
   assert.equal(normTxTime('乱码'), '')
+})
+
+test('parseEmNewsSearch: 去 <em> 高亮、解析时间与来源', () => {
+  const out = parseEmNewsSearch({
+    result: {
+      cmsArticleWebOld: [
+        {
+          date: '2026-09-28 15:13:39',
+          title: '段永平加仓<em>贵州茅台</em>',
+          content: '【大河财立方消息】 <b>正文</b>',
+          mediaName: '大河财立方',
+          url: 'http://finance.eastmoney.com/a/202609283885177261.html',
+        },
+        { date: '2026-09-28 14:45:06', title: '', content: '', mediaName: '', url: '' },
+      ],
+    },
+  })
+  assert.equal(out.length, 1, '空标题应被剔除')
+  assert.equal(out[0].title, '段永平加仓贵州茅台')
+  assert.equal(out[0].source, '大河财立方')
+  assert.equal(out[0].summary, '【大河财立方消息】 正文')
+  assert.ok(typeof out[0].time === 'number' && out[0].time > 0)
+  assert.deepEqual(parseEmNewsSearch(null), [])
+})
+
+test('parseSinaBoards: 拆 var 前缀、字段映射、涨跌家数留空', () => {
+  const text =
+    'var S_Finance_bankuai_sinaindustry = {"new_blhy":"new_blhy,玻璃行业,19,16.733157894737,0.0010526315789474,0.0062910886728949,410050588,9066360698,sz300395,2.395,94.920,2.220,菲利华"};'
+  const out = parseSinaBoards(text)
+  assert.equal(out.length, 1)
+  assert.equal(out[0].code, 'new_blhy')
+  assert.equal(out[0].name, '玻璃行业')
+  assert.equal(out[0].changePct, 0.0062910886728949)
+  assert.equal(out[0].leader, '菲利华')
+  assert.equal(out[0].leaderPct, 2.395)
+  assert.equal(out[0].up, null)
+  assert.equal(out[0].down, null)
+})
+
+test('sinaSymbolToSecid + parseSinaBoardMembers', () => {
+  assert.equal(sinaSymbolToSecid('sh600519'), '1.600519')
+  assert.equal(sinaSymbolToSecid('sz300395'), '0.300395')
+  assert.equal(sinaSymbolToSecid('usAAPL'), null)
+  const rows = parseSinaBoardMembers([
+    { symbol: 'sz300395', code: '300395', name: '菲利华', trade: '94.920', changepercent: 2.395 },
+    { symbol: '', code: '', name: '', trade: '1', changepercent: 0 },
+  ])
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].secid, '0.300395')
+  assert.equal(rows[0].code, '300395')
+  assert.equal(rows[0].price, 94.92)
+  assert.equal(rows[0].changePct, 2.395)
+  assert.deepEqual(parseSinaBoardMembers(null), [])
+})
+
+test('filterNewsByKeywords: 单字关键词忽略', () => {
+  const news = [
+    { title: '贵州茅台发布三季报', summary: '' },
+    { title: '比亚迪销量创新高', summary: '' },
+  ]
+  assert.equal(filterNewsByKeywords(news, ['茅台', '贵州茅台']).length, 1)
+  assert.equal(filterNewsByKeywords(news, ['茅']).length, 0, '单字太宽不放行')
 })

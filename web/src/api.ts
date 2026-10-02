@@ -2,6 +2,7 @@ import type {
   AiUsage,
   Bar,
   Board,
+  BoardMember,
   FundItem,
   FundNavPoint,
   FundPickGroup,
@@ -66,11 +67,14 @@ export const fetchQuotes = (secids: string[], signal?: AbortSignal) =>
   )
 
 export const fetchBoards = (kind: 'industry' | 'concept', limit = 20, signal?: AbortSignal) =>
-  get<{ kind: string; items: Board[] }>(`/api/market/board?kind=${kind}&limit=${limit}`, signal)
+  get<{ kind: string; items: Board[]; source?: string; sourceLabel?: string }>(
+    `/api/market/board?kind=${kind}&limit=${limit}`,
+    signal,
+  )
 
-export const fetchBoardMembers = (name: string, signal?: AbortSignal) =>
-  get<{ name: string; items: SearchItem[]; degraded: boolean }>(
-    `/api/market/board/members?name=${encodeURIComponent(name)}`,
+export const fetchBoardMembers = (code: string, name: string, signal?: AbortSignal) =>
+  get<{ name: string; items: BoardMember[]; source?: string; sourceLabel?: string }>(
+    `/api/market/board/members?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
     signal,
   )
 

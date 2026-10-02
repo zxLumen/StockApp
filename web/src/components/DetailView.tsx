@@ -132,7 +132,7 @@ export default function DetailView({
       <section>
         <h3 className="sec-title">相关热点</h3>
         {news.length === 0 ? (
-          <div className="note">暂无匹配的个股新闻（当前只提供全市场要闻的关键词匹配）。</div>
+          <div className="note">暂无相关新闻。</div>
         ) : (
           <ul className="news">
             {news.map((n, i) => (

@@ -922,3 +922,51 @@ button.rank-row:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ---------- 板块：成分股 ---------- */
+.members {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: 1fr 84px 84px 84px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--zx-border);
+  background: var(--zx-panel);
+  text-align: left;
+  font-size: 13px;
+  width: 100%;
+}
+
+.member-row:last-child {
+  border-bottom: none;
+}
+
+button.member-row:hover {
+  background: var(--zx-panel2);
+}
+
+.member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-code {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.member-price,
+.member-pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

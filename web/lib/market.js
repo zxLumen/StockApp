@@ -1,6 +1,12 @@
-import { getKline as emKline, getQuotes as emQuotes } from './eastmoney.js'
+import {
+  getKline as emKline,
+  getQuotes as emQuotes,
+  getBoards as emBoards,
+  getBoardMembers as emBoardMembers,
+} from './eastmoney.js'
 import { tencentKline, tencentQuotes } from './tencent.js'
 import { sinaKline, sinaQuotes, sinaUsKline } from './sina.js'
+import { sinaBoards, sinaBoardMembers } from './board-sina.js'
 
 // 东财 push2 / push2his 会按来源 IP 直接掐连接（本机、某些网络下整条线都没数据），
 // 所以行情按「东财 → 腾讯 → 新浪」逐级降级：谁先给出完整数据就用谁，
@@ -88,4 +94,33 @@ export async function getKline(secid, opts = {}) {
     }
   }
   throw new Error(`K 线暂不可用（${errors.filter((e) => !e.endsWith('无数据')).join('；') || '各源均无该周期数据'}）`)
+}
+
+/** 行业 / 概念板块榜：东财 → 新浪兜底。返回 `{ items, source }`。 */
+export async function getBoards(kind, { limit = 24 } = {}) {
+  const errors = []
+  try {
+    const items = await emBoards(kind, { limit })
+    if (items.length) return { items, source: 'eastmoney' }
+    errors.push('eastmoney：无数据')
+  } catch (err) {
+    errors.push(`eastmoney：${err instanceof Error ? err.message : String(err)}`)
+  }
+  const items = await sinaBoards(kind, { limit })
+  if (!items.length) throw new Error(`板块暂不可用（${errors.join('；')}）`)
+  return { items, source: 'sina' }
+}
+
+/** 板块成分股：新浪节点码可用时走新浪，否则退回按板块名搜索。返回 `{ items, source }`。 */
+export async function getBoardMembers({ code, name } = {}, { limit = 12 } = {}) {
+  if (code) {
+    try {
+      const items = await sinaBoardMembers(code, { limit })
+      if (items.length) return { items, source: 'sina' }
+    } catch {
+      /* 落到名称搜索 */
+    }
+  }
+  const items = await emBoardMembers(name, { limit })
+  return { items, source: 'eastmoney' }
 }
