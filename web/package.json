@@ -1,0 +1,31 @@
+{
+  "name": "stock-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --env-file-if-exists=.env --watch server.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "lightweight-charts": "^5.0.9",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
