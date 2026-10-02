@@ -4,6 +4,8 @@ import type {
   Board,
   FundItem,
   FundNavPoint,
+  FundPickGroup,
+  FundRankItem,
   Kline,
   Market,
   NewsItem,
@@ -41,10 +43,12 @@ export const fetchStatus = () =>
   }>('/api/status')
 
 export const fetchIndices = (scope: Exclude<Market, 'fund'>, signal?: AbortSignal) =>
-  get<{ scope: string; items: (Quote & { secid: string; name: string })[] }>(
-    `/api/market/indices?scope=${scope}`,
-    signal,
-  )
+  get<{
+    scope: string
+    source?: string
+    sourceLabel?: string
+    items: (Quote & { secid: string; name: string })[]
+  }>(`/api/market/indices?scope=${scope}`, signal)
 
 export const searchMarket = (q: string, scope?: Exclude<Market, 'fund'>, signal?: AbortSignal) =>
   get<{ items: SearchItem[] }>(
@@ -56,7 +60,10 @@ export const fetchKline = (secid: string, period: string, limit = 240, signal?: 
   get<Kline>(`/api/market/kline?secid=${encodeURIComponent(secid)}&period=${period}&limit=${limit}`, signal)
 
 export const fetchQuotes = (secids: string[], signal?: AbortSignal) =>
-  get<{ items: Quote[] }>(`/api/market/quote?secids=${encodeURIComponent(secids.join(','))}`, signal)
+  get<{ items: Quote[]; source?: string; sourceLabel?: string }>(
+    `/api/market/quote?secids=${encodeURIComponent(secids.join(','))}`,
+    signal,
+  )
 
 export const fetchBoards = (kind: 'industry' | 'concept', limit = 20, signal?: AbortSignal) =>
   get<{ kind: string; items: Board[] }>(`/api/market/board?kind=${kind}&limit=${limit}`, signal)
@@ -78,6 +85,19 @@ export const fetchFundNav = (code: string, signal?: AbortSignal) =>
     `/api/fund/nav?code=${code}&limit=240`,
     signal,
   )
+
+export const fetchFundQuotes = (codes: string[], signal?: AbortSignal) =>
+  get<{ items: FundItem[] }>(`/api/fund/quotes?codes=${encodeURIComponent(codes.join(','))}`, signal)
+
+export const fetchFundRank = (sort: string, limit = 20, signal?: AbortSignal) =>
+  get<{
+    sort: string
+    items: FundRankItem[]
+    sorts: { key: string; label: string }[]
+  }>(`/api/fund/rank?sort=${sort}&limit=${limit}`, signal)
+
+export const fetchFundHot = (signal?: AbortSignal) =>
+  get<{ groups: FundPickGroup[] }>('/api/fund/hot', signal)
 
 export const fetchMarketNews = (limit = 20, signal?: AbortSignal) =>
   get<{ items: NewsItem[] }>(`/api/news?kind=market&limit=${limit}`, signal)

@@ -3,6 +3,7 @@ import { fetchKline, fetchQuotes, fetchStockNews } from '../api'
 import { fmtAmount, fmtCap, fmtNum, fmtSigned, fmtTime, fmtVolume, trendClass } from '../format'
 import KLineChart from './KLineChart'
 import AiPanel from './AiPanel'
+import SourceBadge from './SourceBadge'
 import type { Bar, Kline, NewsItem, Quote, Selection } from '../types'
 
 const PERIODS = [
@@ -81,6 +82,7 @@ export default function DetailView({
         <div className="detail-id">
           <h2>{selection.name}</h2>
           <span className="dim">{selection.code}</span>
+          <SourceBadge source={kline?.source} label={kline?.sourceLabel} />
         </div>
         <div className={`detail-price ${cls}`}>
           <span className="px">{fmtNum(quote?.price ?? last?.close ?? null, 2)}</span>

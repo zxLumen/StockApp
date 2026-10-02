@@ -80,7 +80,7 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }:
             </button>
           </div>
         </div>
-        {err && <div className="note err small">{err}</div>}
+        {err && <div className="note err small">板块榜暂不可用：{err}</div>}
         <ul className="boards">
           {boards.map((b, i) => (
             <li key={b.code}>

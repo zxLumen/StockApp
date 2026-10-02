@@ -6,17 +6,16 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 import {
-  getKline,
-  getQuotes,
   searchSuggest,
   getBoards,
   getBoardMembers,
   fundSuggest,
-  fundNav,
   fundQuotes,
   INDEX_GROUPS,
   marketOf,
 } from './lib/eastmoney.js'
+import { getKline, getQuotes, SOURCES, sourceLabel } from './lib/market.js'
+import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews } from './lib/news.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
@@ -110,6 +109,7 @@ route('GET', /^\/api\/status$/, async (ctx) => {
     visitorAi: settings.visitorAi,
     ai: { enabled, hasKey: !!cfg.apiKey, model: cfg.model, provider: settings.provider },
     providers: PROVIDERS.map((p) => ({ id: p.id, label: p.label })),
+    sources: SOURCES,
     upstream: upstreamStatus(),
   }
 })
@@ -117,10 +117,12 @@ route('GET', /^\/api\/status$/, async (ctx) => {
 route('GET', /^\/api\/market\/indices$/, async (ctx) => {
   const scope = ctx.url.searchParams.get('scope') === 'us' ? 'us' : 'cn'
   const group = INDEX_GROUPS[scope] || INDEX_GROUPS.cn
-  const quotes = await getQuotes(group.map((i) => i.secid))
+  const { items: quotes, source } = await getQuotes(group.map((i) => i.secid))
   const byId = new Map(quotes.map((q) => [q.secid, q]))
   return {
     scope,
+    source,
+    sourceLabel: sourceLabel(source),
     items: group.map((i) => ({ ...i, ...(byId.get(i.secid) || {}) })),
   }
 })
@@ -140,7 +142,8 @@ route('GET', /^\/api\/market\/kline$/, async (ctx) => {
   if (!/^\d+\.[A-Za-z0-9._-]+$/.test(secid)) throw new HttpError(400, 'secid 不合法')
   const period = ctx.url.searchParams.get('period') || 'd'
   const limit = Number(ctx.url.searchParams.get('limit')) || 240
-  return getKline(secid, { period, limit })
+  const k = await getKline(secid, { period, limit })
+  return { ...k, sourceLabel: sourceLabel(k.source) }
 })
 
 route('GET', /^\/api\/market\/quote$/, async (ctx) => {
@@ -150,7 +153,8 @@ route('GET', /^\/api\/market\/quote$/, async (ctx) => {
     .map((s) => s.trim())
     .filter((s) => /^\d+\.[A-Za-z0-9._-]+$/.test(s))
     .slice(0, 60)
-  return { items: await getQuotes(secids) }
+  const { items, source } = await getQuotes(secids)
+  return { items, source, sourceLabel: sourceLabel(source) }
 })
 
 route('GET', /^\/api\/market\/board$/, async (ctx) => {
@@ -173,7 +177,7 @@ route('GET', /^\/api\/fund\/suggest$/, async (ctx) => {
 route('GET', /^\/api\/fund\/nav$/, async (ctx) => {
   const code = ctx.url.searchParams.get('code') || ''
   if (!/^\d{6}$/.test(code)) throw new HttpError(400, '基金代码不合法')
-  return fundNav(code, { limit: Number(ctx.url.searchParams.get('limit')) || 240 })
+  return fundNavSeries(code, { limit: Number(ctx.url.searchParams.get('limit')) || 240 })
 })
 
 route('GET', /^\/api\/fund\/quotes$/, async (ctx) => {
@@ -181,6 +185,15 @@ route('GET', /^\/api\/fund\/quotes$/, async (ctx) => {
   const codes = raw.split(',').map((s) => s.trim()).filter((s) => /^\d{6}$/.test(s)).slice(0, 30)
   return { items: await fundQuotes(codes) }
 })
+
+route('GET', /^\/api\/fund\/rank$/, async (ctx) => {
+  const sort = ctx.url.searchParams.get('sort') || 'd1'
+  const limit = Math.min(40, Number(ctx.url.searchParams.get('limit')) || 20)
+  if (!FUND_RANK_SORTS.some((s) => s.key === sort)) throw new HttpError(400, '不支持的排序')
+  return { ...(await fundRank({ sort, limit })), sorts: FUND_RANK_SORTS }
+})
+
+route('GET', /^\/api\/fund\/hot$/, async () => ({ groups: await fundHot() }))
 
 route('GET', /^\/api\/news$/, async (ctx) => {
   const kind = ctx.url.searchParams.get('kind') || 'market'

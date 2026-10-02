@@ -8,10 +8,11 @@ interface Props {
   selection: Selection
   watched: boolean
   onToggleWatch: () => void
+  onBack: () => void
 }
 
 /** 场外基金：净值曲线。东财只提供官方净值，没有盘中估算值。 */
-export default function FundView({ selection, watched, onToggleWatch }: Props) {
+export default function FundView({ selection, watched, onToggleWatch, onBack }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const [nav, setNav] = useState<{ nav: number | null; accNav: number | null; changePct: number | null }>({
@@ -62,6 +63,9 @@ export default function FundView({ selection, watched, onToggleWatch }: Props) {
   return (
     <div className="detail">
       <div className="detail-head">
+        <button className="link" onClick={onBack}>
+          ← 返回
+        </button>
         <div className="detail-id">
           <h2>{selection.name}</h2>
           <span className="dim">{selection.code}</span>

@@ -43,6 +43,17 @@ export interface Kline {
   market: string
   name: string | null
   bars: Bar[]
+  /** 实际生效的数据源；非东财说明当前是降级数据 */
+  source?: string
+  sourceLabel?: string
+}
+
+/** 行情降级链：东财 → 腾讯 → 新浪。 */
+export type SourceId = 'eastmoney' | 'tencent' | 'sina'
+
+export interface SourceBadge {
+  id: string
+  label: string
 }
 
 export interface SearchItem {
@@ -83,6 +94,27 @@ export interface FundItem {
   accNav: number | null
   changePct: number | null
   date: string | null
+}
+
+/** 场外基金区间涨幅榜的一行。 */
+export interface FundRankItem {
+  code: string
+  name: string
+  date: string | null
+  nav: number | null
+  accNav: number | null
+  d1: number | null
+  w1: number | null
+  m1: number | null
+  y1: number | null
+}
+
+/** 精选分类下的一只基金（复用 FundItem 的净值字段）。 */
+export interface FundPickGroup {
+  key: string
+  label: string
+  hint: string | null
+  funds: FundItem[]
 }
 
 export interface FundNavPoint {

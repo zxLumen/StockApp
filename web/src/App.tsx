@@ -4,6 +4,7 @@ import SearchBox from './components/SearchBox'
 import HomeView from './components/HomeView'
 import DetailView from './components/DetailView'
 import FundView from './components/FundView'
+import FundHome from './components/FundHome'
 import Sidebar from './components/Sidebar'
 import SettingsPanel from './components/SettingsPanel'
 import { addWatch, fetchStatus, fetchWatchlist, removeWatch, fetchQuotes } from './api'
@@ -152,42 +153,16 @@ export default function App() {
               selection={selection}
               watched={watched}
               onToggleWatch={() => void toggleWatch()}
+              onBack={() => setSelection(null)}
             />
           ) : market === 'fund' ? (
-            <div className="home">
-              <section>
-                <h2 className="sec-title">场外基金</h2>
-                <div className="note">
-                  在上方搜索基金名称或代码（如「沪深300」「000001」），即可查看净值曲线。
-                </div>
-                {fundWatch.length > 0 && (
-                  <ul className="watch wide">
-                    {fundWatch.map((w) => (
-                      <li key={w.secid}>
-                        <button
-                          className="watch-main"
-                          onClick={() =>
-                            pick({
-                              kind: 'fund',
-                              secid: w.code,
-                              code: w.code,
-                              name: w.name,
-                              market: 'fund',
-                            })
-                          }
-                        >
-                          <span className="watch-name">{w.name}</span>
-                          <span className="watch-code dim">{w.code}</span>
-                        </button>
-                        <button className="watch-del" title="移除" onClick={() => void removeFromWatch(w)}>
-                          ×
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            </div>
+            <FundHome
+              watchedFunds={fundWatch}
+              onPick={(code, name) =>
+                pick({ kind: 'fund', secid: code, code, name, market: 'fund' })
+              }
+              onRemove={(w) => void removeFromWatch(w)}
+            />
           ) : (
             <HomeView market={stockMarket} onPick={pick} />
           )}

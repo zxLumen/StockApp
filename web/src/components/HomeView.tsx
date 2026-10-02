@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchIndices, fetchMarketNews } from '../api'
 import MiniKline from './MiniKline'
+import SourceBadge from './SourceBadge'
 import { fmtSigned, fmtTime, trendClass } from '../format'
 import type { Market, NewsItem, Quote, Selection } from '../types'
 
@@ -21,6 +22,7 @@ export default function HomeView({ market, onPick }: Props) {
   const [indices, setIndices] = useState<Quote[]>([])
   const [news, setNews] = useState<NewsItem[]>([])
   const [idxErr, setIdxErr] = useState('')
+  const [src, setSrc] = useState<{ id?: string; label?: string }>({})
   const [newsErr, setNewsErr] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -31,7 +33,10 @@ export default function HomeView({ market, onPick }: Props) {
     setIdxErr('')
     setNewsErr('')
     const idxP = fetchIndices(market, ac.signal)
-      .then((r) => setIndices(r.items))
+      .then((r) => {
+        setIndices(r.items)
+        setSrc({ id: r.source, label: r.sourceLabel })
+      })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return
         setIdxErr(e instanceof Error ? e.message : '指数加载失败')
@@ -49,7 +54,10 @@ export default function HomeView({ market, onPick }: Props) {
   return (
     <div className="home">
       <section>
-        <h2 className="sec-title">{market === 'us' ? '美股三大指数' : '沪深港主要指数'}</h2>
+        <h2 className="sec-title">
+          {market === 'us' ? '美股三大指数' : '沪深港主要指数'}
+          <SourceBadge source={src.id} label={src.label} />
+        </h2>
         {idxErr && <div className="note err">指数暂不可用：{idxErr}</div>}
         <div className="idx-grid">
           {indices.map((it) => (

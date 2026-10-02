@@ -86,8 +86,8 @@ export function upstreamStatus() {
   }))
 }
 
-/** 带超时 + 重试的文本抓取；空 body 视为失败（上游限流时常见）。 */
-export async function fetchText(url, { headers = {}, timeout = 8000, retries = 1 } = {}) {
+/** 带超时 + 重试的原始字节抓取；空 body 视为失败（上游限流时常见）。 */
+export async function fetchBuffer(url, { headers = {}, timeout = 8000, retries = 1 } = {}) {
   let host = ''
   try {
     host = new URL(url).host
@@ -97,18 +97,18 @@ export async function fetchText(url, { headers = {}, timeout = 8000, retries = 1
   let lastErr
   for (let i = 0; i <= retries; i += 1) {
     try {
-      const text = await throttle(host, async () => {
+      const buf = await throttle(host, async () => {
         const res = await fetch(url, {
           headers: { 'User-Agent': UA, Accept: '*/*', ...headers },
           signal: AbortSignal.timeout(timeout),
           redirect: 'follow',
         })
         if (!res.ok) throw new HttpError(res.status)
-        return res.text()
+        return Buffer.from(await res.arrayBuffer())
       })
-      if (!text.trim()) throw new Error('上游返回空内容')
+      if (!buf.length || !buf.toString('latin1').trim()) throw new Error('上游返回空内容')
       recordSuccess(host)
-      return text
+      return buf
     } catch (err) {
       lastErr = err
       if (!String(err?.message || '').includes('熔断中')) recordFailure(host)
@@ -116,6 +116,15 @@ export async function fetchText(url, { headers = {}, timeout = 8000, retries = 1
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
+export async function fetchText(url, opts = {}) {
+  return (await fetchBuffer(url, opts)).toString('utf8')
+}
+
+/** 腾讯 / 新浪的行情接口返回 GBK，必须按字节解。 */
+export async function fetchGbk(url, opts = {}) {
+  return new TextDecoder('gbk').decode(await fetchBuffer(url, opts))
 }
 
 export async function fetchJson(url, opts = {}) {
