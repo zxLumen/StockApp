@@ -28,8 +28,10 @@ function hostPool(hosts) {
   let preferred = 0
   return async function withPool(pathAndQuery) {
     let lastErr
+    const tried = []
     for (let i = 0; i < 2; i += 1) {
       const idx = (preferred + i) % hosts.length
+      tried.push(hosts[idx])
       try {
         const out = await fetchJson(hosts[idx] + pathAndQuery)
         preferred = idx
@@ -38,7 +40,8 @@ function hostPool(hosts) {
         lastErr = err
       }
     }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+    // 上游会直接掐连接，前端的「重试」提示没有意义，统一成一句可读的话。
+    throw new Error(`行情上游暂不可用（已试 ${tried.map((h) => h.replace('https://', '')).join(' / ')}）`)
   }
 }
 
