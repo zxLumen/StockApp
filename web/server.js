@@ -14,7 +14,7 @@ import {
 } from './lib/eastmoney.js'
 import { getBoards, getBoardMembers, getKline, getQuotes, SOURCES, sourceLabel } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
-import { marketNews, stockNews } from './lib/news.js'
+import { marketNews, stockNews, newsScope } from './lib/news.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -198,13 +198,15 @@ route('GET', /^\/api\/fund\/hot$/, async () => ({ groups: await fundHot() }))
 
 route('GET', /^\/api\/news$/, async (ctx) => {
   const kind = ctx.url.searchParams.get('kind') || 'market'
+  // 美股页要美股自己的新闻，缺省仍是 A 股
+  const scope = newsScope(ctx.url.searchParams.get('scope'))
   if (kind === 'stock') {
     const name = ctx.url.searchParams.get('name') || ''
     const code = ctx.url.searchParams.get('code') || ''
-    const out = await stockNews([name, code].filter(Boolean), { limit: 8 })
-    return { kind, ...out }
+    const out = await stockNews([name, code].filter(Boolean), { limit: 8, scope })
+    return { kind, scope, ...out }
   }
-  return { kind, items: await marketNews({ limit: Number(ctx.url.searchParams.get('limit')) || 20 }) }
+  return { kind, scope, items: await marketNews({ limit: Number(ctx.url.searchParams.get('limit')) || 20, scope }) }
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))

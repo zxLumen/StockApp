@@ -64,11 +64,11 @@ export default function DetailView({
 
   useEffect(() => {
     const ac = new AbortController()
-    fetchStockNews(selection.name, selection.code, ac.signal)
+    fetchStockNews(selection.name, selection.code, ac.signal, selection.market === 'us' ? 'us' : 'cn')
       .then((r) => setNews(r.items))
       .catch(() => setNews([]))
     return () => ac.abort()
-  }, [selection.name, selection.code])
+  }, [selection.name, selection.code, selection.market])
 
   const cls = trendClass(quote?.changePct, selection.market)
   const last: Bar | undefined = kline?.bars[kline.bars.length - 1]

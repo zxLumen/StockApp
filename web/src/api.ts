@@ -103,12 +103,13 @@ export const fetchFundRank = (sort: string, limit = 20, signal?: AbortSignal) =>
 export const fetchFundHot = (signal?: AbortSignal) =>
   get<{ groups: FundPickGroup[] }>('/api/fund/hot', signal)
 
-export const fetchMarketNews = (limit = 20, signal?: AbortSignal) =>
-  get<{ items: NewsItem[] }>(`/api/news?kind=market&limit=${limit}`, signal)
+/** `scope` 决定取哪个市场的新闻：美股页必须是美股自己的，不能沿用沪深港。 */
+export const fetchMarketNews = (limit = 20, signal?: AbortSignal, scope: 'cn' | 'us' = 'cn') =>
+  get<{ items: NewsItem[] }>(`/api/news?kind=market&limit=${limit}&scope=${scope}`, signal)
 
-export const fetchStockNews = (name: string, code: string, signal?: AbortSignal) =>
+export const fetchStockNews = (name: string, code: string, signal?: AbortSignal, scope: 'cn' | 'us' = 'cn') =>
   get<{ items: NewsItem[]; degraded: boolean }>(
-    `/api/news?kind=stock&name=${encodeURIComponent(name)}&code=${encodeURIComponent(code)}`,
+    `/api/news?kind=stock&name=${encodeURIComponent(name)}&code=${encodeURIComponent(code)}&scope=${scope}`,
     signal,
   )
 

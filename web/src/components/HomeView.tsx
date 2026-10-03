@@ -27,6 +27,7 @@ export default function HomeView({ market, onPick }: Props) {
   const [loading, setLoading] = useState(true)
 
   // 行情和新闻来自不同上游，必须各自独立：一边挂了不能把另一边也拖没。
+  // 新闻要跟着 market 走 —— 美股页不能拿沪深港的新闻凑数。
   useEffect(() => {
     const ac = new AbortController()
     setLoading(true)
@@ -41,7 +42,7 @@ export default function HomeView({ market, onPick }: Props) {
         if (e instanceof Error && e.name === 'AbortError') return
         setIdxErr(e instanceof Error ? e.message : '指数加载失败')
       })
-    const newsP = fetchMarketNews(20, ac.signal)
+    const newsP = fetchMarketNews(20, ac.signal, market)
       .then((r) => setNews(r.items))
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return

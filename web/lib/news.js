@@ -1,6 +1,10 @@
 import { fetchJson, fetchJsonp, cached } from './http.js'
 
-const SINA_ROLL = 'https://feed.mix.sina.com.cn/api/roll/get'
+const SINA_ROLL_CN = 'https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686'
+// 美股 / 海外市场走 pageid=153 的「环球市场」频道，不是财经频道。
+// lid=2518 实测 20 条里 13 条与美股 / 美国直接相关（环球市场播报、证券时报网）；
+// 2516 同样可用但混了泛科技稿，2518 更干净。
+const SINA_ROLL_US = 'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2518'
 // 东财资讯搜索：与被封的 push2 不同主机，能按个股名 / 代码搜到真新闻。
 const EM_SEARCH = 'https://search-api-web.eastmoney.com/search/jsonp'
 
@@ -10,11 +14,18 @@ const clean = (s) =>
     .replace(/\s+/g, ' ')
     .trim()
 
+/** scope 归一：只有 'us' 算美股，其余一律 A 股（别让前端传什么就吃什么）。 */
+export const newsScope = (scope) => (String(scope) === 'us' ? 'us' : 'cn')
+
+/** 按市场挑滚动新闻源。美股页绝不能拿沪深港的新闻凑数。 */
+export const marketNewsUrl = (scope, num) =>
+  `${newsScope(scope) === 'us' ? SINA_ROLL_US : SINA_ROLL_CN}&num=${num}&page=1`
+
 /** 当日财经要闻（新浪滚动新闻，唯一稳定可用的免 key 源）。 */
-export async function marketNews({ limit = 20 } = {}) {
+export async function marketNews({ limit = 20, scope = 'cn' } = {}) {
+  const sc = newsScope(scope)
   const n = Math.min(40, Math.max(5, limit))
-  const url = `${SINA_ROLL}?pageid=155&lid=1686&num=${n}&page=1`
-  const json = await cached(`news:${n}`, 5 * 60_000, () => fetchJson(url))
+  const json = await cached(`news:${sc}:${n}`, 5 * 60_000, () => fetchJson(marketNewsUrl(sc, n)))
   const rows = Array.isArray(json?.result?.data) ? json.result.data : []
   return rows
     .map((r) => ({
@@ -88,7 +99,7 @@ export async function emStockNews(keyword, { limit = 8 } = {}) {
   return parseEmNewsSearch(json).slice(0, limit)
 }
 
-export async function stockNews(keywords, { limit = 8 } = {}) {
+export async function stockNews(keywords, { limit = 8, scope = 'cn' } = {}) {
   const list = (Array.isArray(keywords) ? keywords : [keywords]).map((s) => String(s || '').trim()).filter(Boolean)
   const errors = []
   for (const kw of list) {
@@ -99,7 +110,8 @@ export async function stockNews(keywords, { limit = 8 } = {}) {
       errors.push(err instanceof Error ? err.message : String(err))
     }
   }
-  const news = await marketNews({ limit: 40 })
+  // 兜底也要按市场取：美股个股搜不到时，不该拿沪深港新闻凑数
+  const news = await marketNews({ limit: 40, scope })
   return {
     items: filterNewsByKeywords(news, list, { limit }),
     degraded: true,
