@@ -58,7 +58,7 @@ printf 'SESSION_SECRET=<同一值>\nSTOCK_VISITOR_AI=1\n' > web/.env
 | 自选 | 服务端 JSON 持久化，按 scope（访客 cid / 站长 / MOCK 身份）隔离 |
 | 板块 | 行业 + 概念涨跌幅榜，点击进成分股列表（东财 → 新浪兜底） |
 | 新闻 | 全市场要闻；个股走东财搜索 API，搜不到才退回要闻关键词匹配 |
-| AI | 站长配置 provider / 模型 / Key，访客开关；SSE 流式解读。provider 分槽，各服务商的地址 / 模型 / Key 互不覆盖 |
+| AI | 站长配置 provider / 模型 / Key，访客开关；SSE 流式解读。provider 分槽，各服务商的地址 / 模型 / Key 互不覆盖。思考链模型自动 `reasoning_effort=none`，截断时给可操作报错而非空白 |
 
 默认落地页：**沪 / 深 / 港 三条日K + 沪深港主要指数快照 + 当日热点新闻**。
 
@@ -76,6 +76,22 @@ owner.token                 未配 SESSION_SECRET 时的站长兜底 token（060
 AI 配置是**分槽**的：每个服务商各自一套 `model` + `baseURL`，切 provider 只换「用哪个」，
 不动任何槽位内容（也就不会出现「换了服务商、地址还留着上一个的」配着新 Key 打旧地址 → 上游 401）。
 只有当前槽位会被拿去发请求；`publicSettings()` 也只回 Key 掩码，绝不回明文。
+
+### 思考链模型（deepseek-v4.x 等）会把 max_tokens 吃光
+
+这类模型把 reasoning 和正文记在**同一份 `max_tokens`** 上，而本应用不渲染思考过程 ——
+思考就纯粹是浪费预算。实测同一问题、同样 `max_tokens=2048`：基线思考 2048 token、
+**正文 0 字**（面板一片空白）；`max_tokens=4096` 思考 2825、只剩约 430 给正文，
+**结尾被截断**；`8192` 思考更久、直接撞上 120s 超时。所以「加大 maxTokens」不是解法。
+
+`lib/llm.js` 对实测支持该参数的 opencode 端点（`baseURL` 含 `opencode.ai`，与
+`x-opencode-session` 同一判断）自动注入 `reasoning_effort: 'none'` —— 思考压到 0、
+正文 1274 字、9.5s。DeepSeek / 智谱等**未验证**，故不发这个未知字段（免得被判 400）。
+
+万一换个思考模型仍被截断，`streamChat` 会把 `finish_reason=length` 和
+`completion_tokens_details.reasoning_tokens` 翻成一句可操作的报错
+（提示调大「最大输出 tokens」），而不是静默返回空白；该判断放在 `catch` 之外，
+**不会**被包装成「流式响应中断」——那会让人以为是网络问题。新装默认 `maxTokens` 为 4096。
 
 写入一律「写 .tmp → copyFile 备份 .bak → rename」，并对同一文件串行化。
 

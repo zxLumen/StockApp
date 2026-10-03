@@ -19,7 +19,9 @@ const keysFile = (dataDir) => path.join(dataDir, 'keys.json')
 
 export const DEFAULT_SETTINGS = {
   provider: 'deepseek',
-  maxTokens: 2048,
+  // 带思考链的模型（deepseek-v4.x 等）把 reasoning 和正文记在同一份 max_tokens 上，
+  // 而我们不显示思考过程 —— 预算太小会出现「思考吃完额度、正文一个字都没有」。
+  maxTokens: 4096,
   temperature: 0.6,
   visitorAi: process.env.STOCK_VISITOR_AI !== '0',
 }

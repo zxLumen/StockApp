@@ -153,6 +153,8 @@ export interface Selection {
 export interface AiUsage {
   input: number
   output: number
+  /** 带思考链的模型里被思考占掉的 token（记在同一份 max_tokens 上） */
+  reasoning?: number
 }
 
 export type AiState = 'idle' | 'thinking' | 'working' | 'busy' | 'success' | 'error' | 'blocked'

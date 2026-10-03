@@ -19,7 +19,8 @@ const writeJson = async (dir, name, value) => {
 test('loadSettings: 没有文件时给全套默认值', async () => {
   const s = await loadSettings(await tmpDir())
   assert.equal(s.provider, 'deepseek')
-  assert.equal(s.maxTokens, 2048)
+  // 默认给到 4096：思考链模型会把 max_tokens 吃光，2048 太紧（见 llm.js 的说明）
+  assert.equal(s.maxTokens, 4096)
   assert.equal(s.temperature, 0.6)
   assert.equal(s.providers.deepseek.model, 'deepseek-flash')
   assert.equal(s.providers.deepseek.baseURL, 'https://api.deepseek.com')

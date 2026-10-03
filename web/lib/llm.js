@@ -13,6 +13,9 @@ export const endpointURL = (baseURL) => {
   }
 }
 
+/** opencode Zen/Go 端点（与 standardHeaders 里加会话头的判断同源，抽出来复用）。 */
+export const isOpenCode = (baseURL) => String(baseURL ?? '').toLowerCase().includes('opencode.ai')
+
 export const standardHeaders = (config, sessionId) => {
   /** @type {Record<string,string>} */
   const headers = {
@@ -20,13 +23,13 @@ export const standardHeaders = (config, sessionId) => {
     'User-Agent': 'StockWeb/1.0',
   }
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`
-  if (String(config.baseURL).toLowerCase().includes('opencode.ai')) {
+  if (isOpenCode(config.baseURL)) {
     headers['x-opencode-session'] = sessionId
   }
   return headers
 }
 
-export const requestBody = ({ model, messages, maxTokens, stream = false, includeUsage = false, temperature = 0.6 }) => {
+export const requestBody = ({ model, messages, maxTokens, stream = false, includeUsage = false, temperature = 0.6, noThinking = false }) => {
   const body = {
     model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -35,6 +38,11 @@ export const requestBody = ({ model, messages, maxTokens, stream = false, includ
     stream,
   }
   if (stream && includeUsage) body.stream_options = { include_usage: true }
+  // 思考链模型（deepseek-v4.x 等）把 reasoning 和正文记在同一份 max_tokens 上，
+  // 而本应用不渲染思考过程 —— 思考就是纯浪费预算，实测 reasoning_effort=none
+  // 能把它压到 0（正文 1274 字 / 9.5s，基线是 2048 全被思考吃掉、正文 0 字）。
+  // 只对实测支持的 opencode 端点发：DeepSeek / 智谱等未验证，贸然发未知字段可能被判 400。
+  if (noThinking) body.reasoning_effort = 'none'
   return body
 }
 
@@ -65,6 +73,19 @@ export const friendlyDetail = (json) => {
   return '请检查网络或 Key 是否有效。'
 }
 
+/** 分片里的 `finish_reason`（截断时是 `length`）。只取这一个字段，容忍坏 JSON。 */
+export const finishReasonOf = (line) => {
+  if (!line.startsWith('data:')) return null
+  const data = line.slice('data:'.length).trim()
+  if (!data || data === '[DONE]') return null
+  try {
+    const reason = JSON.parse(data)?.choices?.[0]?.finish_reason
+    return typeof reason === 'string' && reason ? reason : null
+  } catch {
+    return null
+  }
+}
+
 /** 解析一行上游 SSE，返回增量正文与（流末尾的）token 用量。 */
 export const parseChunk = (line) => {
   if (!line.startsWith('data:')) return null
@@ -89,6 +110,8 @@ export const parseChunk = (line) => {
       usage: {
         input: Number(u.prompt_tokens) || 0,
         output: Number(u.completion_tokens) || 0,
+        // 思考链模型的 token 记在同一个 max_tokens 上，正文为空时靠它解释预算去哪了
+        reasoning: Number(u.completion_tokens_details?.reasoning_tokens) || 0,
       },
     }
   }
@@ -127,6 +150,7 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
         stream: true,
         includeUsage: true,
         temperature: config.temperature ?? 0.6,
+        noThinking: isOpenCode(config.baseURL),
       }),
     ),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -139,13 +163,17 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
   if (!response.body) throw new Error('网络响应异常。')
 
   let text = ''
-  /** @type {{input:number, output:number} | null} */
+  /** @type {{input:number, output:number, reasoning?:number} | null} */
   let usage = null
+  /** @type {string | null} */
+  let finishReason = null
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
   const handle = (line) => {
+    const reason = finishReasonOf(line)
+    if (reason) finishReason = reason
     const chunk = parseChunk(line)
     if (!chunk) return false
     if (chunk.done) return true
@@ -159,8 +187,24 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
     return false
   }
 
+  /**
+   * 一路 `content` 全空、只有思考通道，基本只有一种原因：**token 预算被思考吃光了**。
+   * 带思考链的模型（deepseek-v4.x 等）把 reasoning 和正文记在同一份 max_tokens 上，
+   * 而我们不显示思考过程，于是正文一个字都轮不到 —— 上游还「成功」返回。
+   * 这时必须明确报出来，不然用户只看到一个空白框。
+   */
+  const emptyBecauseThinking = () => {
+    const reasoning = usage?.reasoning ?? 0
+    return (
+      `模型只输出了思考过程就被 token 上限截断，没有给出正文` +
+      `（思考约 ${reasoning} tokens${finishReason === 'length' ? '，finish_reason=length' : ''}）。` +
+      `请在设置里调大「最大输出 tokens」后重试。`
+    )
+  }
+
+  let finished = false
   try {
-    for (;;) {
+    for (; !finished; ) {
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
@@ -169,14 +213,17 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
         const line = buffer.slice(0, idx).trim()
         buffer = buffer.slice(idx + 1)
         if (handle(line)) {
+          finished = true
           await reader.cancel().catch(() => {})
-          return { text, usage }
+          break
         }
         idx = buffer.indexOf('\n')
       }
     }
-    buffer += decoder.decode()
-    if (buffer.trim()) handle(buffer.trim())
+    if (!finished) {
+      buffer += decoder.decode()
+      if (buffer.trim()) handle(buffer.trim())
+    }
   } catch (err) {
     if (signal?.aborted) throw new Error('已取消。')
     if (timeout.aborted) throw new Error('请求超时，请稍后重试。')
@@ -185,6 +232,8 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
     reader.cancel().catch(() => {})
   }
 
+  // 放在 catch 之外：这不是「中断」，别让用户以为是网络问题
+  if (!text) throw new Error(emptyBecauseThinking())
   return { text, usage }
 }
 
