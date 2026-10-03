@@ -28,6 +28,24 @@ npm start          # 只起服务端，托管 web/dist
 
 校验：`npm run typecheck && npm test && npm run build`。
 
+### 站长身份（AI 设置入口）
+
+顶栏的 ⚙ **只对站长渲染**（`web/src/App.tsx`），AI 的 provider / 模型 / Key 也只能在
+里面配。要让它出现，二选一：
+
+```bash
+# ① 跟博客共用一把 SESSION_SECRET —— 博客登录态直接被认成站长（推荐）
+#    照抄 zxLumen-Blog/apps/next-home/.env.local 里的 SESSION_SECRET 那一行
+cp ../../zxLumen-Blog/apps/next-home/.env.local /tmp/x   # 取值用，别提交
+printf 'SESSION_SECRET=<同一值>\nSTOCK_VISITOR_AI=1\n' > web/.env
+
+# ② 没跑博客时的兜底：token 在数据目录 owner.token（0600）
+#    访问一次 /?owner=<token> 换取 stock_owner cookie，之后顶栏 ⚙ 就会出现
+```
+
+`web/.env` 不入库（`.gitignore` 已忽略），`npm run dev` / `npm start` 都用
+`node --env-file-if-exists=.env` 读取，改完**重启进程**才生效。
+
 ## 功能
 
 | 能力 | 说明 |
@@ -38,8 +56,8 @@ npm start          # 只起服务端，托管 web/dist
 | K 线 | 日/周/月 + 5/15/30/60 分，MA5/10/20，副图成交量 |
 | 搜索 | 代码 / 名称 / 拼音首字母；板块按名称检索相关个股 |
 | 自选 | 服务端 JSON 持久化，按 scope（访客 cid / 站长 / MOCK 身份）隔离 |
-| 板块 | 行业 + 概念涨跌幅榜，点击按板块名下钻 |
-| 新闻 | 全市场要闻；个股为要闻关键词匹配（无稳定免 key 的个股源） |
+| 板块 | 行业 + 概念涨跌幅榜，点击进成分股列表（东财 → 新浪兜底） |
+| 新闻 | 全市场要闻；个股走东财搜索 API，搜不到才退回要闻关键词匹配 |
 | AI | 站长配置 provider / 模型 / Key，访客开关；SSE 流式解读 |
 
 默认落地页：**沪 / 深 / 港 三条日K + 沪深港主要指数快照 + 当日热点新闻**。
