@@ -399,6 +399,27 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://localhost')
   const pathname = url.pathname
 
+  /*
+   * 站长兜底：/?owner=<token> 换 stock_owner cookie。
+   * 必须放在静态分支之前 —— '/' 由 serveStatic 直接返回，走不到下面那段
+   * cookie 下发，README 写的「访问 /?owner=<token> 进站长模式」原先根本无效。
+   * 非 API 路径种完 cookie 就 302 回不带 token 的干净 URL，别把它留在地址栏里。
+   */
+  const ownerParam = url.searchParams.get('owner')
+  if (ownerParam && ownerParam !== ownerToken()) {
+    sendJson(res, 403, { error: '站长 token 不对' })
+    return
+  }
+  if (ownerParam && !pathname.startsWith('/api/')) {
+    url.searchParams.delete('owner')
+    res.writeHead(302, {
+      Location: `${url.pathname}${url.search}`,
+      'Set-Cookie': cookieHeader('stock_owner', ownerToken()),
+    })
+    res.end()
+    return
+  }
+
   if (!pathname.startsWith('/api/')) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       sendJson(res, 405, { error: 'method not allowed' })
