@@ -38,13 +38,29 @@ export const requestBody = ({ model, messages, maxTokens, stream = false, includ
   return body
 }
 
+/**
+ * 把上游错误正文变成一句能看懂的话。
+ *
+ * 很多上游（DeepSeek 的 `Authentication Fails (governor)`、各种网关）回的是**纯文本**，
+ * 不是 JSON。旧实现只认 JSON，于是把这句话整个吞掉、换成「请检查网络或 Key 是否有效」——
+ * 用户只看到 401，完全不知道是「压根没带 Key」还是「Key 真错了」。
+ * 所以 JSON 解析失败时**回退到正文本身**（压空白 + 截断），只在真的什么都没有时才给泛泛提示。
+ */
 export const friendlyDetail = (json) => {
-  try {
-    const obj = JSON.parse(json)
-    const message = obj?.error?.message
-    if (typeof message === 'string' && message.trim()) return message.trim()
-  } catch {
-    /* 非 JSON 正文 */
+  const text = String(json ?? '').trim()
+  if (text) {
+    try {
+      const obj = JSON.parse(text)
+      const message = obj?.error?.message
+      if (typeof message === 'string' && message.trim()) return message.trim()
+      const detail = obj?.error?.detail
+      if (typeof detail === 'string' && detail.trim()) return detail.trim()
+    } catch {
+      /* 非 JSON 正文：下面当纯文本用 */
+    }
+    // 纯文本正文：压掉多余空白，限长避免塞满整屏
+    const flat = text.replace(/\s+/g, ' ').trim()
+    if (flat) return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat
   }
   return '请检查网络或 Key 是否有效。'
 }

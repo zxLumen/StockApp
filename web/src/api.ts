@@ -128,8 +128,21 @@ export const removeWatch = (secid: string) =>
     json<{ items: WatchItem[] }>,
   )
 
+/** 一个服务商一个槽位：地址与模型各自独立，切换 provider 不会串味。 */
+export interface AiProviderSlot {
+  id: string
+  label: string
+  defaultModel: string
+  defaultBaseURL: string
+  model: string
+  baseURL: string
+  hasKey: boolean
+  keyMask: string | null
+}
+
 export interface AiSettings {
   provider: string
+  /** 当前 provider 槽位解析出的实际值（省得调用方自己去 providers 里找） */
   model: string
   baseURL: string
   maxTokens: number
@@ -137,20 +150,29 @@ export interface AiSettings {
   visitorAi: boolean
   hasKey: boolean
   keyMask: string | null
+  providers: AiProviderSlot[]
 }
 
 export const fetchAiSettings = () => get<AiSettings>('/api/ai/settings')
 
-export const saveAiSettings = (patch: Partial<AiSettings>) =>
+export const saveAiSettings = (patch: Partial<Omit<AiSettings, 'providers'>> & { providers?: Partial<Record<string, Partial<AiProviderSlot>>> }) =>
   post<AiSettings>('/api/ai/settings', patch)
 
 export const saveAiKey = (provider: string, key: string) =>
   post<AiSettings>('/api/ai/key', { provider, key })
 
-export const fetchAiModels = (baseURL?: string) =>
-  get<{ models: { id: string; label: string }[] }>(
-    `/api/ai/models${baseURL ? `?baseURL=${encodeURIComponent(baseURL)}` : ''}`,
-  )
+/**
+ * 拉服务端点对应的模型列表。
+ * `provider` 决定用哪个槽的 Key，`baseURL` 可覆盖（面板里改了还没保存的地址）。
+ * 不传 provider 时用当前服务商。
+ */
+export const fetchAiModels = (provider?: string, baseURL?: string) => {
+  const qs = new URLSearchParams()
+  if (provider) qs.set('provider', provider)
+  if (baseURL) qs.set('baseURL', baseURL)
+  const query = qs.toString()
+  return get<{ models: { id: string; label: string }[] }>(`/api/ai/models${query ? `?${query}` : ''}`)
+}
 
 /** AI 解读：SSE 文本流，边收边回调。 */
 export function interpret(

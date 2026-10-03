@@ -17,7 +17,7 @@ import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js
 import { marketNews, stockNews } from './lib/news.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
-import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig } from './lib/settings.js'
+import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
 import { streamChat, fetchModels } from './lib/llm.js'
 import { PROVIDERS } from './lib/providers.js'
 import { upstreamStatus } from './lib/http.js'
@@ -99,8 +99,8 @@ const routes = []
 const route = (method, pattern, handler) => routes.push({ method, pattern, handler })
 
 route('GET', /^\/api\/status$/, async (ctx) => {
-  const cfg = await aiConfig()
-  const settings = await loadSettings()
+  const cfg = await aiConfig(DATA_DIR)
+  const settings = await loadSettings(DATA_DIR)
   const enabled = cfg.visitorAi ? !!cfg.apiKey : ctx.scope.isOwner && !!cfg.apiKey
   return {
     owner: ctx.scope.isOwner,
@@ -242,29 +242,36 @@ route('DELETE', /^\/api\/watchlist$/, async (ctx) => {
   return { items: next }
 })
 
-route('GET', /^\/api\/ai\/settings$/, async () => publicSettings())
+route('GET', /^\/api\/ai\/settings$/, async () => publicSettings(DATA_DIR))
 
 route('POST', /^\/api\/ai\/settings$/, async (ctx) => {
   if (!ctx.scope.isOwner) throw new HttpError(403, '仅站长可配置')
   const body = await readBody(ctx.req)
   const allowed = {}
-  for (const k of ['provider', 'model', 'baseURL', 'maxTokens', 'temperature', 'visitorAi']) {
+  for (const k of ['provider', 'providers', 'maxTokens', 'temperature', 'visitorAi']) {
     if (body[k] !== undefined) allowed[k] = body[k]
   }
-  await saveSettings(allowed)
-  return publicSettings()
+  await saveSettings(DATA_DIR, allowed)
+  return publicSettings(DATA_DIR)
 })
 
 route('POST', /^\/api\/ai\/key$/, async (ctx) => {
   if (!ctx.scope.isOwner) throw new HttpError(403, '仅站长可配置')
   const body = await readBody(ctx.req)
-  await saveKey(body.provider, body.key)
-  return publicSettings()
+  const provider = String(body.provider || '')
+  if (!PROVIDERS.some((p) => p.id === provider)) throw new HttpError(400, '未知的服务商')
+  await saveKey(DATA_DIR, provider, body.key)
+  return publicSettings(DATA_DIR)
 })
 
 route('GET', /^\/api\/ai\/models$/, async (ctx) => {
   if (!ctx.scope.isOwner) throw new HttpError(403, '仅站长可查询')
-  const cfg = await aiConfig()
+  const provider = ctx.url.searchParams.get('provider') || ''
+  if (provider && !PROVIDERS.some((p) => p.id === provider)) throw new HttpError(400, '未知的服务商')
+  // 带 provider 时可以在「非当前服务商」的槽上探测（设置面板里挨个试）
+  const cfg = await aiConfigFor(DATA_DIR, provider || null)
+  // 没 Key 就别拿裸请求去换上游那个语焉不详的 401
+  if (!cfg.apiKey) throw new HttpError(400, `「${provider ? PROVIDERS.find((p) => p.id === provider).label : '当前服务商'}」还没保存 API Key`)
   const baseURL = ctx.url.searchParams.get('baseURL') || cfg.baseURL
   const models = await fetchModels({ baseURL, apiKey: cfg.apiKey }, crypto.randomUUID())
   return { models }
@@ -308,7 +315,7 @@ route('POST', /^\/api\/ai\/interpret$/, async (ctx) => {
   const name = String(body.name || '').slice(0, 40)
   if (!/^\d+\.[A-Za-z0-9._-]+$/.test(secid)) throw new HttpError(400, 'secid 不合法')
 
-  const cfg = await aiConfig()
+  const cfg = await aiConfig(DATA_DIR)
   if (!cfg.apiKey) throw new HttpError(503, 'AI 解读未配置')
   if (!cfg.visitorAi && !ctx.scope.isOwner) throw new HttpError(403, '访客不可用 AI 解读')
   if (rateLimited(`ai:${ctx.scope.scopeKey}`, 10, 60_000)) throw new HttpError(429, '请求太频繁，请稍后再试')

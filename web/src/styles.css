@@ -763,6 +763,99 @@ h3 {
   gap: 6px;
   margin: -4px 0 12px;
 }
+
+/* ---------- 设置面板：分服务商槽位 ---------- */
+/* 5 张槽位卡内容不少，面板得比默认宽一点 */
+.modal-box.wide {
+  width: min(640px, 100%);
+}
+
+.provider-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.slot {
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel2);
+  overflow: hidden;
+}
+
+/* 当前在用的服务商：描边提亮，「哪个在生效」一眼可见 */
+.slot[data-active] {
+  border-color: var(--zx-accent);
+}
+
+.slot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--zx-fg);
+  font-size: 14px;
+  text-align: left;
+}
+
+.slot-head:hover {
+  background: #232b3b;
+}
+
+.slot-title {
+  font-weight: 600;
+}
+
+.slot-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zx-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-caret {
+  color: var(--zx-dim);
+  font-size: 12px;
+}
+
+.slot-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--zx-border);
+}
+
+.slot-body label:last-of-type {
+  margin-bottom: 8px;
+}
+
+.tag {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--zx-border);
+  border-radius: 999px;
+  color: var(--zx-dim);
+  font-size: 11px;
+}
+
+.tag.ok {
+  border-color: var(--zx-down);
+  color: var(--zx-down);
+}
+
+.tag.warn {
+  border-color: #6b5a2a;
+  color: #c9a227;
+}
+
+/* .tag 基础上再加一个「当前」用的强调色 */
+.slot[data-active] .tag:not(.ok):not(.warn) {
+  border-color: var(--zx-accent);
+  color: var(--zx-accent);
+}
 /* ---------- 首页迷你 K 线 ---------- */
 .mini-grid {
   display: grid;

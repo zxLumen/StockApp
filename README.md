@@ -58,7 +58,7 @@ printf 'SESSION_SECRET=<同一值>\nSTOCK_VISITOR_AI=1\n' > web/.env
 | 自选 | 服务端 JSON 持久化，按 scope（访客 cid / 站长 / MOCK 身份）隔离 |
 | 板块 | 行业 + 概念涨跌幅榜，点击进成分股列表（东财 → 新浪兜底） |
 | 新闻 | 全市场要闻；个股走东财搜索 API，搜不到才退回要闻关键词匹配 |
-| AI | 站长配置 provider / 模型 / Key，访客开关；SSE 流式解读 |
+| AI | 站长配置 provider / 模型 / Key，访客开关；SSE 流式解读。provider 分槽，各服务商的地址 / 模型 / Key 互不覆盖 |
 
 默认落地页：**沪 / 深 / 港 三条日K + 沪深港主要指数快照 + 当日热点新闻**。
 
@@ -68,10 +68,14 @@ printf 'SESSION_SECRET=<同一值>\nSTOCK_VISITOR_AI=1\n' > web/.env
 
 ```
 watchlist/<scopeKey>.json   自选股（原子写 + .bak 回退 + 每文件串行锁）
-ai/settings.json            AI 配置
-ai/keys.json                API Key（0600）
+settings.json               AI 配置（每个服务商一个槽位）
+keys.json                   API Key，按服务商分键（0600）
 owner.token                 未配 SESSION_SECRET 时的站长兜底 token（0600）
 ```
+
+AI 配置是**分槽**的：每个服务商各自一套 `model` + `baseURL`，切 provider 只换「用哪个」，
+不动任何槽位内容（也就不会出现「换了服务商、地址还留着上一个的」配着新 Key 打旧地址 → 上游 401）。
+只有当前槽位会被拿去发请求；`publicSettings()` 也只回 Key 掩码，绝不回明文。
 
 写入一律「写 .tmp → copyFile 备份 .bak → rename」，并对同一文件串行化。
 
