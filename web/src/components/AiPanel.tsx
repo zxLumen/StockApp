@@ -30,8 +30,15 @@ export default function AiPanel({ secid, name, enabled }: Props) {
     setBusy(false)
   }, [secid])
 
+  /*
+   * 挂载 / enabled 变化时把本源报成 idle，**绝不报 blocked**。
+   * 「站长还没配 Key」不是需要人介入的阻塞 —— 访客压根没要求 AI 解读，若报 blocked，
+   * 主站那盏灯会被推成紫色「需要你」并播「权限请求来啦」语音，打开任意个股详情就中招。
+   * blocked 留给真阻塞：限流 429、上游鉴权失败。
+   * 顺带清掉上一轮残留的 thinking/working（面板随 DetailView 重挂载）。
+   */
   useEffect(() => {
-    reportAiState(enabled ? 'idle' : 'blocked', enabled ? undefined : '未配置 Key')
+    reportAiState('idle')
   }, [enabled])
 
   const run = async (q: string) => {
