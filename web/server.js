@@ -323,6 +323,7 @@ route('POST', /^\/api\/ai\/interpret$/, async (ctx) => {
   const question = String(body.question || '').slice(0, 500)
   const context = await buildContext(secid, name)
 
+  const { res } = ctx
   res.writeHead(200, {
     'Content-Type': 'text/plain; charset=utf-8',
     'Cache-Control': 'no-store',
