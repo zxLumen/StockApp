@@ -1533,9 +1533,12 @@ button.member-row:hover {
   color: var(--dim, #8b949e);
   font-variant-numeric: tabular-nums;
 }
-.pick-summary {
-  margin: 0;
-  line-height: 1.6;
+/* 摘要行：放卡片最外层，收起也可见 */
+.pick-summary-line {
+  padding: 0 14px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c9d1d9;
 }
 .pick-block-title {
   font-size: 12px;

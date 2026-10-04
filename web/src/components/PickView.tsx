@@ -133,8 +133,11 @@ function PickCard({
         <span className={`pick-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
         <span className={`pick-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
         {ai?.score != null && <span className="pick-score">评分 {ai.score}</span>}
-        <span className="pick-toggle dim">{open ? '收起' : '详情'}</span>
+        <span className="pick-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
+
+      {/* 摘要放最外层：卡片收起也一眼可见（用户要求） */}
+      {ai?.summary && <div className="pick-summary-line">{ai.summary}</div>}
 
       {open && (
         <div className="pick-detail">
@@ -146,9 +149,8 @@ function PickCard({
           </div>
 
           {ai?.error && <div className="note small">AI 解读失败：{ai.error}</div>}
-          {ai?.summary && <p className="pick-summary">{ai.summary}</p>}
 
-          {hasDetail && (
+          {hasDetail ? (
             <div className={`pick-ai${openAi ? ' is-open' : ''}`}>
               <button className="pick-ai-head" onClick={() => setOpenAi(!openAi)} aria-expanded={openAi}>
                 <span className="pick-ai-arrow">{openAi ? '▾' : '▸'}</span> AI 解读详情
@@ -187,6 +189,8 @@ function PickCard({
                 </div>
               )}
             </div>
+          ) : (
+            <div className="note small">（本次 AI 未产出解读明细）</div>
           )}
 
           <button className="btn ghost" onClick={onDetail}>
