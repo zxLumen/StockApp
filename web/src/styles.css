@@ -1439,22 +1439,22 @@ button.member-row:hover {
 }
 
 /* ---- 每日推荐页 ---- */
-.pick-wrap {
-  padding: 4px 2px 24px;
+.rec-wrap {
+  padding: 2px 2px 16px;
   max-width: 920px;
 }
-.pick-head {
+.rec-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
-.pick-head h2 {
+.rec-head h2 {
   margin: 0;
   font-size: 17px;
 }
-.pick-date {
+.rec-date {
   margin-left: auto;
   background: var(--panel, #16181d);
   color: inherit;
@@ -1462,115 +1462,119 @@ button.member-row:hover {
   border-radius: 8px;
   padding: 4px 8px;
 }
-.pick-list {
+.rec-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 3px;
 }
-.pick-card {
+.rec-card {
   border: 1px solid var(--line, #2a2d35);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--panel, #16181d);
   overflow: hidden;
 }
-.pick-card.is-open {
+.rec-card.is-open {
   border-color: var(--accent, #4c8bf5);
 }
-.pick-row {
+.rec-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 10px;
+  padding: 3px 12px;
+  font-size: 13px;
   cursor: pointer;
 }
-.pick-row:hover {
+.rec-row:hover {
   background: rgba(255, 255, 255, 0.03);
 }
-.pick-rank {
-  width: 22px;
+.rec-rank {
+  width: 20px;
   text-align: center;
   font-weight: 700;
   color: var(--dim, #8b949e);
 }
-.pick-name {
+.rec-name {
   font-weight: 600;
-  min-width: 120px;
+  min-width: 110px;
 }
-.pick-month,
-.pick-day {
+.rec-month,
+.rec-day {
+  font-variant-numeric: tabular-nums;
+  min-width: 84px;
+}
+.rec-day {
+  min-width: 58px;
+}
+.rec-since {
   font-variant-numeric: tabular-nums;
   min-width: 92px;
-}
-.pick-day {
-  min-width: 62px;
-}
-.pick-since {
-  font-variant-numeric: tabular-nums;
-  min-width: 96px;
   text-align: right;
   font-weight: 600;
 }
-.pick-dates {
+.rec-dates {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: var(--dim, #8b949e);
 }
-.pick-score {
+.rec-score {
   font-size: 12px;
   padding: 1px 8px;
   border-radius: 999px;
   background: rgba(76, 139, 245, 0.16);
   color: var(--accent, #4c8bf5);
 }
-.pick-toggle {
+.rec-toggle {
   flex: none;
   font-size: 12px;
 }
-.pick-detail {
-  padding: 4px 14px 14px;
+.rec-detail {
+  padding: 2px 12px 10px;
   border-top: 1px solid var(--line, #2a2d35);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
-.pick-stats {
+.rec-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 12px;
   font-size: 12px;
   color: var(--dim, #8b949e);
   font-variant-numeric: tabular-nums;
 }
-/* 摘要：卡片行下方的单独一行，收起也可见 */
-.pick-summary-line {
-  padding: 0 14px 10px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #c9d1d9;
+/* 摘要：卡片行下方的单独一行，强制不换行、超出省略（悬停 title 看全文） */
+.rec-summary {
+  padding: 0 12px 3px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #9aa4af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.pick-block-title {
+.rec-block-title {
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 4px;
 }
-.pick-block ul {
+.rec-block ul {
   margin: 0;
   padding-left: 18px;
   line-height: 1.6;
   font-size: 13px;
 }
 /* 二级折叠：AI 解读明细 */
-.pick-ai {
+.rec-ai {
   border: 1px solid var(--line, #2a2d35);
   border-radius: 8px;
   overflow: hidden;
 }
-.pick-ai-head {
+.rec-ai-head {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1584,25 +1588,25 @@ button.member-row:hover {
   text-align: left;
   cursor: pointer;
 }
-.pick-ai-head:hover {
+.rec-ai-head:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-.pick-ai-arrow {
+.rec-ai-arrow {
   width: 12px;
   color: var(--dim, #8b949e);
 }
-.pick-ai-body {
+.rec-ai-body {
   padding: 4px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.pick-tags {
+.rec-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.pick-tag {
+.rec-tag {
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 999px;

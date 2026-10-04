@@ -50,12 +50,12 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
     void load(d)
   }
 
-  if (loading) return <div className="pick-wrap"><div className="note">加载推荐…</div></div>
-  if (error) return <div className="pick-wrap"><div className="note">推荐加载失败：{error}</div></div>
+  if (loading) return <div className="rec-wrap"><div className="note">加载推荐…</div></div>
+  if (error) return <div className="rec-wrap"><div className="note">推荐加载失败：{error}</div></div>
   if (!data || !data.top?.length) {
     return (
-      <div className="pick-wrap">
-        <div className="pick-head">
+      <div className="rec-wrap">
+        <div className="rec-head">
           <h2>每日推荐</h2>
         </div>
         <div className="note">
@@ -67,17 +67,17 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   }
 
   return (
-    <div className="pick-wrap">
-      <div className="pick-head">
+    <div className="rec-wrap">
+      <div className="rec-head">
         <h2>每日推荐</h2>
         <span className="note small">
           {data.date} 生效 · 候选池 {data.pool.size} 只 → 解读 {data.pool.candidates} 只 → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
         </span>
         {dates.length > 0 && (
-          <label className="pick-dates">
+          <label className="rec-dates">
             推荐历史
-            <select className="pick-date" value={date} onChange={(e) => pickDate(e.target.value)}>
+            <select className="rec-date" value={date} onChange={(e) => pickDate(e.target.value)}>
               {dates.map((d) => (
                 <option key={d} value={d}>
                   {d}
@@ -88,7 +88,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
         )}
       </div>
 
-      <ol className="pick-list">
+      <ol className="rec-list">
         {data.top.map((s, i) => (
           <PickCard
             key={s.code}
@@ -127,28 +127,28 @@ function PickCard({
   const [openAi, setOpenAi] = useState(true)
   const hasDetail = !!(ai?.catalysts?.length || ai?.risks?.length || ai?.tags?.length)
   return (
-    <li className={`pick-card${open ? ' is-open' : ''}`}>
-      <div className="pick-row" onClick={onToggle} role="button" tabIndex={0}>
-        <span className="pick-rank">{rank}</span>
-        <span className="pick-name">
+    <li className={`rec-card${open ? ' is-open' : ''}`}>
+      <div className="rec-row" onClick={onToggle} role="button" tabIndex={0}>
+        <span className="rec-rank">{rank}</span>
+        <span className="rec-name">
           {stock.name}
           <span className="dim small"> {stock.code}</span>
         </span>
-        <span className={`pick-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
-        <span className={`pick-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
-        <span className={`pick-since ${tone(stock.sincePickPct)}`} title="自推荐日基准价到最新（盘中为实时价）">
+        <span className={`rec-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
+        <span className={`rec-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
+        <span className={`rec-since ${tone(stock.sincePickPct)}`} title="自推荐日基准价到最新（盘中为实时价）">
           自推荐 {stock.sincePickPct == null ? '—' : `${stock.sincePickPct > 0 ? '+' : ''}${fmt(stock.sincePickPct)}%`}
         </span>
-        {ai?.score != null && <span className="pick-score">评分 {ai.score}</span>}
-        <span className="pick-toggle dim">{open ? '收起' : '展开'}</span>
+        {ai?.score != null && <span className="rec-score">评分 {ai.score}</span>}
+        <span className="rec-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
 
       {/* 摘要单独一行：卡片收起也一眼可见 */}
-      {ai?.summary && <div className="pick-summary-line">{ai.summary}</div>}
+      {ai?.summary && <div className="rec-summary">{ai.summary}</div>}
 
       {open && (
-        <div className="pick-detail">
-          <div className="pick-stats">
+        <div className="rec-detail">
+          <div className="rec-stats">
             <span>现价 {fmt(stock.price)}</span>
             <span>成交额 {yi(stock.amount)}</span>
             <span>换手 {fmt(stock.turnover)}%</span>
@@ -158,15 +158,15 @@ function PickCard({
           {ai?.error && <div className="note small">AI 解读失败：{ai.error}</div>}
 
           {hasDetail ? (
-            <div className={`pick-ai${openAi ? ' is-open' : ''}`}>
-              <button className="pick-ai-head" onClick={() => setOpenAi(!openAi)} aria-expanded={openAi}>
-                <span className="pick-ai-arrow">{openAi ? '▾' : '▸'}</span> AI 解读详情
+            <div className={`rec-ai${openAi ? ' is-open' : ''}`}>
+              <button className="rec-ai-head" onClick={() => setOpenAi(!openAi)} aria-expanded={openAi}>
+                <span className="rec-ai-arrow">{openAi ? '▾' : '▸'}</span> AI 解读详情
               </button>
               {openAi && (
-                <div className="pick-ai-body">
+                <div className="rec-ai-body">
                   {!!ai?.catalysts?.length && (
-                    <div className="pick-block">
-                      <div className="pick-block-title up">支撑逻辑</div>
+                    <div className="rec-block">
+                      <div className="rec-block-title up">支撑逻辑</div>
                       <ul>
                         {ai.catalysts.map((c, i) => (
                           <li key={i}>{c}</li>
@@ -175,8 +175,8 @@ function PickCard({
                     </div>
                   )}
                   {!!ai?.risks?.length && (
-                    <div className="pick-block">
-                      <div className="pick-block-title down">风险</div>
+                    <div className="rec-block">
+                      <div className="rec-block-title down">风险</div>
                       <ul>
                         {ai.risks.map((c, i) => (
                           <li key={i}>{c}</li>
@@ -185,9 +185,9 @@ function PickCard({
                     </div>
                   )}
                   {!!ai?.tags?.length && (
-                    <div className="pick-tags">
+                    <div className="rec-tags">
                       {ai.tags.map((t, i) => (
-                        <span key={i} className="pick-tag">
+                        <span key={i} className="rec-tag">
                           {t}
                         </span>
                       ))}
