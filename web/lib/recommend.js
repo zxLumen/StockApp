@@ -8,7 +8,7 @@ import { sinaKline } from './sina.js'
 import { getQuotes } from './market.js'
 import { cached } from './http.js'
 import { readJson, writeJson } from './store.js'
-import { aSharePool, rankByMonthChange, mapLimit } from './rank.js'
+import { aSharePool, objectiveFilter, mapLimit } from './rank.js'
 
 // 每日推荐：对近一月涨幅 Top100 逐只做 AI 解读（含 0-100 自评），再由 AI 二次评审挑出
 // Top10。产物落 DATA_DIR/recommend/<date>.json，前端「推荐」页签直接读。
@@ -114,7 +114,6 @@ export async function stockContext(stock) {
     `标的：${stock.name}（${stock.code}，A 股）`,
     `最新：${fmt(stock.price)}  当日涨跌：${fmt(stock.changePct)}%`,
     `成交额：${yi(stock.amount)}  换手：${fmt(stock.turnover)}%  总市值：${yi(stock.mktcap)}  流通市值：${yi(stock.floatCap)}`,
-    `近一月涨幅：${fmt(stock.monthPct)}%`,
     `MA5=${fmt(last.ma5)}  MA10=${fmt(last.ma10)}  MA20=${fmt(last.ma20)}`,
     `近20日均价 ${fmt(avg(closes.slice(-20)))}` +
       (closes.length ? `  60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}` : ''),
@@ -127,39 +126,63 @@ export async function stockContext(stock) {
 }
 
 const INTERPRET_SYSTEM =
-  '你是一名克制的证券分析师。只依据给定的行情数据与资讯标题做判断，用简体中文。' +
+  '你是一名严谨、克制的证券分析师。只依据给定的行情数据与资讯标题做判断，用简体中文。' +
   '数据里没有的就明说「未取到」，绝不编造事实或传闻。' +
   '只输出一个 JSON 对象，不要 markdown 代码块、不要任何多余文字。'
 
-// 实测该端点**不截断**：多字段 JSON 也能完整到 200+ 字、finish_reason=stop；长度、
-// 并发都没问题。早先「~100 字被砍」是误判，据此把提示词砍半、拆成两次请求都是多余
-// 的复杂度，已撤回 —— 现在一次请求给足字段。
+// 实测该端点**不截断**：多字段 JSON 也能完整到 200+ 字、finish_reason=stop。
+// 评的是**「现在这个价位值不值得买」**（buyScore），不是「涨得多猛/多受关注」——
+// 后者会把高位连板、监管异动股送上榜首。过热、偏离均线过大、资金分歧的要给低分。
 const interpretUser = (ctx) =>
   `以下是某只 A 股的行情与资讯：\n\n${ctx}\n\n` +
-  '综合评估它的关注价值（越值得关注分越高，不是涨幅大小），只输出 JSON、不要解释：\n' +
+  '从「**当前价位是否值得买入**」的角度评估（不是涨得猛、也不是单纯关注度高），' +
+  '只输出 JSON、不要解释：\n' +
   '{\n' +
-  ' "score": 0到100的整数,\n' +
+  ' "buyScore": 0到100的整数（100=现在买很值得，0=完全不值得/应回避）,\n' +
   ' "summary": "一句话概括，40到60字",\n' +
-  ' "catalysts": ["支撑逻辑，3到5条，每条20到30字"],\n' +
+  ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
   ' "risks": ["风险，2到3条，每条20到30字"],\n' +
   ' "tags": ["题材或风格标签，3到5个"]\n' +
-  '}'
+  '}\n' +
+  '注意：短期涨幅过大、连续涨停、收到监管函/问询、机构大幅净卖出、明显偏离均线的，' +
+  '即便热门也应给低分并说清理由。'
 
+// 第一步：从客观初筛后的候选里，按「值得买入」挑出 furtherPicks 只（分批喂，省 token）。
+const PRESELECT_SYSTEM =
+  '你是选股初筛员。只依据给定的量价数据，从候选里挑出**当前价位最值得进一步分析的**股票。只输出 JSON。'
+
+export function buildPreselectRows(candidates) {
+  return candidates
+    .map(
+      (c, i) =>
+        `${i + 1}. ${c.code} ${c.name} 现价${fmt(c.price)} 当日${fmt(c.changePct)}% 成交额${yi(c.amount)} 换手${fmt(c.turnover)}%`,
+    )
+    .join('\n')
+}
+
+const preselectUser = (batch, want) =>
+  `候选（共 ${batch.length} 只）：\n${buildPreselectRows(batch)}\n\n` +
+  `从「当前价位值得买入」的角度挑出 ${want} 只（明显的过热/高位/风险股不要选），` +
+  '只输出它们的代码：\n{"picks":["600418","000001"]}\n只输出 JSON。'
+
+// 第二步：从 Top100（已带各只 buyScore/摘要）里挑最终 Top10。
 const REVIEW_SYSTEM =
-  '你是投资评审。从一批按近一月涨幅初筛、带 AI 摘要的 A 股里挑最值得当日关注的。只输出 JSON。'
+  '你是投资评审。从一批已评估「值得买入」程度的 A 股里，挑出最值得买入的。只输出 JSON。'
 
 /** 拼二次评审的用户消息（导出以便单测）。 */
 export function buildReviewRows(candidates) {
   return candidates
-    .map((c, i) => `${i + 1}. ${c.code} ${c.name} 月涨${fmt(c.monthPct)}% 评分${c.ai?.score ?? '-'} ${c.ai?.summary || ''}`)
+    .map(
+      (c, i) =>
+        `${i + 1}. ${c.code} ${c.name} 买入评分${c.ai?.buyScore ?? '-'} ${c.ai?.summary || ''}`,
+    )
     .join('\n')
 }
 
-// 不再让评审单独产出「理由」——那会显著加长输出、撞上端点截断。理由直接复用该股的
-// AI 摘要（summary），评审只负责**排序与取舍**。输出因此只剩一句 code 列表。
+// 评审只负责**排序与取舍**，不单独产理由（理由复用该股 summary）。输出只剩 code 列表。
 const reviewUser = (candidates, finalPicks) =>
-  `候选（共 ${candidates.length} 只）：\n${buildReviewRows(candidates)}\n\n` +
-  `选出最值得关注的 ${finalPicks} 只，只输出它们的代码，如：\n` +
+  `候选（共 ${candidates.length} 只，已带买入评分）：\n${buildReviewRows(candidates)}\n\n` +
+  `选出当前最值得买入的 ${finalPicks} 只（评分低、风险大的不要选），只输出代码：\n` +
   '{"picks":["600418","000001"]}\n只输出 JSON。'
 
 /**
@@ -179,12 +202,60 @@ async function chatOnce(cfg, messages) {
 }
 
 /**
+ * 模型选 Top100：把客观初筛后的候选**分批**喂给模型，每批按「值得买入」挑一批，
+ * 汇总去重后取前 want 只。某批失败就用该批的成交额顺序兜底（保证凑得够）。
+ * 分批是为了不把几百只塞进一次 prompt（超 token / 拖慢）。
+ */
+export async function selectCandidates(cfg, pool, want, onLog = () => {}, { batchSize = 100 } = {}) {
+  const batches = Math.ceil(pool.length / batchSize)
+  // 每批应挑多少：想选 100 只、池子 200 只（2 批）→ 每批 50。
+  const perBatchTarget = Math.ceil(want / batches)
+  const picked = []
+  const seen = new Set()
+  const take = (c) => {
+    if (picked.length >= want || !c || seen.has(c.code)) return
+    seen.add(c.code)
+    picked.push(c)
+  }
+
+  for (let i = 0; i < pool.length && picked.length < want; i += batchSize) {
+    const batch = pool.slice(i, i + batchSize)
+    const byCode = new Map(batch.map((c) => [c.code, c]))
+    let codes = []
+    try {
+      const text = await chatOnce(cfg, [
+        { role: 'system', content: PRESELECT_SYSTEM },
+        { role: 'user', content: preselectUser(batch, perBatchTarget) },
+      ])
+      codes = (parseJsonLoose(text)?.picks || [])
+        .map((p) => (typeof p === 'string' ? p : p && p.code))
+        .map((s) => String(s || '').trim())
+        .filter(Boolean)
+    } catch (err) {
+      onLog(`  选股批次失败(${err instanceof Error ? err.message : String(err)})，用成交额顺序兜底`)
+    }
+    const before = picked.length
+    for (const code of codes) take(byCode.get(code))
+    // 本批模型挑得不够（或批次失败）→ 用该批成交额顺序补到 perBatchTarget
+    if (picked.length - before < perBatchTarget) {
+      for (const c of batch) {
+        if (picked.length - before >= perBatchTarget) break
+        take(c)
+      }
+    }
+  }
+  onLog(`  模型选出 ${picked.length} 只（每批目标 ${perBatchTarget}）`)
+  return picked.slice(0, want)
+}
+
+/**
  * 跑一次每日推荐。
  * @param {object} opts
  * @param {string} opts.dataDir 数据目录（落盘 recommend/<date>.json）
  * @param {object} opts.cfg     AI 配置（见 settings.aiConfig）
  * @param {number} [opts.poolPages]   候选池页数（每页 100，默认 5 → 500 只）
- * @param {number} [opts.topCandidates] 进入 AI 解读的候选数（默认 100）
+ * @param {number} [opts.objTarget]   客观初筛后保留数（默认 200）
+ * @param {number} [opts.topCandidates] 模型选出、进入精评的候选数（默认 100）
  * @param {number} [opts.finalPicks]    最终推荐数（默认 10）
  * @param {number} [opts.concurrency]   解读并发（默认 4）
  * @param {boolean} [opts.dryRun]       只跑不落盘
@@ -195,6 +266,7 @@ export async function runRecommendDaily({
   dataDir,
   cfg,
   poolPages = 5,
+  objTarget = 200,
   topCandidates = 100,
   finalPicks = 10,
   concurrency = 4,
@@ -207,12 +279,16 @@ export async function runRecommendDaily({
   onLog(`拉取成交额候选池（前 ${poolPages * 100} 只）…`)
   const pool = await aSharePool({ pages: poolPages })
   if (!pool.length) throw new Error('候选池为空（新浪榜单接口没返回数据）')
-  onLog(`候选池 ${pool.length} 只，逐只算近一月涨幅…`)
 
-  const ranked = await rankByMonthChange(pool, { limit: 8 })
-  onLog(`算得月涨幅 ${ranked.length} 只，取 Top${topCandidates} 做 AI 解读`)
+  // ① 客观初筛：只用方向中性的规则把 500 压到 objTarget（默认 200），方向交给模型。
+  const filtered = await objectiveFilter(pool, { target: objTarget, onLog })
+  if (!filtered.length) throw new Error('客观初筛后无候选')
 
-  const candidates = ranked.slice(0, topCandidates)
+  // ② 模型选 Top100：分批喂精简量价，按「值得买入」挑，汇总去重。
+  onLog(`模型从 ${filtered.length} 只里选 Top${topCandidates}…`)
+  const candidates = await selectCandidates(cfg, filtered, topCandidates, onLog)
+
+  // ③ 逐只精评：带资讯 + K 线，输出 buyScore（买入视角）。
   let done = 0
   const arr = (v, n) => (Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean).slice(0, n) : [])
   const withAi = await mapLimit(candidates, concurrency, async (c) => {
@@ -232,13 +308,15 @@ export async function runRecommendDaily({
     if (done % 10 === 0 || done === candidates.length) onLog(`  解读 ${done}/${candidates.length}`)
     if (!base || base.error) {
       if (process.env.RECOMMEND_DEBUG) onLog(`  解析失败 ${c.code}: ${JSON.stringify(base)}`)
-      return { ...c, ai: { score: null, summary: '', catalysts: [], risks: [], tags: [], ...(base || {}) } }
+      return { ...c, ai: { buyScore: null, summary: '', catalysts: [], risks: [], tags: [], ...(base || {}) } }
     }
-    const score = Number.isFinite(Number(base.score)) ? Math.max(0, Math.min(100, Math.round(Number(base.score)))) : null
+    const buyScore = Number.isFinite(Number(base.buyScore))
+      ? Math.max(0, Math.min(100, Math.round(Number(base.buyScore))))
+      : null
     return {
       ...c,
       ai: {
-        score,
+        buyScore,
         summary: String(base.summary || '').slice(0, 160),
         catalysts: arr(base.catalysts, 8),
         risks: arr(base.risks, 8),
@@ -274,16 +352,18 @@ export async function runRecommendDaily({
     })
     .filter(Boolean)
     .slice(0, finalPicks)
-  // 评审没给出足够结果时，按自评分兜底补齐
+  // 评审没给出足够结果时，按买入评分兜底补齐（低分也留，不硬排除）
   if (top.length < finalPicks) {
     const pickedCodes = new Set(top.map((c) => c.code))
     const fallback = scored
-      .filter((c) => !pickedCodes.has(c.code) && c.ai?.score != null)
-      .sort((a, b) => b.ai.score - a.ai.score)
+      .filter((c) => !pickedCodes.has(c.code) && c.ai?.buyScore != null)
+      .sort((a, b) => b.ai.buyScore - a.ai.buyScore)
       .slice(0, finalPicks - top.length)
-      .map((c) => ({ ...c, reason: '按 AI 自评分入选', pickedBy: 'score' }))
+      .map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'score' }))
     top = [...top, ...fallback]
   }
+  // 展示顺序统一按买入评分降序（评审顺序之外更贴「值不值得买」）
+  top = top.sort((a, b) => (b.ai?.buyScore ?? -1) - (a.ai?.buyScore ?? -1))
 
   const generatedOn = bjDate() // 分析发生日（收盘后那天）
   // `date` 可显式覆盖生效日（测试用）；否则 = 生成日的下一交易日。
@@ -296,13 +376,13 @@ export async function runRecommendDaily({
     generatedAt: new Date().toISOString(),
     basisDate,
     model: cfg.model,
-    pool: { size: pool.length, candidates: scored.length },
+    pool: { size: pool.length, filtered: filtered.length, candidates: scored.length },
     top,
     candidates: scored,
   }
   if (!dryRun) await writeJson(path.join(dataDir, 'recommend', `${effective}.json`), payload)
   onLog(
-    `${dryRun ? '（dry-run，未落盘）' : '已写入'} ${effective}（生成于 ${generatedOn}）: 候选 ${scored.length} / 推荐 ${top.length}`,
+    `${dryRun ? '（dry-run，未落盘）' : '已写入'} ${effective}（生成于 ${generatedOn}）：池 ${pool.length} → 初筛 ${filtered.length} → 选${scored.length} → 推荐 ${top.length}`,
   )
   return payload
 }

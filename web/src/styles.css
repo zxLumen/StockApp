@@ -1500,13 +1500,9 @@ button.member-row:hover {
   font-weight: 600;
   min-width: 110px;
 }
-.rec-month,
 .rec-day {
   font-variant-numeric: tabular-nums;
-  min-width: 84px;
-}
-.rec-day {
-  min-width: 58px;
+  min-width: 64px;
 }
 .rec-since {
   font-variant-numeric: tabular-nums;

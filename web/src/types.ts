@@ -116,9 +116,9 @@ export interface RecommendStock {
   floatCap: number | null
   /** 近一月涨幅（%） */
   monthPct: number | null
-  /** AI 自评打分与要点（解读失败时 score 为 null） */
+  /** AI「值得买入」评分与要点（解读失败时 buyScore 为 null） */
   ai?: {
-    score: number | null
+    buyScore: number | null
     summary: string
     catalysts?: string[]
     risks?: string[]
@@ -141,7 +141,7 @@ export interface RecommendPayload {
   /** 基准价对应的日期（生成日收盘） */
   basisDate?: string
   model: string
-  pool: { size: number; candidates: number }
+  pool: { size: number; filtered?: number; candidates: number }
   top: RecommendStock[]
   candidates: RecommendStock[]
 }

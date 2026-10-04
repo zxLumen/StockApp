@@ -31,11 +31,11 @@ test('parseJsonLoose：不是 JSON → null', () => {
 
 test('buildReviewRows：把候选拼成评审用的行', () => {
   const rows = buildReviewRows([
-    { code: '600418', name: '江淮汽车', monthPct: 30.81, ai: { score: 88, summary: '整车放量' } },
+    { code: '600418', name: '江淮汽车', monthPct: 30.81, ai: { buyScore: 88, summary: '整车放量' } },
   ])
   assert.match(rows, /600418 江淮汽车/)
-  assert.match(rows, /30\.81%/)
-  assert.match(rows, /88/)
+  assert.match(rows, /买入评分88/)
+  assert.match(rows, /整车放量/)
   assert.match(rows, /整车放量/)
 })
 

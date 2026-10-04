@@ -11,7 +11,7 @@ const yi = (n: number | null | undefined) =>
 const tone = (n: number | null | undefined) =>
   n == null ? 'dim' : n > 0 ? 'up' : n < 0 ? 'down' : 'dim'
 
-/** 每日推荐：近一月 Top100 的 AI 解读里挑出的 Top10，点开看详情。 */
+/** 每日推荐：成交额初筛 → 模型选股 → AI「值得买入」评估的 Top10，点开看详情。 */
 export default function PickView({ onPick }: { onPick: (s: { code: string; name: string; secid: string }) => void }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof fetchRecommend>>>(null)
   const [dates, setDates] = useState<string[]>([])
@@ -59,8 +59,8 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           <h2>每日推荐</h2>
         </div>
         <div className="note">
-          今日推荐尚未生成。服务器会在收盘后自动跑：对成交额前 500 的近一月涨幅 Top100 做 AI 解读，
-          再由 AI 二次评审挑出 Top10。
+          今日推荐尚未生成。服务器会在收盘后自动跑：成交额前 500 → 客观初筛 200 → 模型选 100 →
+          AI 按「值得买入」评分 → 挑出 Top10。
         </div>
       </div>
     )
@@ -71,7 +71,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       <div className="rec-head">
         <h2>每日推荐</h2>
         <span className="note small">
-          {data.date} 生效 · 候选池 {data.pool.size} 只 → 解读 {data.pool.candidates} 只 → Top{data.top.length}
+          {data.date} 生效 · 成交额 {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
         </span>
         {dates.length > 0 && (
@@ -102,7 +102,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       </ol>
 
       <div className="note small">
-        榜单为程序按「近一月涨幅 + AI 解读」自动生成，仅供研究参考，
+        榜单由程序按「成交额初筛 → 模型选股 → AI 评估买入价值」自动生成，仅供研究参考，
         <strong>不构成投资建议</strong>。
       </div>
     </div>
@@ -134,12 +134,11 @@ function PickCard({
           {stock.name}
           <span className="dim small"> {stock.code}</span>
         </span>
-        <span className={`rec-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
         <span className={`rec-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
         <span className={`rec-since ${tone(stock.sincePickPct)}`} title="自推荐日基准价到最新（盘中为实时价）">
           自推荐 {stock.sincePickPct == null ? '—' : `${stock.sincePickPct > 0 ? '+' : ''}${fmt(stock.sincePickPct)}%`}
         </span>
-        {ai?.score != null && <span className="rec-score">评分 {ai.score}</span>}
+        {ai?.buyScore != null && <span className="rec-score">买入 {ai.buyScore}</span>}
         <span className="rec-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
 
