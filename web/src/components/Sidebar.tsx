@@ -3,7 +3,7 @@ import { fmtNum, fmtSigned, trendClass } from '../format'
 import type { Market, Quote, Selection, WatchItem } from '../types'
 
 interface Props {
-  market: Exclude<Market, 'fund' | 'board'>
+  market: Exclude<Market, 'fund' | 'board' | 'pick'>
   watchlist: WatchItem[]
   quotes: Record<string, Quote>
   onPick: (s: Selection) => void

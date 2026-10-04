@@ -1,5 +1,5 @@
-/** 顶级页签。`board` 与沪深港 / 美股齐平，不是某个市场下的子页。 */
-export type Market = 'board' | 'cn' | 'us' | 'fund'
+/** 顶级页签。`board` / `pick` 与沪深港 / 美股齐平，不是某个市场下的子页。 */
+export type Market = 'board' | 'pick' | 'cn' | 'us' | 'fund'
 export type BoardKind = 'industry' | 'concept'
 /** 中证一级行业（官方口径的 10 个，与同花顺分类无法互相映射，独立成类）。 */
 export type CsiBoardKind = 'csi'
@@ -101,6 +101,42 @@ export interface BoardMember {
   price: number | null
   changePct: number | null
   change?: number | null
+}
+
+/** 每日推荐里的一只股票（榜单行 + AI 解读）。 */
+export interface RecommendStock {
+  secid: string
+  code: string
+  name: string
+  price: number | null
+  changePct: number | null
+  amount: number | null
+  turnover: number | null
+  mktcap: number | null
+  floatCap: number | null
+  /** 近一月涨幅（%） */
+  monthPct: number | null
+  /** AI 自评打分与要点（解读失败时 score 为 null） */
+  ai?: {
+    score: number | null
+    summary: string
+    catalysts?: string[]
+    risks?: string[]
+    tags?: string[]
+    error?: string
+  }
+  /** 二次评审给的理由（仅进 Top10 的会有） */
+  reason?: string
+  pickedBy?: 'ai' | 'score'
+}
+
+export interface RecommendPayload {
+  date: string
+  generatedAt: string
+  model: string
+  pool: { size: number; candidates: number }
+  top: RecommendStock[]
+  candidates: RecommendStock[]
 }
 
 export interface NewsItem {

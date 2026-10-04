@@ -132,8 +132,10 @@ const TIMEOUT_MS = 120_000
  * @param {string} options.sessionId
  * @param {(delta: { content: string }) => void} [options.onDelta]
  * @param {AbortSignal} [options.signal]
+ * @param {boolean} [options.noThinking] 显式覆盖「是否注入 reasoning_effort:none」；
+ *   不传则按 baseURL 自动判断（opencode 端点）。批处理务必传 true，否则思考链会吃光输出预算。
  */
-export const streamChat = async ({ config, messages, sessionId, onDelta, signal }) => {
+export const streamChat = async ({ config, messages, sessionId, onDelta, signal, noThinking }) => {
   if (!config.apiKey) throw new Error('未配置 API Key。')
   const url = endpointURL(config.baseURL)
   if (!url) throw new Error('Base URL 无效。')
@@ -150,7 +152,7 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
         stream: true,
         includeUsage: true,
         temperature: config.temperature ?? 0.6,
-        noThinking: isOpenCode(config.baseURL),
+        noThinking: noThinking ?? isOpenCode(config.baseURL),
       }),
     ),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -233,6 +235,20 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal 
   }
 
   // 放在 catch 之外：这不是「中断」，别让用户以为是网络问题
+  // 上游正常收流、但 `finish_reason=length` 时正文是被硬截断的（未见 `[DONE]`，
+  // 服务端直接断流）。此时 text 可能是个半截 JSON —— 对「必须回 JSON」的调用方
+  // （如每日推荐的解读 / 评审）这等于废数据，得让它显式知道，而不是拿去 parse。
+  if (finishReason === 'length') {
+    const reasoning = usage?.reasoning ?? 0
+    // 正文完全为空、又全是思考 token → 说成「思考吃掉了预算」；
+    // 有正文但被截 → 就是输出上限太小。两种都让人去调大 max_tokens。
+    throw new Error(
+      (!text && reasoning > 0
+        ? `模型只输出了思考过程就被 token 上限截断，没有给出正文（思考约 ${reasoning} tokens）`
+        : `模型输出被 token 上限截断，正文不完整（finish_reason=length）`) +
+        `。请在设置里调大「最大输出 tokens」后重试。`,
+    )
+  }
   if (!text) throw new Error(emptyBecauseThinking())
   return { text, usage }
 }

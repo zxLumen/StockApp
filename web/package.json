@@ -13,6 +13,7 @@
     "build": "vite build",
     "start": "node --env-file-if-exists=.env server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "recommend": "node --env-file-if-exists=.env scripts/recommend.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

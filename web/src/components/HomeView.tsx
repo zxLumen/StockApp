@@ -8,8 +8,8 @@ import { fmtSigned, trendClass } from '../format'
 import type { Market, NewsItem, Quote, Selection } from '../types'
 
 interface Props {
-  /** 板块是独立页签（BoardHome），这里只服务沪深港 / 美股。 */
-  market: Exclude<Market, 'fund' | 'board'>
+  /** 板块 / 推荐是独立页签（BoardHome / PickView），这里只服务沪深港 / 美股。 */
+  market: Exclude<Market, 'fund' | 'board' | 'pick'>
   onPick: (s: Selection) => void
 }
 
@@ -18,7 +18,7 @@ interface Props {
  * `market === 'cn'`），但美股指数日K 是有的（新浪 `.DJI` / `.IXIC` / `.INX`）。
  * `secid` 用东财口径，和 `/api/market/indices` 返回的保持一致。
  */
-const MINI: Record<Exclude<Market, 'fund' | 'board'>, { secid: string; name: string }[]> = {
+const MINI: Record<Exclude<Market, 'fund' | 'board' | 'pick'>, { secid: string; name: string }[]> = {
   cn: [
     { secid: '1.000001', name: '沪·上证指数' },
     { secid: '0.399001', name: '深·深证成指' },
@@ -31,7 +31,7 @@ const MINI: Record<Exclude<Market, 'fund' | 'board'>, { secid: string; name: str
   ],
 }
 
-const MINI_TITLE: Record<Exclude<Market, 'fund' | 'board'>, string> = {
+const MINI_TITLE: Record<Exclude<Market, 'fund' | 'board' | 'pick'>, string> = {
   cn: '沪 / 深 / 港 走势（日K）',
   us: '美股三大指数走势（日K）',
 }

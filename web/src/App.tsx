@@ -7,6 +7,7 @@ import FundView from './components/FundView'
 import FundHome from './components/FundHome'
 import BoardHome from './components/BoardHome'
 import BoardView from './components/BoardView'
+import PickView from './components/PickView'
 import Sidebar from './components/Sidebar'
 import SettingsPanel from './components/SettingsPanel'
 import { addWatch, fetchStatus, fetchWatchlist, removeWatch, fetchQuotes } from './api'
@@ -21,9 +22,6 @@ interface Status {
 }
 
 const watchKey = (s: Selection) => (s.kind === 'fund' ? s.code : s.secid)
-
-/** 页签分桶：沪深港一个桶、美股一个桶、基金一个桶。 */
-const bucket = (m: Market) => (m === 'us' ? 'us' : m === 'fund' ? 'fund' : 'cn')
 
 export default function App() {
   const [market, setMarket] = useSessionState<Market>('market', 'cn')
@@ -65,11 +63,11 @@ export default function App() {
     }
   }, [watchlist])
 
-  /** 切页签时，若当前详情不属于新页签就退回该页签的落地页。 */
+  /** 切页签时退回该页签的落地页（推荐页选中的是普通个股，跨页签后仍会跳去个股详情，故一并清掉）。 */
   const changeMarket = useCallback(
     (m: Market) => {
       setMarket(m)
-      setSelection((sel) => (sel && bucket(sel.market) !== bucket(m) ? null : sel))
+      setSelection(null)
     },
     [setMarket, setSelection],
   )
@@ -179,6 +177,12 @@ export default function App() {
             />
           ) : market === 'board' ? (
             <BoardHome onPick={pick} />
+          ) : market === 'pick' ? (
+            <PickView
+              onPick={({ code, name, secid }) =>
+                pick({ kind: 'stock', secid, code, name, market: 'cn' })
+              }
+            />
           ) : (
             <HomeView market={stockMarket} onPick={pick} />
           )}

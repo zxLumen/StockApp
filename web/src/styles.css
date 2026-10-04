@@ -1437,3 +1437,131 @@ button.member-row:hover {
   text-align: right;
   justify-content: flex-end;
 }
+
+/* ---- 每日推荐页 ---- */
+.pick-wrap {
+  padding: 4px 2px 24px;
+  max-width: 920px;
+}
+.pick-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.pick-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.pick-date {
+  margin-left: auto;
+  background: var(--panel, #16181d);
+  color: inherit;
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pick-card {
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 10px;
+  background: var(--panel, #16181d);
+  overflow: hidden;
+}
+.pick-card.is-open {
+  border-color: var(--accent, #4c8bf5);
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.pick-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.pick-rank {
+  width: 22px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--dim, #8b949e);
+}
+.pick-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+.pick-month,
+.pick-day {
+  font-variant-numeric: tabular-nums;
+  min-width: 92px;
+}
+.pick-day {
+  min-width: 62px;
+}
+.pick-score {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(76, 139, 245, 0.16);
+  color: var(--accent, #4c8bf5);
+}
+.pick-toggle {
+  margin-left: auto;
+  font-size: 12px;
+}
+.pick-reason {
+  padding: 0 14px 8px;
+  font-size: 12px;
+  color: var(--dim, #8b949e);
+}
+.pick-detail {
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--line, #2a2d35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pick-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--dim, #8b949e);
+  font-variant-numeric: tabular-nums;
+}
+.pick-summary {
+  margin: 0;
+  line-height: 1.6;
+}
+.pick-block-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.pick-block ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.pick-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pick-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dim, #8b949e);
+}

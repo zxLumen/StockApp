@@ -23,6 +23,7 @@ import {
 } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
+import { loadRecommend, listRecommendDates } from './lib/recommend.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -234,6 +235,16 @@ route('GET', /^\/api\/news$/, async (ctx) => {
     return { kind, scope, ...out }
   }
   return { kind, scope, items: await marketNews({ limit, scope }) }
+})
+
+// 每日推荐：datasets = 有哪几天的；不带 date 给最新一天的完整（Top10 + 候选 + 解读）；
+// 带 date 给指定那天。找不到就是 null（前端显示「今日尚未生成」）。
+route('GET', /^\/api\/recommend\/dates$/, async () => ({ dates: await listRecommendDates(DATA_DIR) }))
+
+route('GET', /^\/api\/recommend$/, async (ctx) => {
+  const date = ctx.url.searchParams.get('date') || ''
+  const data = await loadRecommend(DATA_DIR, date)
+  return data ?? null
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))

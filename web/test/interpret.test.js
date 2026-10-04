@@ -175,10 +175,10 @@ test('AI 解读：思考链吃光 token 预算时必须报错，不能静默返�
   const err = r.frames.find((f) => f.error)
   assert.ok(err, `空正文必须变成 error 帧，实际帧：${JSON.stringify(r.frames)}`)
   // 文案要能指导用户行动：说清是思考吃掉了预算、让他调大 max_tokens
-  assert.match(err.error.message, /思考过程/)
+  assert.match(err.error.message, /思考/)
   assert.match(err.error.message, /2048/)
   assert.match(err.error.message, /最大输出 tokens/)
-  assert.match(err.error.message, /length/)
+  assert.match(err.error.message, /截断/)
   // 别把这种事说成「流式响应中断」，那是网络问题的说法，会误导
   assert.equal(/流式响应中断/.test(err.error.message), false, err.error.message)
   // 不能出现一个「成功但正文为空」的 done 帧

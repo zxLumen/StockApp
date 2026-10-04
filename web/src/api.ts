@@ -12,6 +12,7 @@ import type {
   Market,
   NewsItem,
   Quote,
+  RecommendPayload,
   SearchItem,
   WatchItem,
 } from './types'
@@ -98,6 +99,13 @@ export const searchBoards = (q: string, kind?: BoardCategory, signal?: AbortSign
     `/api/market/search?q=${encodeURIComponent(q)}&scope=board${kind ? `&kind=${kind}` : ''}`,
     signal,
   )
+
+/** 每日推荐：不带 date 给最新一天的完整数据；没有生成过则为 null。 */
+export const fetchRecommend = (date?: string, signal?: AbortSignal) =>
+  get<RecommendPayload | null>(`/api/recommend${date ? `?date=${encodeURIComponent(date)}` : ''}`, signal)
+
+export const fetchRecommendDates = (signal?: AbortSignal) =>
+  get<{ dates: string[] }>('/api/recommend/dates', signal)
 
 export const searchFunds = (q: string, signal?: AbortSignal) =>
   get<{ items: { code: string; name: string; type: string | null }[] }>(
@@ -295,4 +303,4 @@ export function interpret(
   })()
 }
 
-export type { Bar, Board, FundItem, Kline, NewsItem, Quote, SearchItem, WatchItem }
+export type { Bar, Board, FundItem, Kline, NewsItem, Quote, RecommendPayload, SearchItem, WatchItem }
