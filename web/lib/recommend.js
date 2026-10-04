@@ -110,24 +110,19 @@ const INTERPRET_SYSTEM =
   '数据里没有的就明说「未取到」，绝不编造事实或传闻。' +
   '只输出一个 JSON 对象，不要 markdown 代码块、不要任何多余文字。'
 
-// 某些 OpenAI 兼容端点会在 ~100 字处把流截断（finish_reason 都不发）。若把 score /
-// summary / 明细塞进同一个 JSON，字段一多就半截。对策：**两次请求、各自简短** ——
-// 第一次只给 score+summary，第二次只给 catalysts/risks/tags（见 INTERPRET_DETAIL_SYSTEM）。
-// 第一次请求：只给评分，输出最短，基本不会被截断。
+// 实测该端点**不截断**：多字段 JSON 也能完整到 200+ 字、finish_reason=stop；长度、
+// 并发都没问题。早先「~100 字被砍」是误判，据此把提示词砍半、拆成两次请求都是多余
+// 的复杂度，已撤回 —— 现在一次请求给足字段。
 const interpretUser = (ctx) =>
   `以下是某只 A 股的行情与资讯：\n\n${ctx}\n\n` +
-  '评估它的关注价值（越值得关注分越高，不是涨幅大小），只输出 JSON、不要解释：\n' +
-  '{"score":0到100的整数}'
-
-const INTERPRET_DETAIL_SYSTEM =
-  '你是证券分析师。基于给定数据提炼要点，只输出一个 JSON 对象，不要 markdown、不要多余文字。'
-
-// 第二次请求：summary + 明细。summary 放最后写，这样即便撞上端点截断，规则字段
-// （catalysts/risks/tags）也大概率已完整；summary 本身也压到 12 字以内降低风险。
-const interpretDetailUser = (ctx) =>
-  `以下是某只 A 股的行情与资讯：\n\n${ctx}\n\n` +
-  '总结要点，只输出 JSON、不要解释：\n' +
-  '{"catalysts":["支撑逻辑,2到3条,每条12字以内"],"risks":["风险,1到2条,每条12字以内"],"tags":["题材标签,2到4个"],"summary":"一句话总结,12字以内"}'
+  '综合评估它的关注价值（越值得关注分越高，不是涨幅大小），只输出 JSON、不要解释：\n' +
+  '{\n' +
+  ' "score": 0到100的整数,\n' +
+  ' "summary": "一句话概括，40到60字",\n' +
+  ' "catalysts": ["支撑逻辑，3到5条，每条20到30字"],\n' +
+  ' "risks": ["风险，2到3条，每条20到30字"],\n' +
+  ' "tags": ["题材或风格标签，3到5个"]\n' +
+  '}'
 
 const REVIEW_SYSTEM =
   '你是投资评审。从一批按近一月涨幅初筛、带 AI 摘要的 A 股里挑最值得当日关注的。只输出 JSON。'
@@ -198,8 +193,6 @@ export async function runRecommendDaily({
 
   const candidates = ranked.slice(0, topCandidates)
   let done = 0
-  // 两次请求：① 评分 + 一句话；② 明细。分开是为了绕开端点 ~100 字的硬截断 ——
-  // 把 5 个字段塞一个 JSON 里必然半截，拆成两小份则各自完整。
   const arr = (v, n) => (Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean).slice(0, n) : [])
   const withAi = await mapLimit(candidates, concurrency, async (c) => {
     const ctx = await stockContext(c)
@@ -214,17 +207,6 @@ export async function runRecommendDaily({
     } catch (err) {
       base = { error: err instanceof Error ? err.message : String(err) }
     }
-    let detail = null
-    try {
-      detail = parseJsonLoose(
-        await chatOnce(cfg, [
-          { role: 'system', content: INTERPRET_DETAIL_SYSTEM },
-          { role: 'user', content: interpretDetailUser(ctx) },
-        ]),
-      )
-    } catch {
-      /* 明细拿不到不影响主评分 */
-    }
     done += 1
     if (done % 10 === 0 || done === candidates.length) onLog(`  解读 ${done}/${candidates.length}`)
     if (!base || base.error) {
@@ -236,11 +218,10 @@ export async function runRecommendDaily({
       ...c,
       ai: {
         score,
-        // summary 优先取明细那次（它没有 score 挤占输出预算），回退到 base
-        summary: String(detail?.summary || base.summary || '').slice(0, 60),
-        catalysts: arr(detail?.catalysts, 6),
-        risks: arr(detail?.risks, 6),
-        tags: arr(detail?.tags, 8),
+        summary: String(base.summary || '').slice(0, 160),
+        catalysts: arr(base.catalysts, 8),
+        risks: arr(base.risks, 8),
+        tags: arr(base.tags, 10),
       },
     }
   })

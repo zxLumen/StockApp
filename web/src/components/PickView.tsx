@@ -119,8 +119,8 @@ function PickCard({
   onDetail: () => void
 }) {
   const ai = stock.ai
-  // 二级折叠：AI 解读明细。摘要留在展开区一眼可见，只有支撑逻辑 / 风险 / 标签收进来。
-  const [openAi, setOpenAi] = useState(false)
+  // AI 解读明细默认展开（用户要求）。
+  const [openAi, setOpenAi] = useState(true)
   const hasDetail = !!(ai?.catalysts?.length || ai?.risks?.length || ai?.tags?.length)
   return (
     <li className={`pick-card${open ? ' is-open' : ''}`}>
@@ -133,11 +133,9 @@ function PickCard({
         <span className={`pick-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
         <span className={`pick-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
         {ai?.score != null && <span className="pick-score">评分 {ai.score}</span>}
+        {ai?.summary && <span className="pick-summary-line" title={ai.summary}>{ai.summary}</span>}
         <span className="pick-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
-
-      {/* 摘要放最外层：卡片收起也一眼可见（用户要求） */}
-      {ai?.summary && <div className="pick-summary-line">{ai.summary}</div>}
 
       {open && (
         <div className="pick-detail">
