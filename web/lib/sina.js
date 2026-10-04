@@ -1,5 +1,5 @@
 import { fetchGbk, fetchJson, fetchText, cached } from './http.js'
-import { marketOf, withMa } from './eastmoney.js'
+import { marketOf, withMa, withDerived } from './eastmoney.js'
 
 // 新浪是第 3 数据源：快照覆盖沪深/港/美/指数且口径贴近东财；A 股日/分钟 K 与美股历史 K 只有它有
 // （腾讯的 mkline 只有 A 股分钟、美股 day 只回 1~2 根，都不可用）。
@@ -10,6 +10,34 @@ const US_KLINE =
 const REFERER = { Referer: 'https://finance.sina.com.cn' }
 
 const HK_INDEX_CODES = new Set(['HSI', 'HSCEI', 'HSTECH'])
+
+/** 和 marketOf 的美股前缀保持一致（少一个就会静默走错源）。 */
+const US_MARKET_PREFIXES = new Set(['100', '105', '106', '107', '153', '155'])
+
+/**
+ * 美股指数：东财 secid 的代码段 → 新浪 `US_MinKService` 认的符号。
+ *
+ * 这一层必须显式映射：直接把代码段丢过去（`100.NDX` → `NDX`）新浪会返回空，
+ * 日 K 就整段拿不到（实测 NDX / SPX / IXIC / INX 全空）。带点的才是对的符号，
+ * 且只有这四个指数有 `.` 前缀形式（`.DJI` 道指 / `.IXIC` 纳指 / `.NDX` 纳指100 /
+ * `.INX` 标普500，各 5700+ 根日线）；个股直接用代码段即可。
+ */
+const US_INDEX_TABLE = {
+  DJIA: '.DJI',
+  DJI: '.DJI',
+  IXIC: '.IXIC',
+  COMP: '.IXIC',
+  NDX: '.NDX',
+  SPX: '.INX',
+  INX: '.INX',
+  GSPC: '.INX',
+}
+
+/** 按市场前缀分组：100 / 155 是美股指数，其余美股前缀只会有个股。 */
+const US_INDEX_SYMBOLS = {
+  100: US_INDEX_TABLE,
+  155: US_INDEX_TABLE,
+}
 
 /**
  * 东财 secid → 新浪代码。
@@ -168,13 +196,22 @@ export async function sinaKline(secid, { period = 'd', limit = 240 } = {}) {
   )
   const bars = barsFrom(Array.isArray(json) ? json : [], limit)
   if (!bars.length) return null
-  return { secid, market: marketOf(secid), name: null, bars: withMa(bars) }
+  return { secid, market: marketOf(secid), name: null, bars: withDerived(withMa(bars)) }
+}
+
+/** 东财 secid → 新浪美股日 K 的符号；非美股 / 残缺 secid 返回 null。 */
+export function toSinaUsSymbol(secid) {
+  const [m, code = ''] = String(secid || '').split('.')
+  if (!code || !US_MARKET_PREFIXES.has(m)) return null
+  const table = US_INDEX_SYMBOLS[m] || null
+  return (table && table[code.toUpperCase()]) || code
 }
 
 /** 美股日 K：新浪给全历史（JSONP）。周 / 月 / 分钟无源。 */
 export async function sinaUsKline(secid, { period = 'd', limit = 240 } = {}) {
   if (period !== 'd' || marketOf(secid) !== 'us') return null
-  const symbol = String(secid).split('.')[1]
+  const symbol = toSinaUsSymbol(secid)
+  if (!symbol) return null
   const rows = await cached(`snuk:${symbol}`, 30 * 60_000, async () => {
     const text = await fetchText(`${US_KLINE}?symbol=${enc(symbol)}&___qn=3`, {
       headers: { Referer: 'https://stock.finance.sina.com.cn' },
@@ -187,5 +224,5 @@ export async function sinaUsKline(secid, { period = 'd', limit = 240 } = {}) {
   })
   const bars = barsFrom(Array.isArray(rows) ? rows : [], limit)
   if (!bars.length) return null
-  return { secid, market: 'us', name: null, bars: withMa(bars) }
+  return { secid, market: 'us', name: null, bars: withDerived(withMa(bars)) }
 }

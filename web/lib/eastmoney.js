@@ -114,6 +114,32 @@ export function withMa(bars) {
   })
 }
 
+/**
+ * 从前收推导涨跌额 / 涨跌幅 / 振幅，**只补上游没给的**。
+ *
+ * 腾讯 / 新浪的 K 线只有 [时间,开,收,高,低,量]，压根没有这三个字段；而本机
+ * 东财的 kline 通道常年被掐（见 lib/http.js 里 undici 被封、需走 OpenSSL 那段），
+ * 于是 AI 解读拿到的全是 NA，模型只能自己说「无法评估量价与资金活跃度」。
+ *
+ * 这三个值可以精确还原，东财自己的公式就是这样：
+ *   涨跌额 = 收盘 − 前收   涨跌幅 = 涨跌额 / 前收   振幅 = (最高 − 最低) / 前收
+ * 拿 600519 的 2026-10-02 对过：1.86% / 23.04 / 2.59，与东财逐位一致。
+ * 成交额和换手率**不能**这样推（OHLCV 里没有），仍得靠行情快照补。
+ */
+export function withDerived(bars) {
+  return bars.map((bar, i) => {
+    const out = { ...bar }
+    const prev = i > 0 ? bars[i - 1].close : null
+    if (!(prev > 0) || out.close == null) return out
+    if (out.change == null) out.change = Number((out.close - prev).toFixed(2))
+    if (out.changePct == null) out.changePct = Number(((out.change / prev) * 100).toFixed(2))
+    if (out.amplitude == null && out.high != null && out.low != null) {
+      out.amplitude = Number((((out.high - out.low) / prev) * 100).toFixed(2))
+    }
+    return out
+  })
+}
+
 /** K 线（含 MA5/10/20）。字段顺序为 日期,开,收,高,低,量(手),额,振幅,涨跌%,涨跌额,换手% */
 export async function getKline(secid, { period = 'd', fq = 1, limit = 240 } = {}) {
   const klt = KLT[period] || 101
@@ -145,7 +171,7 @@ export async function getKline(secid, { period = 'd', fq = 1, limit = 240 } = {}
     code: d.code ?? null,
     market: marketOf(d.market != null && d.code ? `${d.market}.${d.code}` : secid),
     name: d.name ?? null,
-    bars: withMa(bars),
+    bars: withDerived(withMa(bars)),
   }
 }
 

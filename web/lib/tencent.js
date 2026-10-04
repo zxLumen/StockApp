@@ -1,5 +1,5 @@
 import { fetchGbk, fetchJson, cached } from './http.js'
-import { marketOf, withMa } from './eastmoney.js'
+import { marketOf, withMa, withDerived } from './eastmoney.js'
 
 // 腾讯（qt.gtimg.cn / ifzq.gtimg.cn）作为行情的第 2 数据源：东财 push2/push2his 会按来源 IP
 // 直接掐连接，腾讯这条线基本独立，能顶上快照与日/周/月 K；分钟 K 只有 A 股有。
@@ -172,5 +172,5 @@ export async function tencentKline(secid, { period = 'd', limit = 240 } = {}) {
   const rows = data?.[`qfq${p}`] ?? data?.[p]
   const bars = parseTxBars(rows, { limit })
   if (!bars.length) return null
-  return { secid, market, name: data?.qt?.[tx]?.[1] ?? null, bars: withMa(bars) }
+  return { secid, market, name: data?.qt?.[tx]?.[1] ?? null, bars: withDerived(withMa(bars)) }
 }
