@@ -71,16 +71,20 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       <div className="pick-head">
         <h2>每日推荐</h2>
         <span className="note small">
-          {data.date} · 候选池 {data.pool.size} 只 → 解读 {data.pool.candidates} 只 → Top{data.top.length} · 模型 {data.model}
+          {data.date} 生效 · 候选池 {data.pool.size} 只 → 解读 {data.pool.candidates} 只 → Top{data.top.length}
+          {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
         </span>
-        {dates.length > 1 && (
-          <select className="pick-date" value={date} onChange={(e) => pickDate(e.target.value)}>
-            {dates.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
+        {dates.length > 0 && (
+          <label className="pick-dates">
+            推荐历史
+            <select className="pick-date" value={date} onChange={(e) => pickDate(e.target.value)}>
+              {dates.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
 
@@ -132,6 +136,9 @@ function PickCard({
         </span>
         <span className={`pick-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
         <span className={`pick-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
+        <span className={`pick-since ${tone(stock.sincePickPct)}`} title="自推荐日基准价到最新（盘中为实时价）">
+          自推荐 {stock.sincePickPct == null ? '—' : `${stock.sincePickPct > 0 ? '+' : ''}${fmt(stock.sincePickPct)}%`}
+        </span>
         {ai?.score != null && <span className="pick-score">评分 {ai.score}</span>}
         <span className="pick-toggle dim">{open ? '收起' : '展开'}</span>
       </div>

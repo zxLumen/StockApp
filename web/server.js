@@ -23,7 +23,7 @@ import {
 } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
-import { loadRecommend, listRecommendDates } from './lib/recommend.js'
+import { loadRecommend, listRecommendDates, attachPerformance } from './lib/recommend.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -244,7 +244,9 @@ route('GET', /^\/api\/recommend\/dates$/, async () => ({ dates: await listRecomm
 route('GET', /^\/api\/recommend$/, async (ctx) => {
   const date = ctx.url.searchParams.get('date') || ''
   const data = await loadRecommend(DATA_DIR, date)
-  return data ?? null
+  if (!data) return null
+  // 补上「自推荐日到最新」的涨跌（公开数据，任何人可见）
+  return attachPerformance(data)
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))

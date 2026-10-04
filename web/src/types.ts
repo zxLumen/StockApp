@@ -128,11 +128,18 @@ export interface RecommendStock {
   /** 二次评审给的理由（仅进 Top10 的会有） */
   reason?: string
   pickedBy?: 'ai' | 'score'
+  /** 最新价（服务端补；盘中=实时价，收盘后=收盘价） */
+  latestPrice?: number | null
+  /** 自推荐日基准价到最新的涨跌幅（%）；取不到现价时为 null */
+  sincePickPct?: number | null
 }
 
 export interface RecommendPayload {
+  /** 推荐生效日（生成日的下一交易日） */
   date: string
   generatedAt: string
+  /** 基准价对应的日期（生成日收盘） */
+  basisDate?: string
   model: string
   pool: { size: number; candidates: number }
   top: RecommendStock[]

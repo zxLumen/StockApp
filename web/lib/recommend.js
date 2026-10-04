@@ -5,6 +5,8 @@ import path from 'node:path'
 import { streamChat, isOpenCode } from './llm.js'
 import { stockNews } from './news.js'
 import { sinaKline } from './sina.js'
+import { getQuotes } from './market.js'
+import { cached } from './http.js'
 import { readJson, writeJson } from './store.js'
 import { aSharePool, rankByMonthChange, mapLimit } from './rank.js'
 
@@ -19,6 +21,25 @@ const yi = (n) => (n == null || Number.isNaN(Number(n)) ? 'NA' : `${(Number(n) /
 /** 北京时间当天 YYYY-MM-DD。 */
 export function bjDate(d = new Date()) {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+}
+
+/** 周末判定（用 UTC 的星期分量，避免本地时区把日期挪一天）。 */
+function isWeekend(iso) {
+  const day = new Date(`${iso}T00:00:00Z`).getUTCDay()
+  return day === 0 || day === 6
+}
+
+/**
+ * 下一交易日（只跳周末；不含法定节假日 —— 那是要维护一张表的，暂不做）。
+ * 推荐脚本在「生成日」收盘后跑，文件名用**推荐生效日**（下一交易日），
+ * 这样标题里的日期 = 用户实际参考 / 买入的交易日，而不是分析发生的那天。
+ */
+export function nextTradingDay(iso) {
+  let d = new Date(`${iso}T00:00:00Z`)
+  do {
+    d = new Date(d.getTime() + 86_400_000)
+  } while (isWeekend(d.toISOString().slice(0, 10)))
+  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -264,18 +285,38 @@ export async function runRecommendDaily({
     top = [...top, ...fallback]
   }
 
-  const day = date || bjDate()
+  const generatedOn = bjDate() // 分析发生日（收盘后那天）
+  // `date` 可显式覆盖生效日（测试用）；否则 = 生成日的下一交易日。
+  // 文件以**生效日**命名：用户看 2026-10-05 就是「10-05 这份推荐」。
+  const effective = date || nextTradingDay(generatedOn)
+  // 基准价 = 生成日的收盘价（脚本收盘后跑，快照价即当天收盘）。每只的 perf 都以它为基准。
+  const basisDate = generatedOn
   const payload = {
-    date: day,
+    date: effective,
     generatedAt: new Date().toISOString(),
+    basisDate,
     model: cfg.model,
     pool: { size: pool.length, candidates: scored.length },
     top,
     candidates: scored,
   }
-  if (!dryRun) await writeJson(path.join(dataDir, 'recommend', `${day}.json`), payload)
-  onLog(`${dryRun ? '（dry-run，未落盘）' : '已写入'} ${day}: 候选 ${scored.length} / 推荐 ${top.length}`)
+  if (!dryRun) await writeJson(path.join(dataDir, 'recommend', `${effective}.json`), payload)
+  onLog(
+    `${dryRun ? '（dry-run，未落盘）' : '已写入'} ${effective}（生成于 ${generatedOn}）: 候选 ${scored.length} / 推荐 ${top.length}`,
+  )
   return payload
+}
+
+/** 「推荐失效」表现：给定推荐日价与最新价，返回涨跌百分比；任一为空/为 0 则 null。 */
+export function pctFromPick(pickPrice, latestPrice) {
+  // 注意 Number(null) === 0、Number('') === 0，会把「缺值」误当成 0 价格，
+  // 所以先显式挡掉 null / undefined / 空串，再转数字。
+  const bad = (v) => v == null || v === ''
+  if (bad(pickPrice) || bad(latestPrice)) return null
+  const p = Number(pickPrice)
+  const l = Number(latestPrice)
+  if (!Number.isFinite(p) || !Number.isFinite(l) || p === 0) return null
+  return Number(((l / p - 1) * 100).toFixed(2))
 }
 
 /** 已有的推荐日期列表（新→旧）。 */
@@ -301,4 +342,36 @@ export async function loadRecommend(dataDir, date) {
   const dates = await listRecommendDates(dataDir)
   if (!dates.length) return null
   return readJson(path.join(dataDir, 'recommend', `${dates[0]}.json`), null)
+}
+
+/**
+ * 给某天的推荐补上「自推荐日到最新」的涨跌。
+ *
+ * 基准 = 该股在**生成日**的收盘价（payload.top[].price 就是这个快照），
+ * 现价走行情降级链（东财→腾讯→新浪）的**最新价** —— 收盘后即当天收盘价。
+ * 结果按天缓存 5 分钟（价格易变，但也不必每次请求都打上游）。
+ * 取不到现价的条 sincePickPct 为 null（前端显示 —）。
+ */
+export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 5 * 60_000 } = {}) {
+  if (!payload || !Array.isArray(payload.top) || !payload.top.length) return payload
+  const secids = [...new Set(payload.top.map((s) => s.secid).filter(Boolean))]
+  let quotes = new Map()
+  try {
+    const { items } = await cached(`recperf:${payload.date}`, ttlMs, async () => {
+      const q = await quoteFn(secids)
+      return { items: q.items || [] }
+    })
+    quotes = new Map(items.map((q) => [q.secid, q]))
+  } catch {
+    /* 上游挂了就整段 null，不阻断展示 */
+  }
+  const withPerf = payload.top.map((s) => {
+    const q = quotes.get(s.secid)
+    return {
+      ...s,
+      latestPrice: q?.price ?? null,
+      sincePickPct: pctFromPick(s.price, q?.price),
+    }
+  })
+  return { ...payload, top: withPerf }
 }

@@ -1507,6 +1507,19 @@ button.member-row:hover {
 .pick-day {
   min-width: 62px;
 }
+.pick-since {
+  font-variant-numeric: tabular-nums;
+  min-width: 96px;
+  text-align: right;
+  font-weight: 600;
+}
+.pick-dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim, #8b949e);
+}
 .pick-score {
   font-size: 12px;
   padding: 1px 8px;

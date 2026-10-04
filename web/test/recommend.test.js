@@ -1,7 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { parseJsonLoose, buildReviewRows, bjDate } from '../lib/recommend.js'
+import {
+  parseJsonLoose,
+  buildReviewRows,
+  bjDate,
+  nextTradingDay,
+  pctFromPick,
+} from '../lib/recommend.js'
 
 test('parseJsonLoose：裸 JSON', () => {
   assert.deepEqual(parseJsonLoose('{"a":1}'), { a: 1 })
@@ -35,4 +41,18 @@ test('buildReviewRows：把候选拼成评审用的行', () => {
 
 test('bjDate：返回 YYYY-MM-DD', () => {
   assert.match(bjDate(new Date('2026-10-04T06:00:00Z')), /^\d{4}-\d{2}-\d{2}$/)
+})
+
+test('nextTradingDay：周中 → 次日；周五 → 下周一；周六 → 周一', () => {
+  assert.equal(nextTradingDay('2026-10-06'), '2026-10-07', '周二 → 周三')
+  assert.equal(nextTradingDay('2026-10-09'), '2026-10-12', '周五 → 下周一')
+  assert.equal(nextTradingDay('2026-10-10'), '2026-10-12', '周六 → 周一')
+})
+
+test('pctFromPick：正常计算、除零/缺值返回 null', () => {
+  assert.equal(pctFromPick(10, 12), 20)
+  assert.equal(pctFromPick(100, 88), -12)
+  assert.equal(pctFromPick(0, 12), null)
+  assert.equal(pctFromPick(null, 12), null)
+  assert.equal(pctFromPick(10, null), null)
 })
