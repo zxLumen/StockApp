@@ -135,8 +135,12 @@ function PickCard({
           <span className="dim small"> {stock.code}</span>
         </span>
         <span className={`rec-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
-        <span className={`rec-since ${tone(stock.sincePickPct)}`} title="自推荐日基准价到最新（盘中为实时价）">
-          自推荐 {stock.sincePickPct == null ? '—' : `${stock.sincePickPct > 0 ? '+' : ''}${fmt(stock.sincePickPct)}%`}
+        <span
+          className={`rec-since ${tone(stock.sincePickPct)}`}
+          title="按推荐日收盘价买入、持有至今的涨跌幅（盘中为实时价）"
+        >
+          自推荐涨幅{' '}
+          {stock.sincePickPct == null ? '—' : `${stock.sincePickPct > 0 ? '+' : ''}${fmt(stock.sincePickPct)}%`}
         </span>
         {ai?.buyScore != null && <span className="rec-score">买入 {ai.buyScore}</span>}
         <span className="rec-toggle dim">{open ? '收起' : '展开'}</span>

@@ -172,9 +172,9 @@ const preselectUser = (batch, want) =>
   '也不要只挑跌得多的**；过热/高位风险与强势趋势要自己权衡：\n' +
   '{"picks":["600418","000001"]}\n只输出 JSON。'
 
-// 第二步：从 Top100（已带各只 buyScore/摘要）里挑最终 Top10。
+// 第二步（仅当高分股多于 10 只时）：从这批**高买入评分**的股里，再挑出最值得买的 10 只。
 const REVIEW_SYSTEM =
-  '你是投资评审。从一批已评估「值得买入」程度的 A 股里，挑出最值得买入的。只输出 JSON。'
+  '你是投资评审。下列候选都已是高买入评分的股票，请从中挑出最值得买入的。只输出 JSON。'
 
 /** 拼二次评审的用户消息（导出以便单测）。 */
 export function buildReviewRows(candidates) {
@@ -256,6 +256,74 @@ export async function selectCandidates(cfg, pool, want, onLog = () => {}, { batc
 }
 
 /**
+ * 选出最终 Top10。**以买入评分为准**，评审只做「高分股太多」时的取舍：
+ *   1. 取 `buyScore ≥ highBar` 的高分股，按分降序。
+ *   2. 高分股 ≤ finalPicks 只 → **直接就是结果**（不再调评审）。
+ *   3. 高分股 > finalPicks 只 → 把这批高分股喂给评审挑 finalPicks 只；评审返回的
+ *      code 必须落在高分区内（防它又选低分），不足则按评分补高分股。
+ *   4. 高分股 < finalPicks 只 → 放宽门槛：按评分降序把剩下的（含低分）补到 finalPicks，
+ *      但仍优先高分、低分只是垫底。
+ * 结果统一按 buyScore 降序。
+ */
+export async function selectTop10(cfg, scored, finalPicks = 10, onLog = () => {}, { highBar = 60 } = {}) {
+  const byScoreDesc = (a, b) => (b.ai?.buyScore ?? -1) - (a.ai?.buyScore ?? -1)
+  const withScore = scored.filter((c) => c.ai?.buyScore != null).slice().sort(byScoreDesc)
+  const high = withScore.filter((c) => c.ai.buyScore >= highBar)
+
+  // ¥2 高分股不足 finalPicks：直接用（优先高分，再按分把低分垫底补满）
+  if (high.length <= finalPicks) {
+    onLog(`高分区(≥${highBar}) ${high.length} 只 ≤ ${finalPicks}，直接采用`)
+    const picked = high.slice()
+    if (picked.length < finalPicks) {
+      const have = new Set(picked.map((c) => c.code))
+      for (const c of withScore) {
+        if (picked.length >= finalPicks) break
+        if (!have.has(c.code)) picked.push(c)
+      }
+    }
+    return picked
+      .slice(0, finalPicks)
+      .map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: c.ai.buyScore >= highBar ? 'score' : 'fill' }))
+  }
+
+  // ¥3 高分股过多：交给评审取 10；评审结果强制落在高分区内
+  onLog(`高分区(≥${highBar}) ${high.length} 只，交评审挑 ${finalPicks} 只`)
+  let picks = []
+  try {
+    const text = await chatOnce(cfg, [
+      { role: 'system', content: REVIEW_SYSTEM },
+      { role: 'user', content: reviewUser(high, finalPicks) },
+    ])
+    picks = (parseJsonLoose(text)?.picks || [])
+      .map((p) => (typeof p === 'string' ? p : p && p.code))
+      .map((s) => String(s || '').trim())
+      .filter(Boolean)
+  } catch (err) {
+    onLog(`评审失败(${err instanceof Error ? err.message : String(err)})，直接按评分取前 ${finalPicks}`)
+  }
+  const highByCode = new Map(high.map((c) => [c.code, c]))
+  const out = []
+  const seen = new Set()
+  for (const code of picks) {
+    const c = highByCode.get(code) // 只认高分区内的（挡住评审乱选低分）
+    if (c && !seen.has(c.code)) {
+      seen.add(c.code)
+      out.push({ ...c, reason: c.ai?.summary || '', pickedBy: 'ai' })
+    }
+    if (out.length >= finalPicks) break
+  }
+  // 评审给的不够/无效 → 用高分股按分补齐
+  for (const c of high) {
+    if (out.length >= finalPicks) break
+    if (!seen.has(c.code)) {
+      seen.add(c.code)
+      out.push({ ...c, reason: c.ai?.summary || '', pickedBy: 'score' })
+    }
+  }
+  return out.sort(byScoreDesc)
+}
+
+/**
  * 跑一次每日推荐。
  * @param {object} opts
  * @param {string} opts.dataDir 数据目录（落盘 recommend/<date>.json）
@@ -264,6 +332,7 @@ export async function selectCandidates(cfg, pool, want, onLog = () => {}, { batc
  * @param {number} [opts.objTarget]   客观初筛后保留数（默认 200）
  * @param {number} [opts.topCandidates] 模型选出、进入精评的候选数（默认 100）
  * @param {number} [opts.finalPicks]    最终推荐数（默认 10）
+ * @param {number} [opts.highBar]       买入评分「高分」门槛（默认 60），只有它才进 Top10 候选
  * @param {number} [opts.concurrency]   解读并发（默认 4）
  * @param {boolean} [opts.dryRun]       只跑不落盘
  * @param {string} [opts.date]          覆盖日期
@@ -277,6 +346,7 @@ export async function runRecommendDaily({
   topCandidates = 100,
   finalPicks = 10,
   concurrency = 4,
+  highBar = 60,
   dryRun = false,
   date,
   onLog = () => {},
@@ -348,44 +418,10 @@ export async function runRecommendDaily({
   })
   const scored = withAi.filter(Boolean)
 
-  onLog('AI 二次评审挑 Top10…')
-  let picks = []
-  try {
-    const text = await chatOnce(cfg, [
-      { role: 'system', content: REVIEW_SYSTEM },
-      { role: 'user', content: reviewUser(scored, finalPicks) },
-    ])
-    const raw = parseJsonLoose(text)?.picks || []
-    // 兼容两种形状：新式 ["600418", …] 与旧式 [{code, reason}, …]
-    picks = raw
-      .map((p) => (typeof p === 'string' ? p : p && p.code))
-      .map((s) => String(s || '').trim())
-      .filter(Boolean)
-    if (process.env.RECOMMEND_DEBUG) onLog(`评审返 ${picks.length} 个：${picks.join(',')}`)
-  } catch (err) {
-    onLog(`二次评审失败(${err instanceof Error ? err.message : String(err)})，改用评分兜底`)
-  }
-  const byCode = new Map(scored.map((c) => [c.code, c]))
-  let top = picks
-    .map((code) => {
-      const c = byCode.get(code)
-      // 理由直接用该股的 AI 摘要，不再让评审单独产 reason（输出一长就撞端点截断）
-      return c ? { ...c, reason: c.ai?.summary || '', pickedBy: 'ai' } : null
-    })
-    .filter(Boolean)
-    .slice(0, finalPicks)
-  // 评审没给出足够结果时，按买入评分兜底补齐（低分也留，不硬排除）
-  if (top.length < finalPicks) {
-    const pickedCodes = new Set(top.map((c) => c.code))
-    const fallback = scored
-      .filter((c) => !pickedCodes.has(c.code) && c.ai?.buyScore != null)
-      .sort((a, b) => b.ai.buyScore - a.ai.buyScore)
-      .slice(0, finalPicks - top.length)
-      .map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'score' }))
-    top = [...top, ...fallback]
-  }
-  // 展示顺序统一按买入评分降序（评审顺序之外更贴「值不值得买」）
-  top = top.sort((a, b) => (b.ai?.buyScore ?? -1) - (a.ai?.buyScore ?? -1))
+  // 选 Top10：**先按买入评分**，高分才配进榜；评审只在「高分股超过 10 只」时用来取舍。
+  // 早先无条件把 100 只交给评审，它会选进 18 分的股（评分才是逐只精评的可靠信号）。
+  const top = await selectTop10(cfg, scored, finalPicks, onLog, { highBar })
+  onLog(`Top10：${top.map((t) => `${t.code}(${t.ai.buyScore})`).join(' ')}`)
 
   const generatedOn = bjDate() // 分析发生日（收盘后那天）
   // `date` 可显式覆盖生效日（测试用）；否则 = 生成日的下一交易日。

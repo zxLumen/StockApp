@@ -7,6 +7,7 @@ import {
   bjDate,
   nextTradingDay,
   pctFromPick,
+  selectTop10,
 } from '../lib/recommend.js'
 
 test('parseJsonLoose：裸 JSON', () => {
@@ -55,4 +56,30 @@ test('pctFromPick：正常计算、除零/缺值返回 null', () => {
   assert.equal(pctFromPick(0, 12), null)
   assert.equal(pctFromPick(null, 12), null)
   assert.equal(pctFromPick(10, null), null)
+})
+
+// selectTop10 在不触发评审（高分 ≤ finalPicks）时不需要 cfg。
+const st = (code, buyScore) => ({ code, name: code, ai: { buyScore, summary: '' } })
+
+test('selectTop10：高分不足10只 → 有多少取多少 + 低分垫底（不调评审）', async () => {
+  const scored = [st('a', 80), st('b', 70), st('c', 40), st('d', 30)]
+  const top = await selectTop10(null, scored, 10, () => {}, { highBar: 60 })
+  // 先高分（a,b），再按分把 c,d 垫底补满
+  assert.deepEqual(top.map((t) => t.code), ['a', 'b', 'c', 'd'])
+  assert.equal(top[0].pickedBy, 'score')
+  assert.equal(top[2].pickedBy, 'fill')
+})
+
+test('selectTop10：高分恰好≤10 → 不会混入 < highBar 的股', async () => {
+  const scored = [st('a', 72), st('b', 65), st('c', 18)]
+  const top = await selectTop10(null, scored, 10, () => {}, { highBar: 60 })
+  // 只有 2 只高分，补齐时会带上低分（<10 只），但顺序必须高分在前
+  assert.deepEqual(top.map((t) => t.code), ['a', 'b', 'c'])
+  assert.ok(top[0].ai.buyScore >= 60 && top[1].ai.buyScore >= 60)
+})
+
+test('selectTop10：无高分时按分降序取（低分也保留，不崩）', async () => {
+  const scored = [st('a', 30), st('b', 20)]
+  const top = await selectTop10(null, scored, 10, () => {}, { highBar: 60 })
+  assert.deepEqual(top.map((t) => t.code), ['a', 'b'])
 })
