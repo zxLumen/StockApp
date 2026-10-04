@@ -200,13 +200,16 @@ route('GET', /^\/api\/news$/, async (ctx) => {
   const kind = ctx.url.searchParams.get('kind') || 'market'
   // 美股页要美股自己的新闻，缺省仍是 A 股
   const scope = newsScope(ctx.url.searchParams.get('scope'))
+  // 两类新闻都支持 limit：前端固定只显示 Top 10，用户点「展开」才拿剩下的，
+  // 所以这里必须给够（默认 20），否则「展开」后面本来就是空的。
+  const limit = Math.min(40, Math.max(5, Number(ctx.url.searchParams.get('limit')) || 20))
   if (kind === 'stock') {
     const name = ctx.url.searchParams.get('name') || ''
     const code = ctx.url.searchParams.get('code') || ''
-    const out = await stockNews([name, code].filter(Boolean), { limit: 8, scope })
+    const out = await stockNews([name, code].filter(Boolean), { limit, scope })
     return { kind, scope, ...out }
   }
-  return { kind, scope, items: await marketNews({ limit: Number(ctx.url.searchParams.get('limit')) || 20, scope }) }
+  return { kind, scope, items: await marketNews({ limit, scope }) }
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))
@@ -279,37 +282,74 @@ route('GET', /^\/api\/ai\/models$/, async (ctx) => {
   return { models }
 })
 
+/** 喂给模型的资讯条数。够覆盖「热点/消息面」那一段，又不至于把 prompt 撑爆。 */
+const AI_NEWS_LIMIT = 10
+
 /** 把行情与新闻压成一段紧凑上下文，交给模型解读。 */
 async function buildContext(secid, name) {
+  // 市场从 secid 自己推，不信客户端传的 market —— 否则美股会被喂 A 股新闻。
+  const market = marketOf(secid)
+  const scope = newsScope(market)
   const [kline, quote, news] = await Promise.all([
     getKline(secid, { period: 'd', limit: 60 }).catch(() => null),
-    getQuotes([secid]).catch(() => []),
-    stockNews([name], { limit: 6 }).catch(() => ({ items: [] })),
+    // getQuotes 返回 { items, source }，不是数组 —— 兜底也得是同形状，
+    // 否则下面取 items[0] 会静默拿到 null，成交额/换手率/市值又全成了 NA。
+    getQuotes([secid]).catch(() => ({ items: [] })),
+    stockNews([name], { limit: AI_NEWS_LIMIT, scope }).catch(() => ({ items: [] })),
   ])
+  const q = quote?.items?.[0] ?? null
   const bars = kline?.bars || []
   const last = bars[bars.length - 1] || null
   const closes = bars.map((b) => b.close)
   const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null)
   const fmt = (n, d = 2) => (n == null ? 'NA' : n.toFixed(d))
+  // 成交额 / 换手率只能来自行情快照（OHLCV 里推不出来）；涨跌幅 / 振幅由
+  // withDerived 从前收精确还原过，快照有就优先用快照的权威值。
+  const first = (...vals) => {
+    for (const v of vals) if (v != null) return v
+    return null
+  }
+  const amount = first(q?.amount, last?.amount)
+  const turnover = first(q?.turnover, last?.turnover)
+  const changePct = first(last?.changePct, q?.changePct)
+  const amplitude = first(last?.amplitude, q?.amplitude)
+  const volume = first(last?.volume, q?.volume)
+
+  // 缺哪个就明说哪个，别打「NA」让模型自己脑补 —— 它会直接说「无法评估」。
+  const missing = [
+    ['成交额', amount],
+    ['换手率', turnover],
+    ['涨跌幅', changePct],
+    ['振幅', amplitude],
+  ]
+    .filter(([, v]) => v == null)
+    .map(([k]) => k)
+
   const lines = [
-    `标的：${name || kline?.name || secid}（${secid}）`,
-    `最新：${fmt(last?.close)}  涨跌：${fmt(last?.changePct)}%  振幅：${fmt(last?.amplitude)}%`,
-    `成交量：${fmt(last?.volume, 0)} 手  成交额：${fmt(last?.amount, 0)} 元  换手：${fmt(last?.turnover)}%`,
+    `标的：${name || kline?.name || secid}（${secid}，${market === 'us' ? '美股' : market === 'fund' ? '基金' : 'A 股'}）`,
+    `最新：${fmt(last?.close)}  涨跌：${fmt(changePct)}%  振幅：${fmt(amplitude)}%`,
+    `成交量：${fmt(volume, 0)} 手  成交额：${fmt(amount, 0)} 元  换手：${fmt(turnover)}%`,
     `MA5=${fmt(last?.ma5)}  MA10=${fmt(last?.ma10)}  MA20=${fmt(last?.ma20)}`,
     `近20日均价 ${fmt(avg(closes.slice(-20)))}  近60日均价 ${fmt(avg(closes.slice(-60)))}`,
     `区间：60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}`,
-    quote[0] ? `总市值 ${fmt(quote[0].marketCap, 0)} 元  流通市值 ${fmt(quote[0].floatCap, 0)} 元` : '',
+    q ? `总市值 ${fmt(q.marketCap, 0)}  流通市值 ${fmt(q.floatCap, 0)}` : '',
+    missing.length ? `（本次未取到：${missing.join('、')}，请勿臆测具体数值）` : '',
     '',
-    '近期相关资讯标题：',
+    `近期相关资讯标题（${scope === 'us' ? '美股' : 'A 股'}）：`,
     ...(news.items || []).map((n, i) => `${i + 1}. ${n.title}`),
   ].filter(Boolean)
+  if (!(news.items || []).length) lines.push('（本次没有取到相关资讯标题）')
   return lines.join('\n')
 }
 
 const SYSTEM_PROMPT =
   '你是一名克制的证券分析师。基于给定的行情数据与资讯标题做结构化解读，' +
-  '用简体中文输出，包含三个小标题：走势结构、量价与均线、风险提示。' +
-  '只描述数据里能看到的事实，不要编造消息，不要给出买卖建议，最后一行必须写「以上仅为数据分析，不构成投资建议」。'
+  '用简体中文输出，包含四个小标题：走势结构、量价与均线、热点/消息面、风险提示。' +
+  '「热点/消息面」必须结合给出的资讯标题来写：标题与该标的就说明它可能的影响，' +
+  '并注明「标题层面的信息、未经证实」；没有相关资讯就照实写「暂无相关热点资讯」，' +
+  '绝不凭空编造消息或传闻。风险提示里也要点出与资讯相关的风险（如事件不确定性）。' +
+  '只描述数据里能看到的事实；标注为未取到的字段就直说没有，不要估算，' +
+  '不要给出买卖建议，最后一行必须写「以上仅为数据分析，不构成投资建议」。'
 
 route('POST', /^\/api\/ai\/interpret$/, async (ctx) => {
   const body = await readBody(ctx.req, 8 * 1024)

@@ -63,11 +63,11 @@ const startStock = async (port, dataDir) => {
 }
 
 /** 跑一次 AI 解读，返回 { status, headers, frames, raw }。 */
-const interpret = async (port, { question } = {}) => {
+const interpret = async (port, { question, secid = '1.600519', name = '贵州茅台' } = {}) => {
   const res = await fetch(`http://127.0.0.1:${port}/api/ai/interpret`, {
     method: 'POST',
     headers: { cookie: 'stock_owner=test-owner', 'content-type': 'application/json' },
-    body: JSON.stringify({ secid: '1.600519', name: '贵州茅台', question }),
+    body: JSON.stringify({ secid, name, question }),
   })
   const raw = await res.text()
   return {
@@ -221,4 +221,57 @@ test('AI 解读：上游报错时以 SSE error 帧收尾，而不是把整条流
   assert.ok(err, `应收到 error 帧，实际帧：${JSON.stringify(r.frames)}`)
   // 上游的纯文本原因要能透出来，而不是被吞成「请检查网络或 Key 是否有效」
   assert.match(err.error.message, /Authentication Fails \(governor\)/)
+})
+/** 把上游收到的 messages 拍平成一段纯文本，方便断言。 */
+const promptText = (up) =>
+  (up.seen.body.messages ?? [])
+    .map((m) => `${m.role}\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+    .join('\n---\n')
+
+/** 起一套带假上游的最小环境，返回 { interpret, up, cleanup }。 */
+const withFakeLLM = async (t) => {
+  const up = await startFakeUpstream()
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'stock-interpret-ctx-'))
+  await fs.writeFile(
+    path.join(dataDir, 'settings.json'),
+    JSON.stringify({
+      provider: 'deepseek',
+      providers: {
+        deepseek: { model: 'test-model', baseURL: `http://127.0.0.1:${up.port}/` },
+      },
+      maxTokens: 256,
+      temperature: 0.2,
+      visitorAi: true,
+    }),
+  )
+  await fs.writeFile(path.join(dataDir, 'keys.json'), JSON.stringify({ deepseek: 'sk-test-key' }), { mode: 0o600 })
+  const port = await freePort()
+  const proc = await startStock(port, dataDir)
+  t.after(async () => {
+    proc.kill()
+    up.server.close()
+    await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {})
+  })
+  return { up, interpret: (opts) => interpret(port, opts) }
+}
+
+test('AI 解读：提示词要求四个标题，其中包含「热点/消息面」并强制引用资讯', async (t) => {
+  const { up, interpret: call } = await withFakeLLM(t)
+  const r = await call()
+  assert.equal(r.status, 200, `期望 200，实际 ${r.status}`)
+  const text = promptText(up)
+  // 少一个标题模型就会漏写一段；消息面这一段是本次新增的
+  for (const h of ['走势结构', '量价与均线', '热点/消息面', '风险提示']) {
+    assert.ok(text.includes(h), `提示词缺少标题：${h}`)
+  }
+  assert.match(text, /资讯|新闻/)
+})
+
+test('AI 解读：市场 scope 由服务端从 secid 推导，美股不能被喂 A 股新闻', async (t) => {
+  const { up, interpret: call } = await withFakeLLM(t)
+  const r = await call({ secid: '105.AAPL', name: '苹果' })
+  assert.equal(r.status, 200, `期望 200，实际 ${r.status}`)
+  const text = promptText(up)
+  assert.ok(/美股|纳斯达克|纽交所|美国/.test(text), `美股 secid 的上下文没标出美股口径：${text.slice(0, 400)}`)
+  assert.equal(/沪深|上证|深证|A股|A 股/.test(text), false, `美股上下文混进了 A 股口径：${text.slice(0, 400)}`)
 })
