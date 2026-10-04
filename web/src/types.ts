@@ -1,5 +1,10 @@
-export type Market = 'cn' | 'us' | 'fund'
+/** 顶级页签。`board` 与沪深港 / 美股齐平，不是某个市场下的子页。 */
+export type Market = 'board' | 'cn' | 'us' | 'fund'
 export type BoardKind = 'industry' | 'concept'
+/** 中证一级行业（官方口径的 10 个，与同花顺分类无法互相映射，独立成类）。 */
+export type CsiBoardKind = 'csi'
+/** 板块搜索结果的分类标签。 */
+export type BoardCategory = BoardKind | CsiBoardKind
 
 export interface Quote {
   secid: string
@@ -77,6 +82,16 @@ export interface Board {
   leader: string | null
   leaderCode: string | null
   leaderPct: number | null
+  /** 分类：同花顺行业 / 同花顺概念 / 中证行业 */
+  kind?: BoardCategory
+  /** 概念成分股页要用 cid（platecode 页恒为 0 条成员） */
+  cid?: string | null
+  /** 同花顺行业列表给的量额与资金流（新浪源为 null） */
+  volume?: number | null
+  amount?: number | null
+  netInflow?: number | null
+  /** 中证指数全称，如「中证能源指数」 */
+  fullName?: string | null
 }
 
 export interface BoardMember {
@@ -85,6 +100,7 @@ export interface BoardMember {
   name: string
   price: number | null
   changePct: number | null
+  change?: number | null
 }
 
 export interface NewsItem {
@@ -148,6 +164,8 @@ export interface Selection {
   code: string
   name: string
   market: Market
+  /** 概念板块成分股页用的 cid（platecode 打开恒 0 条），列表 / 搜索结果里带过来 */
+  cid?: string | null
 }
 
 export interface AiUsage {

@@ -1,43 +1,23 @@
-import { useEffect, useState } from 'react'
-import { fetchBoards, fetchQuotes } from '../api'
+import { fetchQuotes } from '../api'
 import { fmtNum, fmtSigned, trendClass } from '../format'
-import SourceBadge from './SourceBadge'
-import type { Board, BoardKind, Market, Quote, Selection, WatchItem } from '../types'
+import type { Market, Quote, Selection, WatchItem } from '../types'
 
 interface Props {
-  market: Exclude<Market, 'fund'>
+  market: Exclude<Market, 'fund' | 'board'>
   watchlist: WatchItem[]
   quotes: Record<string, Quote>
   onPick: (s: Selection) => void
-  onPickBoard: (s: Selection) => void
   onRemove: (item: WatchItem) => void
 }
 
-/** 侧栏：自选股（含实时行情）+ 行业/概念板块榜。 */
-export default function Sidebar({ market, watchlist, quotes, onPick, onPickBoard, onRemove }: Props) {
-  const [kind, setKind] = useState<BoardKind>('industry')
-  const [boards, setBoards] = useState<Board[]>([])
-  const [boardSource, setBoardSource] = useState<string>()
-  const [boardSourceLabel, setBoardSourceLabel] = useState<string>()
-  const [err, setErr] = useState('')
-
+/**
+ * 侧栏：自选股（含实时行情）。
+ *
+ * 板块榜原来也在这块，但它已经是顶级页签了（主区的 BoardHome），这里再放一份
+ * 只会让人误以为是两套数据 —— 所以整块搬走了。
+ */
+export default function Sidebar({ market, watchlist, quotes, onPick, onRemove }: Props) {
   const list = watchlist.filter((w) => (market === 'us' ? w.market === 'us' : w.market !== 'us'))
-
-  useEffect(() => {
-    const ac = new AbortController()
-    setErr('')
-    fetchBoards(kind, 16, ac.signal)
-      .then((r) => {
-        setBoards(r.items)
-        setBoardSource(r.source)
-        setBoardSourceLabel(r.sourceLabel)
-      })
-      .catch((e: unknown) => {
-        if (e instanceof Error && e.name === 'AbortError') return
-        setErr(e instanceof Error ? e.message : '板块加载失败')
-      })
-    return () => ac.abort()
-  }, [kind])
 
   return (
     <aside className="side">
@@ -76,42 +56,6 @@ export default function Sidebar({ market, watchlist, quotes, onPick, onPickBoard
         </ul>
       </section>
 
-      <section className="side-block">
-        <div className="side-head">
-          <h3 className="side-title">
-            板块
-            <SourceBadge source={boardSource} label={boardSourceLabel} />
-          </h3>
-          <div className="mini-tabs">
-            <button className={`chip${kind === 'industry' ? ' on' : ''}`} onClick={() => setKind('industry')}>
-              行业
-            </button>
-            <button className={`chip${kind === 'concept' ? ' on' : ''}`} onClick={() => setKind('concept')}>
-              概念
-            </button>
-          </div>
-        </div>
-        {err && <div className="note err small">板块榜暂不可用：{err}</div>}
-        <ul className="boards">
-          {boards.map((b, i) => (
-            <li key={b.code}>
-              <button
-                className="board-row"
-                title="查看板块成分股"
-                onClick={() => onPickBoard({ kind: 'board', secid: b.secid, code: b.code, name: b.name, market })}
-              >
-                <span className="board-rank">{i + 1}</span>
-                <span className="board-name">{b.name}</span>
-                <span className="board-leader dim">{b.leader ?? ''}</span>
-                <span className={`board-pct ${trendClass(b.changePct, 'cn')}`}>
-                  {fmtSigned(b.changePct, 2, '%')}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <div className="note small">点板块查看成分股；东财受限时自动改用新浪。</div>
-      </section>
     </aside>
   )
 }

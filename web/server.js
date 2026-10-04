@@ -12,7 +12,15 @@ import {
   INDEX_GROUPS,
   marketOf,
 } from './lib/eastmoney.js'
-import { getBoards, getBoardMembers, getKline, getQuotes, SOURCES, sourceLabel } from './lib/market.js'
+import {
+  getBoards,
+  getBoardMembers,
+  getKline,
+  getQuotes,
+  searchBoards,
+  SOURCES,
+  sourceLabel,
+} from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
 import { readJson, writeJson } from './lib/store.js'
@@ -128,6 +136,14 @@ route('GET', /^\/api\/market\/indices$/, async (ctx) => {
 route('GET', /^\/api\/market\/search$/, async (ctx) => {
   const q = ctx.url.searchParams.get('q') || ''
   const scope = ctx.url.searchParams.get('scope') || ''
+  // scope=board：板块走本地全量索引（同花顺 90 行业 + 293 概念 + 中证 10 行业），
+  // 不依赖任何被封 / 被限流的上游，所以和个股搜索分开走。
+  if (scope === 'board') {
+    const raw = ctx.url.searchParams.get('kind') || ''
+    const kind = ['industry', 'concept', 'csi'].includes(raw) ? raw : ''
+    const items = await searchBoards(q, { kind, limit: 20 })
+    return { scope, kind, items }
+  }
   let items = await searchSuggest(q, { limit: 14 })
   // scope=cn = 「沪深港」一个页签，港股（market=hk）要一起显示
   if (scope === 'cn') items = items.filter((x) => x.market === 'cn' || x.market === 'hk')
@@ -156,8 +172,10 @@ route('GET', /^\/api\/market\/quote$/, async (ctx) => {
 })
 
 route('GET', /^\/api\/market\/board$/, async (ctx) => {
-  const kind = ctx.url.searchParams.get('kind') === 'concept' ? 'concept' : 'industry'
-  const limit = Math.min(60, Number(ctx.url.searchParams.get('limit')) || 24)
+  const raw = ctx.url.searchParams.get('kind') || 'industry'
+  const kind = ['industry', 'concept', 'csi'].includes(raw) ? raw : 'industry'
+  // 搜索放开后列表不再截到 24 条：同花顺行业 90 / 概念 293，全量给到 300
+  const limit = Math.min(300, Number(ctx.url.searchParams.get('limit')) || 300)
   const { items, source } = await getBoards(kind, { limit })
   return { kind, items, source, sourceLabel: sourceLabel(source) }
 })
@@ -165,9 +183,15 @@ route('GET', /^\/api\/market\/board$/, async (ctx) => {
 route('GET', /^\/api\/market\/board\/members$/, async (ctx) => {
   const name = ctx.url.searchParams.get('name') || ''
   const code = ctx.url.searchParams.get('code') || ''
+  const raw = ctx.url.searchParams.get('kind') || ''
+  const kind = ['industry', 'concept'].includes(raw) ? raw : ''
+  const cid = ctx.url.searchParams.get('cid') || ''
   if (!name && !code) throw new HttpError(400, '缺少 name 或 code')
-  const { items, source } = await getBoardMembers({ code, name }, { limit: 12 })
-  return { name, items, source, sourceLabel: sourceLabel(source) }
+  const limit = Math.min(50, Number(ctx.url.searchParams.get('limit')) || 30)
+  const { items, source, board } = await getBoardMembers({ code, name, kind, cid }, { limit })
+  // board 是板块自身的涨跌家数 / 领涨股 / 净流入，服务端从内存索引里带出来，
+  // 前端不用为了这几个字段再拉一遍 90~293 条的列表接口
+  return { name, items, source, sourceLabel: sourceLabel(source), board: board ?? null }
 })
 
 route('GET', /^\/api\/fund\/suggest$/, async (ctx) => {
@@ -286,10 +310,12 @@ route('GET', /^\/api\/ai\/models$/, async (ctx) => {
 const AI_NEWS_LIMIT = 10
 
 /** 把行情与新闻压成一段紧凑上下文，交给模型解读。 */
-async function buildContext(secid, name) {
+export async function buildContext(secid, name) {
   // 市场从 secid 自己推，不信客户端传的 market —— 否则美股会被喂 A 股新闻。
   const market = marketOf(secid)
   const scope = newsScope(market)
+  const isBoard = market === 'board'
+  const board = isBoard ? await boardContext(secid, name).catch(() => null) : null
   const [kline, quote, news] = await Promise.all([
     getKline(secid, { period: 'd', limit: 60 }).catch(() => null),
     // getQuotes 返回 { items, source }，不是数组 —— 兜底也得是同形状，
@@ -316,23 +342,27 @@ async function buildContext(secid, name) {
   const volume = first(last?.volume, q?.volume)
 
   // 缺哪个就明说哪个，别打「NA」让模型自己脑补 —— 它会直接说「无法评估」。
+  // 板块没有「换手率 / 市值」这回事（成分股 dozens 只，各自动态），列进去只会让
+  // 模型反复念叨「未取到」，所以按市场类型决定要查哪些。
   const missing = [
     ['成交额', amount],
-    ['换手率', turnover],
+    ...(isBoard ? [] : [['换手率', turnover]]),
     ['涨跌幅', changePct],
     ['振幅', amplitude],
   ]
     .filter(([, v]) => v == null)
     .map(([k]) => k)
 
+  const marketLabel = { us: '美股', fund: '基金', board: '板块' }[market] ?? 'A 股'
   const lines = [
-    `标的：${name || kline?.name || secid}（${secid}，${market === 'us' ? '美股' : market === 'fund' ? '基金' : 'A 股'}）`,
+    `标的：${name || kline?.name || secid}（${secid}，${marketLabel}）`,
+    ...(isBoard ? boardLines(board) : []),
     `最新：${fmt(last?.close)}  涨跌：${fmt(changePct)}%  振幅：${fmt(amplitude)}%`,
-    `成交量：${fmt(volume, 0)} 手  成交额：${fmt(amount, 0)} 元  换手：${fmt(turnover)}%`,
+    `成交量：${fmt(volume, 0)} 手  成交额：${fmt(amount, 0)} 元${isBoard ? '' : `  换手：${fmt(turnover)}%`}`,
     `MA5=${fmt(last?.ma5)}  MA10=${fmt(last?.ma10)}  MA20=${fmt(last?.ma20)}`,
     `近20日均价 ${fmt(avg(closes.slice(-20)))}  近60日均价 ${fmt(avg(closes.slice(-60)))}`,
     `区间：60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}`,
-    q ? `总市值 ${fmt(q.marketCap, 0)}  流通市值 ${fmt(q.floatCap, 0)}` : '',
+    ...(isBoard ? [] : [q ? `总市值 ${fmt(q.marketCap, 0)}  流通市值 ${fmt(q.floatCap, 0)}` : '']),
     missing.length ? `（本次未取到：${missing.join('、')}，请勿臆测具体数值）` : '',
     '',
     `近期相关资讯标题（${scope === 'us' ? '美股' : 'A 股'}）：`,
@@ -342,14 +372,59 @@ async function buildContext(secid, name) {
   return lines.join('\n')
 }
 
+/**
+ * 板块专属上下文：成分股数量、涨跌家数、领涨股。
+ * 这些是板块最关键的「形态」信息 —— 90 只成分里 10 涨 179 跌，比指数那根 K 线
+ * 更能说明资金在往哪走。拿不到就返回 null，调用方照常只给行情。
+ */
+async function boardContext(secid, name) {
+  const code = String(secid).split('.')[1] || ''
+  if (!/^\d{6}$/.test(code)) return null
+  const kind = /^(885|886)\d{3}$/.test(code) ? 'concept' : 'industry'
+  const { items, board } = await getBoardMembers({ code, name: name || code, kind }, { limit: 30 })
+  return { count: items.length, partial: true, meta: board || null }
+}
+
+export function boardLines(board) {
+  if (!board) return []
+  const m = board.meta || {}
+  const out = []
+  if (board.count) {
+    // 同花顺只内联首页成员，不是全量，得说清楚，否则模型会当成「该板块就这么多股票」
+    out.push(`成分股：接口返回 ${board.count} 只（同花顺板块页只内联首页，非全量）`)
+  }
+  if (m.up != null || m.down != null) out.push(`涨跌家数：涨 ${m.up ?? '?'} / 跌 ${m.down ?? '?'}`)
+  if (m.leader) out.push(`领涨股：${m.leader}${m.leaderPct != null ? ` ${m.leaderPct}%` : ''}`)
+  if (m.netInflow != null) out.push(`主力净流入：${m.netInflow} 亿`)
+  return out
+}
+
 const SYSTEM_PROMPT =
-  '你是一名克制的证券分析师。基于给定的行情数据与资讯标题做结构化解读，' +
-  '用简体中文输出，包含四个小标题：走势结构、量价与均线、热点/消息面、风险提示。' +
-  '「热点/消息面」必须结合给出的资讯标题来写：标题与该标的就说明它可能的影响，' +
-  '并注明「标题层面的信息、未经证实」；没有相关资讯就照实写「暂无相关热点资讯」，' +
-  '绝不凭空编造消息或传闻。风险提示里也要点出与资讯相关的风险（如事件不确定性）。' +
-  '只描述数据里能看到的事实；标注为未取到的字段就直说没有，不要估算，' +
-  '不要给出买卖建议，最后一行必须写「以上仅为数据分析，不构成投资建议」。'
+  '你是一名克制的证券分析师。基于给定的行情数据与资讯标题做结构化解读，用简体中文输出。' +
+  '**先分项分析、最后再下结论**：不要一上来就抛判断 —— 顶部横幅要的是你把所有分项都看过一遍之后' +
+  '综合出来的定论，不是顺口说的第一个词。\n' +
+  '**必须严格按下面的小标题顺序输出，一个都不能少，也不要另加小标题：**\n' +
+  '## 短期（1-2 周）\n' +
+  '## 中期（1-3 个月）\n' +
+  '## 长期（6-12 个月）\n' +
+  '上面三段各给可执行的观察/应对倾向（观望 / 分批参与 / 减仓等）与**量化参考**：' +
+  '尽量带上支撑位、压力位、目标区间、涨跌幅幅度这类具体数字，' +
+  '数字后面用「%」「倍」「点」等单位。数据里推不出来的就明说「无数据支撑」，不要编。\n' +
+  '## 走势结构\n' +
+  '## 量价与均线\n' +
+  '## 热点/消息面\n' +
+  '必须结合给出的资讯标题来写：标题与该标的就说明它可能的影响，并注明「标题层面的信息、未经证实」；' +
+  '没有相关资讯就照实写「暂无相关热点资讯」，绝不凭空编造消息或传闻。\n' +
+  '## 风险提示\n' +
+  '也要点出与资讯相关的风险（如事件不确定性），以及上面各段里彼此矛盾的地方。\n' +
+  '## 结论\n' +
+  '**这一节放在最后**，是对上面所有分项的归纳。第一行只写倾向判断，用**加粗**包住，' +
+  '必须是「看多」「中性」「看空」三者之一，例：**中性**，短期偏多但长期均线压制，方向暂不明朗。\n' +
+  '随后用 2-4 句说明这个判断怎么来的 —— 要点出分项之间哪些互相支持、哪些互相矛盾，' +
+  '为什么最后落在这一档，而不是把前面某一段原样抄一遍。\n' +
+  '只描述数据里能看到的事实；标注为未取到的字段就直说没有，不要估算。' +
+  '结论段只给倾向判断和理由，不要写成买卖指令（如「建议在 X 元买入」）。' +
+  '最后一行必须写「以上仅为数据分析，不构成投资建议」。'
 
 route('POST', /^\/api\/ai\/interpret$/, async (ctx) => {
   const body = await readBody(ctx.req, 8 * 1024)

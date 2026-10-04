@@ -60,7 +60,9 @@ const HK_INDEX_CODES = new Set(['HSI', 'HSCEI', 'HSTECH', 'HSCCI', 'HSCCOEX', 'H
 /** 东财 secid → 市场。0/1=A股(沪/深) 116=港股 100/105/106/107/155=美股 90=板块 */
 export function marketOf(secid) {
   const [m, code = ''] = String(secid || '').split('.')
-  if (m === '90') return 'board'
+  // 90 = 板块（东财 90.BKxxxx / 同花顺 90.881xxx、90.885xxx、90.886xxx）
+  // 91 = 中证一级行业指数（91.000928 … 91.000937），同样是板块口径
+  if (m === '90' || m === '91') return 'board'
   if (m === '116') return 'hk'
   if (HK_INDEX_CODES.has(code.toUpperCase())) return 'hk'
   if (['100', '105', '106', '107', '153', '155'].includes(m)) return 'us'

@@ -1,8 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { interpret } from '../api'
 import { reportAiState } from '../aiStatus'
+import {
+  extractVerdict,
+  Highlighted,
+  sectionTone,
+  type Tone,
+} from '../lib/aiHighlight'
 import type { AiUsage } from '../types'
 
 /**
@@ -16,6 +22,74 @@ const mdComponents: Components = {
     void node
     return <a {...props} target="_blank" rel="noreferrer noopener" />
   },
+  // 正文里的结论词和量化指标统一走高亮，标题额外挂语义分类（短期/中期/长期…）
+  p: ({ children, ...props }) => (
+    <p {...props}>
+      <Highlighted>{children}</Highlighted>
+    </p>
+  ),
+  li: ({ children, ...props }) => (
+    <li {...props}>
+      <Highlighted>{children}</Highlighted>
+    </li>
+  ),
+  td: ({ children, ...props }) => (
+    <td {...props}>
+      <Highlighted>{children}</Highlighted>
+    </td>
+  ),
+  th: ({ children, ...props }) => (
+    <th {...props}>
+      <Highlighted>{children}</Highlighted>
+    </th>
+  ),
+  strong: ({ children, ...props }) => (
+    <strong {...props}>
+      <Highlighted>{children}</Highlighted>
+    </strong>
+  ),
+  h2: ({ children, ...props }) => <SectionHeading tag="h2" {...props}>{children}</SectionHeading>,
+  h3: ({ children, ...props }) => <SectionHeading tag="h3" {...props}>{children}</SectionHeading>,
+}
+
+function SectionHeading({
+  tag,
+  children,
+  ...props
+}: { tag: 'h2' | 'h3' } & React.ComponentPropsWithoutRef<'h2'>) {
+  const sec = sectionTone(children)
+  const Tag = tag
+  return (
+    <Tag
+      {...props}
+      className={sec ? `ai-sec ai-sec-${sec.tone}` : undefined}
+      data-sec={sec?.tag}
+    >
+      <Highlighted>{children}</Highlighted>
+    </Tag>
+  )
+}
+
+/**
+ * 整体结论横幅：把 AI 最后定的「看多 / 中性 / 看空」提到最上面，长文里不用自己找。
+ *
+ * label 写「整体结论」而不是「结论」，是为了和正文里的 `## 结论` 小节区分开：
+ * 横幅给的是**综合所有分项之后**的定论，正文那个小节是同一句话的落点，
+ * 两个都叫「结论」会让人以为是两个不同的判断。
+ */
+function VerdictBanner({ tone, label }: { tone: Tone; label: string }) {
+  const hint: Record<Tone, string> = {
+    up: '偏多 —— 风险收益比相对有利，仍需设止损',
+    down: '偏空 —— 上行空间受限，注意控制仓位',
+    flat: '中性 —— 缺乏明确方向，等待信号',
+  }
+  return (
+    <div className={`ai-verdict is-${tone}`}>
+      <span className="ai-verdict-label">整体结论</span>
+      <strong className="ai-verdict-word">{label}</strong>
+      <span className="ai-verdict-hint">{hint[tone]}</span>
+    </div>
+  )
 }
 
 interface Props {
@@ -24,7 +98,11 @@ interface Props {
   enabled: boolean
 }
 
-const PRESETS = ['这波走势该怎么理解？', '量价和均线有什么信号？', '主要风险在哪？']
+const PRESETS = [
+  '短期该怎么操作？',
+  '中长期的逻辑是什么？',
+  '主要风险在哪？',
+]
 
 export default function AiPanel({ secid, name, enabled }: Props) {
   const [question, setQuestion] = useState('')
@@ -33,6 +111,8 @@ export default function AiPanel({ secid, name, enabled }: Props) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const abortRef = useRef<AbortController | null>(null)
+  // 结论横幅跟着流式输出实时出现：模型一旦吐出「看多」就顶上，不用等全文结束
+  const verdict = useMemo(() => extractVerdict(out), [out])
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -132,6 +212,7 @@ export default function AiPanel({ secid, name, enabled }: Props) {
       {err && <div className="note err">{err}</div>}
       {out && (
         <>
+          {verdict && <VerdictBanner tone={verdict.tone} label={verdict.label} />}
           {/* ai-md 管排版；外层保留 .ai-out 的边框/滚动/上限 */}
           <div className="ai-out ai-md">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>

@@ -135,7 +135,17 @@ h3 {
 .search {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 4px;
+}
+
+/* 板块搜索的分类切换：整行独占一行，input 自动换到下一行 */
+.search-tabs {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .search input {
@@ -1016,6 +1026,11 @@ h3 {
   vertical-align: middle;
 }
 
+.src-badge-primary {
+  color: var(--zx-accent);
+  border-color: rgb(74 142 240 / 40%);
+}
+
 .detail-id .src-badge {
   display: inline-block;
   margin-top: 4px;
@@ -1178,4 +1193,247 @@ button.member-row:hover {
 .member-pct {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- AI 解读：结论高亮 + 量化指标 ---------- */
+
+/* 顶部结论横幅。抓的是模型自己下的判断（看多/中性/看空），
+   提示语是固定文案不是模型输出 —— 模型只给倾向，不给操作指令。 */
+.ai-verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--zx-border);
+  border-left-width: 4px;
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel2);
+}
+
+.ai-verdict-label {
+  color: var(--zx-dim);
+  font-size: 12px;
+}
+
+.ai-verdict-word {
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.ai-verdict-hint {
+  color: var(--zx-dim);
+  font-size: 12px;
+}
+
+.ai-verdict.is-up {
+  border-left-color: var(--zx-up);
+}
+.ai-verdict.is-up .ai-verdict-word {
+  color: var(--zx-up);
+}
+.ai-verdict.is-down {
+  border-left-color: var(--zx-down);
+}
+.ai-verdict.is-down .ai-verdict-word {
+  color: var(--zx-down);
+}
+.ai-verdict.is-flat {
+  border-left-color: var(--zx-accent);
+}
+.ai-verdict.is-flat .ai-verdict-word {
+  color: var(--zx-accent);
+}
+
+/* 结论词胶囊。用 A 股口径：红涨绿跌，所以「看多」是红、「看空」是绿。 */
+.ai-hl {
+  background: none;
+  color: inherit;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.ai-hl-up {
+  color: #fff;
+  background: var(--zx-up);
+}
+
+.ai-hl-down {
+  color: #fff;
+  background: var(--zx-down);
+}
+
+.ai-hl-flat {
+  color: #fff;
+  background: #6b7688;
+}
+
+/* 量化指标：等宽 + 淡底，让「-2.92% / 16092 点 / 1.5 倍」这类数字成组可扫读 */
+.ai-hl-num {
+  color: var(--zx-accent);
+  background: rgb(74 142 240 / 14%);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 带符号的涨跌幅按方向染色，方向本身也是「形态」的一部分 */
+.ai-hl-num.ai-hl-up {
+  color: var(--zx-up);
+  background: rgb(242 85 90 / 15%);
+}
+
+.ai-hl-num.ai-hl-down {
+  color: var(--zx-down);
+  background: rgb(33 181 115 / 15%);
+}
+
+/* 小标题语义分类：左侧色条 + 角标，短/中/长期一眼分层 */
+.ai-sec {
+  position: relative;
+  padding-left: 10px;
+  margin-left: -4px;
+  border-left: 3px solid var(--zx-border);
+}
+
+.ai-sec::before {
+  content: attr(data-sec);
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: 2px;
+  color: var(--zx-dim);
+  background: var(--zx-panel2);
+}
+
+.ai-sec-verdict {
+  border-left-color: var(--zx-accent);
+}
+.ai-sec-short {
+  border-left-color: #e0a33e;
+}
+.ai-sec-mid {
+  border-left-color: #4a8ef0;
+}
+.ai-sec-long {
+  border-left-color: #9b6ce0;
+}
+.ai-sec-risk {
+  border-left-color: var(--zx-down);
+}
+
+/* ---------- 板块首页 ---------- */
+.board-home .detail-head {
+  align-items: center;
+}
+
+.board-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 8px;
+}
+
+.board-filter input {
+  flex: 1;
+  max-width: 360px;
+}
+
+/* 主区列表比侧栏宽：多出代码、涨跌家数、成交额三列 */
+.boards-wide {
+  max-height: none;
+}
+
+.boards-wide {
+  /* 统计列数量由 BoardHome 按数据可得性算好写进来：
+     行业 3（涨跌家数/成交额/主力净流入）、概念 1（主力净流入）、中证 0。
+     用 repeat() 而不是写死 6/7/8 条模板，加列不用再动 CSS。 */
+  --board-cols: 0;
+}
+
+.boards-wide .board-row {
+  grid-template-columns:
+    26px minmax(0, 1fr) auto
+    repeat(var(--board-cols, 0), auto)
+    auto;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--zx-grid);
+}
+
+.board-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.board-updown {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.board-amt {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* 概念没有涨跌家数，用主力净流入顶上（293/293 都有），别留一个空列 */
+.board-inflow {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.board-stat {
+  min-width: 0;
+}
+
+/* 表头：复用 .board-row 的 grid，所以和数据列天然对齐 */
+.board-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--zx-panel);
+  font-size: 11px;
+  color: var(--zx-dim);
+}
+
+.board-head button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.board-head button:hover {
+  color: var(--zx-text);
+  text-decoration: underline;
+}
+
+.board-head button:focus-visible {
+  outline: 1px solid var(--zx-accent);
+  outline-offset: 2px;
+}
+
+.board-head [aria-sort='descending'],
+.board-head [aria-sort='ascending'] {
+  color: var(--zx-accent);
+}
+
+.board-head-name {
+  text-align: left;
+}
+
+.board-head-num,
+.board-head-pct {
+  text-align: right;
+  justify-content: flex-end;
 }

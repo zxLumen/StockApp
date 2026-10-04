@@ -2,6 +2,7 @@ import type {
   AiUsage,
   Bar,
   Board,
+  BoardCategory,
   BoardMember,
   FundItem,
   FundNavPoint,
@@ -66,15 +67,35 @@ export const fetchQuotes = (secids: string[], signal?: AbortSignal) =>
     signal,
   )
 
-export const fetchBoards = (kind: 'industry' | 'concept', limit = 20, signal?: AbortSignal) =>
+export const fetchBoards = (kind: BoardCategory, limit = 300, signal?: AbortSignal) =>
   get<{ kind: string; items: Board[]; source?: string; sourceLabel?: string }>(
     `/api/market/board?kind=${kind}&limit=${limit}`,
     signal,
   )
 
-export const fetchBoardMembers = (code: string, name: string, signal?: AbortSignal) =>
-  get<{ name: string; items: BoardMember[]; source?: string; sourceLabel?: string }>(
-    `/api/market/board/members?code=${encodeURIComponent(code)}&name=${encodeURIComponent(name)}`,
+export const fetchBoardMembers = (
+  code: string,
+  name: string,
+  kind?: BoardCategory,
+  cid?: string | null,
+  signal?: AbortSignal,
+) => {
+  const qs = new URLSearchParams({ code, name })
+  if (kind) qs.set('kind', kind)
+  if (cid) qs.set('cid', cid)
+  return get<{
+    name: string
+    items: BoardMember[]
+    source?: string
+    sourceLabel?: string
+    board?: Board | null
+  }>(`/api/market/board/members?${qs.toString()}`, signal)
+}
+
+/** 板块搜索：服务端在同花顺全量索引（90 行业 + 293 概念）+ 中证 10 行业上本地匹配。 */
+export const searchBoards = (q: string, kind?: BoardCategory, signal?: AbortSignal) =>
+  get<{ items: Board[] }>(
+    `/api/market/search?q=${encodeURIComponent(q)}&scope=board${kind ? `&kind=${kind}` : ''}`,
     signal,
   )
 

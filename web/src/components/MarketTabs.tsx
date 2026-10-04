@@ -1,6 +1,7 @@
 import type { Market } from '../types'
 
 const TABS: { key: Market; label: string }[] = [
+  { key: 'board', label: '板块' },
   { key: 'cn', label: '沪深港' },
   { key: 'us', label: '美股' },
   { key: 'fund', label: '基金' },

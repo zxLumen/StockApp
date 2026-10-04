@@ -193,10 +193,10 @@ test('dedupeShares: A/C 份额只留一只，优先 A', () => {
   assert.ok(tk, '应该保留 A 份额')
 })
 
-test('SOURCES: 降级链顺序为 东财 → 腾讯 → 新浪', () => {
+test('SOURCES: 个股降级链为 东财 → 腾讯 → 新浪，板块追加 同花顺 → 中证', () => {
   assert.deepEqual(
     SOURCES.map((s) => s.id),
-    ['eastmoney', 'tencent', 'sina'],
+    ['eastmoney', 'tencent', 'sina', 'ths', 'csi'],
   )
   assert.equal(sourceLabel('tencent'), '腾讯')
   assert.equal(sourceLabel('sina'), '新浪')

@@ -5,6 +5,7 @@ import HomeView from './components/HomeView'
 import DetailView from './components/DetailView'
 import FundView from './components/FundView'
 import FundHome from './components/FundHome'
+import BoardHome from './components/BoardHome'
 import BoardView from './components/BoardView'
 import Sidebar from './components/Sidebar'
 import SettingsPanel from './components/SettingsPanel'
@@ -76,7 +77,10 @@ export default function App() {
   const pick = useCallback(
     (s: Selection) => {
       setSelection(s)
-      setMarket(s.market)
+      // 板块 Selection.market 记的是 'cn'（只为了红涨绿跌配色），所以这里**不能**
+      // 无脑 setMarket(s.market) —— 否则在「板块」页签点一个板块，页签会被踢回沪深港，
+      // 板块就又不跟沪深港齐平了。板块点开就留在板块页签。
+      if (s.kind !== 'board') setMarket(s.market)
     },
     [setSelection, setMarket],
   )
@@ -119,6 +123,7 @@ export default function App() {
 
   const stockMarket = market === 'us' ? 'us' : 'cn'
   const showStockDetail = market !== 'fund' && selection?.kind === 'stock'
+  // 板块详情在「板块」页签和沪深港页签下都能打开（搜索 / 自选股跳过来的）
   const showBoardDetail = market !== 'fund' && selection?.kind === 'board'
   const showFundDetail = market === 'fund' && selection?.kind === 'fund'
   const fundWatch = watchlist.filter((w) => w.kind === 'fund')
@@ -151,7 +156,12 @@ export default function App() {
               onBack={() => setSelection(null)}
             />
           ) : showBoardDetail && selection ? (
-            <BoardView selection={selection} onPick={pick} onBack={() => setSelection(null)} />
+            <BoardView
+              selection={selection}
+              aiEnabled={status?.ai.enabled ?? false}
+              onPick={pick}
+              onBack={() => setSelection(null)}
+            />
           ) : showFundDetail && selection ? (
             <FundView
               selection={selection}
@@ -167,6 +177,8 @@ export default function App() {
               }
               onRemove={(w) => void removeFromWatch(w)}
             />
+          ) : market === 'board' ? (
+            <BoardHome onPick={pick} />
           ) : (
             <HomeView market={stockMarket} onPick={pick} />
           )}
@@ -178,7 +190,6 @@ export default function App() {
             watchlist={watchlist}
             quotes={quotes}
             onPick={pick}
-            onPickBoard={pick}
             onRemove={(w) => void removeFromWatch(w)}
           />
         )}
