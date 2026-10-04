@@ -1533,16 +1533,12 @@ button.member-row:hover {
   color: var(--dim, #8b949e);
   font-variant-numeric: tabular-nums;
 }
-/* 摘要：在卡片行右侧，单行不换行，超出省略 */
+/* 摘要：卡片行下方的单独一行，收起也可见 */
 .pick-summary-line {
-  flex: 1;
-  min-width: 0;
-  margin-left: 4px;
-  font-size: 12px;
+  padding: 0 14px 10px;
+  font-size: 13px;
+  line-height: 1.5;
   color: #c9d1d9;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .pick-block-title {
   font-size: 12px;

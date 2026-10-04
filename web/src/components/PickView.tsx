@@ -133,9 +133,11 @@ function PickCard({
         <span className={`pick-month ${tone(stock.monthPct)}`}>近一月 {fmt(stock.monthPct)}%</span>
         <span className={`pick-day ${tone(stock.changePct)}`}>{fmt(stock.changePct)}%</span>
         {ai?.score != null && <span className="pick-score">评分 {ai.score}</span>}
-        {ai?.summary && <span className="pick-summary-line" title={ai.summary}>{ai.summary}</span>}
         <span className="pick-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
+
+      {/* 摘要单独一行：卡片收起也一眼可见 */}
+      {ai?.summary && <div className="pick-summary-line">{ai.summary}</div>}
 
       {open && (
         <div className="pick-detail">
