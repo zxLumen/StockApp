@@ -119,6 +119,9 @@ function PickCard({
   onDetail: () => void
 }) {
   const ai = stock.ai
+  // 二级折叠：AI 解读明细。摘要留在展开区一眼可见，只有支撑逻辑 / 风险 / 标签收进来。
+  const [openAi, setOpenAi] = useState(false)
+  const hasDetail = !!(ai?.catalysts?.length || ai?.risks?.length || ai?.tags?.length)
   return (
     <li className={`pick-card${open ? ' is-open' : ''}`}>
       <div className="pick-row" onClick={onToggle} role="button" tabIndex={0}>
@@ -133,8 +136,6 @@ function PickCard({
         <span className="pick-toggle dim">{open ? '收起' : '详情'}</span>
       </div>
 
-      {stock.reason && <div className="pick-reason">评审：{stock.reason}</div>}
-
       {open && (
         <div className="pick-detail">
           <div className="pick-stats">
@@ -147,38 +148,49 @@ function PickCard({
           {ai?.error && <div className="note small">AI 解读失败：{ai.error}</div>}
           {ai?.summary && <p className="pick-summary">{ai.summary}</p>}
 
-          {!!ai?.catalysts?.length && (
-            <div className="pick-block">
-              <div className="pick-block-title up">支撑逻辑</div>
-              <ul>
-                {ai.catalysts.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {!!ai?.risks?.length && (
-            <div className="pick-block">
-              <div className="pick-block-title down">风险</div>
-              <ul>
-                {ai.risks.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {!!ai?.tags?.length && (
-            <div className="pick-tags">
-              {ai.tags.map((t, i) => (
-                <span key={i} className="pick-tag">
-                  {t}
-                </span>
-              ))}
+          {hasDetail && (
+            <div className={`pick-ai${openAi ? ' is-open' : ''}`}>
+              <button className="pick-ai-head" onClick={() => setOpenAi(!openAi)} aria-expanded={openAi}>
+                <span className="pick-ai-arrow">{openAi ? '▾' : '▸'}</span> AI 解读详情
+              </button>
+              {openAi && (
+                <div className="pick-ai-body">
+                  {!!ai?.catalysts?.length && (
+                    <div className="pick-block">
+                      <div className="pick-block-title up">支撑逻辑</div>
+                      <ul>
+                        {ai.catalysts.map((c, i) => (
+                          <li key={i}>{c}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {!!ai?.risks?.length && (
+                    <div className="pick-block">
+                      <div className="pick-block-title down">风险</div>
+                      <ul>
+                        {ai.risks.map((c, i) => (
+                          <li key={i}>{c}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {!!ai?.tags?.length && (
+                    <div className="pick-tags">
+                      {ai.tags.map((t, i) => (
+                        <span key={i} className="pick-tag">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           <button className="btn ghost" onClick={onDetail}>
-            查看完整 AI 解读与 K 线
+            查看 K 线
           </button>
         </div>
       )}

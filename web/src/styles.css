@@ -1518,11 +1518,6 @@ button.member-row:hover {
   margin-left: auto;
   font-size: 12px;
 }
-.pick-reason {
-  padding: 0 14px 8px;
-  font-size: 12px;
-  color: var(--dim, #8b949e);
-}
 .pick-detail {
   padding: 4px 14px 14px;
   border-top: 1px solid var(--line, #2a2d35);
@@ -1552,6 +1547,39 @@ button.member-row:hover {
   padding-left: 18px;
   line-height: 1.6;
   font-size: 13px;
+}
+/* 二级折叠：AI 解读明细 */
+.pick-ai {
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pick-ai-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.pick-ai-head:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.pick-ai-arrow {
+  width: 12px;
+  color: var(--dim, #8b949e);
+}
+.pick-ai-body {
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 .pick-tags {
   display: flex;
