@@ -153,19 +153,23 @@ export async function getBoards(kind, { limit = 24 } = {}) {
     errors.push('csi：无数据')
   } else {
     const k = kind === 'concept' ? 'concept' : 'industry'
-    try {
-      const items = await emBoards(k, { limit })
-      if (items.length) return { items, source: 'eastmoney' }
-      errors.push('eastmoney：无数据')
-    } catch (err) {
-      errors.push(`eastmoney：${err instanceof Error ? err.message : String(err)}`)
-    }
+    // 同花顺优先：它的板块码（行业 881xxx / 概念 885·886xxx）才是成分股、K 线、
+    // 搜索那套子系统认的；东财的 90.BKxxxx 只有一个「按名字搜个股」的残废成分接口
+    // （且东财整条线对服务器常 502）。若把东财排前面，列表会一直用 BK 码，点进去就没
+    // 成分股。东财 / 新浪留作降级。
     try {
       const items = await thsBoardIndex(k)
       if (items.length) return { items: items.slice(0, limit), source: 'ths' }
       errors.push('ths：无数据')
     } catch (err) {
       errors.push(`ths：${err instanceof Error ? err.message : String(err)}`)
+    }
+    try {
+      const items = await emBoards(k, { limit })
+      if (items.length) return { items, source: 'eastmoney' }
+      errors.push('eastmoney：无数据')
+    } catch (err) {
+      errors.push(`eastmoney：${err instanceof Error ? err.message : String(err)}`)
     }
   }
   if (kind === 'csi') throw new Error(`板块暂不可用（${errors.join('；')}）`)
