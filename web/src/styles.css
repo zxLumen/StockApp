@@ -140,14 +140,6 @@ h3 {
   gap: 4px;
 }
 
-/* 板块搜索的分类切换：整行独占一行，input 自动换到下一行 */
-.search-tabs {
-  display: flex;
-  flex: 0 0 100%;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
 .search input {
   width: 100%;
 }
@@ -185,8 +177,8 @@ h3 {
 
 .search-row {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 8px 12px;
   text-align: left;
@@ -195,6 +187,34 @@ h3 {
 
 .search-row:hover {
   background: var(--zx-panel2);
+}
+
+/* 每条结果前的类型标签：一眼看清是 行业 / 概念 / 个股 / 指数 … */
+.search-tag {
+  flex: none;
+  min-width: 34px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+}
+.search-tag.tag-board {
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.15);
+}
+.search-tag.tag-fund {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.15);
+}
+.search-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .search-sub {

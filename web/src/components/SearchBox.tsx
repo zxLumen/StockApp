@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { searchBoards, searchFunds, searchMarket } from '../api'
-import type { BoardCategory, Market, Selection } from '../types'
+import type { BoardCategory, Market, SearchItem, Selection } from '../types'
 
 interface Props {
   market: Market
   onPick: (s: Selection) => void
 }
 
-type Row = { key: string; label: string; sub: string; selection: Selection }
+type Row = { key: string; label: string; sub: string; tag: string; selection: Selection }
 
 /** 板块分类标签（搜索结果里标出来，避免「行业」和「概念」同名时看不清）。 */
 const BOARD_KIND_LABEL: Record<BoardCategory, string> = {
@@ -16,11 +16,28 @@ const BOARD_KIND_LABEL: Record<BoardCategory, string> = {
   csi: '中证',
 }
 
+/**
+ * 个股/指数的类型标签：优先按 `classify` 判，判不出的用交易所代码兜底。
+ * 目标是让每条结果**一眼看清是哪一类**（个股 / 指数 / 港股 …），不用先选方向。
+ */
+function targetTag(s: SearchItem): string {
+  const c = String(s.classify || '').toUpperCase()
+  const t = String(s.type || '')
+  // 期货要排在港交所前面判：新浪把「XX期货」也归在 HKSTOCKF 里
+  if (c.includes('FUTURE') || c.includes('FUT') || t.includes('期货')) return '期货'
+  if (c === 'ASTOCK') return t.includes('港') ? '港股' : '个股'
+  if (c.includes('INDEX') || c === 'ZS') return '指数'
+  if (c === 'HK' || c.includes('HKSTOCK')) return '港股'
+  if (c.includes('FUND')) return '基金'
+  // 兜底：按 secid 前缀
+  const m = String(s.secid || '').split('.')[0]
+  if (m === '116') return '港股'
+  if (['100', '105', '106', '107', '153', '155'].includes(m)) return '美股'
+  return s.type || '个股'
+}
+
 export default function SearchBox({ market, onPick }: Props) {
   const [q, setQ] = useState('')
-  /** 标的 = 个股 / 基金（走上游搜索）；板块 = 本地全量索引（90 行业 + 293 概念 + 10 中证）。 */
-  const [tab, setTab] = useState<'target' | 'board'>('target')
-  const [boardKind, setBoardKind] = useState<'' | BoardCategory>('')
   const [rows, setRows] = useState<Row[]>([])
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -36,6 +53,7 @@ export default function SearchBox({ market, onPick }: Props) {
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
+  // 不再让用户先选「标的 / 板块」——输入后**同时**搜标的与板块，合并结果、各自标类型。
   useEffect(() => {
     const key = q.trim()
     if (!key) {
@@ -47,33 +65,40 @@ export default function SearchBox({ market, onPick }: Props) {
     setBusy(true)
     const timer = setTimeout(async () => {
       try {
-        if (tab === 'board') {
-          const { items } = await searchBoards(key, boardKind || undefined)
-          if (mine !== seq.current) return
-          setRows(
-            items.map((b) => ({
-              key: b.secid,
-              label: b.name,
-              sub: `${BOARD_KIND_LABEL[b.kind ?? 'industry']} · ${b.code}`,
-              selection: {
-                kind: 'board' as const,
-                secid: b.secid,
-                code: b.code,
-                name: b.name,
-                market: 'cn' as const,
-                cid: b.cid ?? null,
-              },
-            })),
-          )
-          setHint(items.length ? '' : '没找到匹配的板块（可试试代码 / 名称，如 881121 / 半导体）')
-        } else if (market === 'fund') {
-          const { items } = await searchFunds(key)
-          if (mine !== seq.current) return
-          setRows(
-            items.map((f) => ({
-              key: f.code,
+        const boardP = searchBoards(key).catch(() => ({ items: [] }))
+        const targetP =
+          market === 'fund'
+            ? searchFunds(key).then((r) => r.items.map((f) => ({ __fund: true as const, f })))
+            : searchMarket(key, market).then((r) => r.items.map((s) => ({ __fund: false as const, s })))
+        const [boards, targets] = await Promise.all([boardP, targetP])
+        if (mine !== seq.current) return
+
+        const out: Row[] = []
+        // 板块在前（本地索引，最稳；行业/概念/中证同名时靠标签区分）
+        for (const b of boards.items) {
+          out.push({
+            key: `board:${b.secid}`,
+            label: b.name,
+            sub: b.code,
+            tag: BOARD_KIND_LABEL[b.kind ?? 'industry'],
+            selection: {
+              kind: 'board' as const,
+              secid: b.secid,
+              code: b.code,
+              name: b.name,
+              market: 'cn' as const,
+              cid: b.cid ?? null,
+            },
+          })
+        }
+        for (const t of targets) {
+          if (t.__fund) {
+            const f = t.f
+            out.push({
+              key: `fund:${f.code}`,
               label: f.name,
               sub: `${f.code}${f.type ? ` · ${f.type}` : ''}`,
+              tag: '基金',
               selection: {
                 kind: 'fund' as const,
                 secid: f.code,
@@ -81,17 +106,14 @@ export default function SearchBox({ market, onPick }: Props) {
                 name: f.name,
                 market: 'fund' as const,
               },
-            })),
-          )
-          setHint(items.length ? '' : '没找到匹配的基金')
-        } else {
-          const { items } = await searchMarket(key, market)
-          if (mine !== seq.current) return
-          setRows(
-            items.map((s) => ({
-              key: s.secid,
+            })
+          } else {
+            const s = t.s
+            out.push({
+              key: `stock:${s.secid}`,
               label: s.name,
-              sub: `${s.code}${s.type ? ` · ${s.type}` : ''}`,
+              sub: s.code,
+              tag: targetTag(s),
               selection: {
                 kind: 'stock' as const,
                 secid: s.secid,
@@ -99,10 +121,11 @@ export default function SearchBox({ market, onPick }: Props) {
                 name: s.name,
                 market,
               },
-            })),
-          )
-          setHint(items.length ? '' : '没找到匹配的标的（可试试代码 / 名称 / 拼音首字母）')
+            })
+          }
         }
+        setRows(out)
+        setHint(out.length ? '' : '没找到匹配的标的或板块（可试试代码 / 名称 / 拼音首字母）')
         setOpen(true)
       } catch (err) {
         if (mine !== seq.current) return
@@ -113,51 +136,19 @@ export default function SearchBox({ market, onPick }: Props) {
       }
     }, 260)
     return () => clearTimeout(timer)
-  }, [q, market, tab, boardKind])
+  }, [q, market])
 
   return (
     <div className="search" ref={boxRef}>
-      <div className="search-tabs">
-        <button className={`chip${tab === 'target' ? ' on' : ''}`} onClick={() => setTab('target')}>
-          标的
-        </button>
-        <button className={`chip${tab === 'board' ? ' on' : ''}`} onClick={() => setTab('board')}>
-          板块
-        </button>
-        {tab === 'board' && (
-          <>
-            <button className={`chip${boardKind === '' ? ' on' : ''}`} onClick={() => setBoardKind('')}>
-              全部
-            </button>
-            <button
-              className={`chip${boardKind === 'industry' ? ' on' : ''}`}
-              onClick={() => setBoardKind('industry')}
-            >
-              行业
-            </button>
-            <button
-              className={`chip${boardKind === 'concept' ? ' on' : ''}`}
-              onClick={() => setBoardKind('concept')}
-            >
-              概念
-            </button>
-            <button className={`chip${boardKind === 'csi' ? ' on' : ''}`} onClick={() => setBoardKind('csi')}>
-              中证
-            </button>
-          </>
-        )}
-      </div>
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder={
-          tab === 'board'
-            ? '搜板块，如 881121 / 半导体 / 支付'
-            : market === 'fund'
-              ? '搜场外基金，如 沪深300 / 000001'
-              : '搜代码 / 名称 / 拼音，如 600519 / 茅台 / mt'
+          market === 'fund'
+            ? '搜基金 / 标的 / 板块，如 沪深300 / 000001'
+            : '搜代码 / 名称 / 拼音 / 板块，如 600519 / 茅台 / 半导体'
         }
-        aria-label="搜索标的"
+        aria-label="搜索标的或板块"
       />
       {busy && <span className="search-spin" aria-hidden />}
       {open && (rows.length > 0 || hint) && (
@@ -173,6 +164,7 @@ export default function SearchBox({ market, onPick }: Props) {
                 setOpen(false)
               }}
             >
+              <span className={`search-tag tag-${r.selection.kind}`}>{r.tag}</span>
               <span className="search-name">{r.label}</span>
               <span className="search-sub">{r.sub}</span>
             </button>
