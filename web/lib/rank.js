@@ -53,8 +53,10 @@ export async function aSharePool({ pages = 5, perPage = 100 } = {}) {
         changePct: num(r.changepercent),
         amount: num(r.amount),
         turnover: num(r.turnoverratio),
-        mktcap: num(r.mktcap),
-        floatCap: num(r.nmc),
+        // 新浪榜单的 mktcap / nmc 单位是**万元**（实测中际旭创 95226927 → 约 9522 亿），
+        // 统一折成元，否则下游按元解释会显示成「0.95 亿」，模型一值在念「市值异常」。
+        mktcap: num(r.mktcap) == null ? null : Number((num(r.mktcap) * 1e4).toFixed(0)),
+        floatCap: num(r.nmc) == null ? null : Number((num(r.nmc) * 1e4).toFixed(0)),
       })
     }
   }

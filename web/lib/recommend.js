@@ -8,7 +8,7 @@ import { sinaKline } from './sina.js'
 import { getQuotes } from './market.js'
 import { cached } from './http.js'
 import { readJson, writeJson } from './store.js'
-import { aSharePool, objectiveFilter, mapLimit } from './rank.js'
+import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars } from './rank.js'
 
 // 每日推荐：对近一月涨幅 Top100 逐只做 AI 解读（含 0-100 自评），再由 AI 二次评审挑出
 // Top10。产物落 DATA_DIR/recommend/<date>.json，前端「推荐」页签直接读。
@@ -115,7 +115,7 @@ export async function stockContext(stock) {
     `最新：${fmt(stock.price)}  当日涨跌：${fmt(stock.changePct)}%`,
     `成交额：${yi(stock.amount)}  换手：${fmt(stock.turnover)}%  总市值：${yi(stock.mktcap)}  流通市值：${yi(stock.floatCap)}`,
     `MA5=${fmt(last.ma5)}  MA10=${fmt(last.ma10)}  MA20=${fmt(last.ma20)}`,
-    `近20日均价 ${fmt(avg(closes.slice(-20)))}` +
+    `近一月涨幅：${fmt(monthChangeFromBars(bars))}%  近20日均价 ${fmt(avg(closes.slice(-20)))}` +
       (closes.length ? `  60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}` : ''),
     '',
     '近期相关资讯标题：',
@@ -131,21 +131,26 @@ const INTERPRET_SYSTEM =
   '只输出一个 JSON 对象，不要 markdown 代码块、不要任何多余文字。'
 
 // 实测该端点**不截断**：多字段 JSON 也能完整到 200+ 字、finish_reason=stop。
-// 评的是**「现在这个价位值不值得买」**（buyScore），不是「涨得多猛/多受关注」——
-// 后者会把高位连板、监管异动股送上榜首。过热、偏离均线过大、资金分歧的要给低分。
+// 评的是**「现在这个价位值不值得买」**（buyScore）。注意：**不要单向地把「涨幅大」当利空**
+// —— 上涨既可能是强势（买点也可能是回踩），也可能是过热（追高风险），要结合趋势位置、
+// 量能、均线、估值、资讯**综合判断**，而不是见涨就扣分。
 const interpretUser = (ctx) =>
   `以下是某只 A 股的行情与资讯：\n\n${ctx}\n\n` +
-  '从「**当前价位是否值得买入**」的角度评估（不是涨得猛、也不是单纯关注度高），' +
-  '只输出 JSON、不要解释：\n' +
+  '从「**当前价位是否值得买入**」的角度，综合所有指标自行判断，只输出 JSON、不要解释：\n' +
   '{\n' +
   ' "buyScore": 0到100的整数（100=现在买很值得，0=完全不值得/应回避）,\n' +
-  ' "summary": "一句话概括，40到60字",\n' +
+  ' "summary": "一句话概括，40到60字（讲清为什么值得或不值得买）",\n' +
   ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
   ' "risks": ["风险，2到3条，每条20到30字"],\n' +
   ' "tags": ["题材或风格标签，3到5个"]\n' +
   '}\n' +
-  '注意：短期涨幅过大、连续涨停、收到监管函/问询、机构大幅净卖出、明显偏离均线的，' +
-  '即便热门也应给低分并说清理由。'
+  '判断要点（自行权衡，不要机械套用）：\n' +
+  '- **涨跌幅要结合位置看**：上升趋势中回踩均线可能是买点，脱离均线过远/连续涨停/高位放量' +
+  '滞涨才更要警惕；下跌趋势中即便跌得多也未必是买点。\n' +
+  '- 结合换手/成交额（放量突破 vs 缩量阴跌）、均线排列、市值与估值、资讯题材的**可信度与兑现度**。\n' +
+  '- 只对「明确」的过热/风险扣分（连续涨停、监管函/问询、机构大幅净卖出、明显泡沫化），' +
+  '不要因为「涨了几天」就一律给低分。\n' +
+  '- 数据缺失（如某项未取到）就按可得指标判断，不要臆测缺失项。'
 
 // 第一步：从客观初筛后的候选里，按「值得买入」挑出 furtherPicks 只（分批喂，省 token）。
 const PRESELECT_SYSTEM =
@@ -155,15 +160,17 @@ export function buildPreselectRows(candidates) {
   return candidates
     .map(
       (c, i) =>
-        `${i + 1}. ${c.code} ${c.name} 现价${fmt(c.price)} 当日${fmt(c.changePct)}% 成交额${yi(c.amount)} 换手${fmt(c.turnover)}%`,
+        `${i + 1}. ${c.code} ${c.name} 现价${fmt(c.price)} 当日${fmt(c.changePct)}% ` +
+        `近一月${fmt(c.monthPct)}% 成交额${yi(c.amount)} 换手${fmt(c.turnover)}% 市值${yi(c.mktcap)}`,
     )
     .join('\n')
 }
 
 const preselectUser = (batch, want) =>
   `候选（共 ${batch.length} 只）：\n${buildPreselectRows(batch)}\n\n` +
-  `从「当前价位值得买入」的角度挑出 ${want} 只（明显的过热/高位/风险股不要选），` +
-  '只输出它们的代码：\n{"picks":["600418","000001"]}\n只输出 JSON。'
+  `从「当前价位值得买入」的角度挑出 ${want} 只。综合判断，**不要因为涨得多就一律排除，` +
+  '也不要只挑跌得多的**；过热/高位风险与强势趋势要自己权衡：\n' +
+  '{"picks":["600418","000001"]}\n只输出 JSON。'
 
 // 第二步：从 Top100（已带各只 buyScore/摘要）里挑最终 Top10。
 const REVIEW_SYSTEM =
@@ -284,9 +291,24 @@ export async function runRecommendDaily({
   const filtered = await objectiveFilter(pool, { target: objTarget, onLog })
   if (!filtered.length) throw new Error('客观初筛后无候选')
 
+  // ①.5 给初筛后的候选补「近一月涨幅」（**只喂给模型看，不参与筛选**）—— 模型多次抱怨
+  // 缺中期趋势参考。objectiveFilter 已经拉过日 K，这里复用同一份（有 cached）。
+  onLog(`补近一月涨幅（${filtered.length} 只）…`)
+  const enriched = await mapLimit(filtered, 8, async (c) => {
+    let monthPct = null
+    try {
+      const k = await sinaKline(c.secid, { period: 'd', limit: 30 })
+      monthPct = monthChangeFromBars(k?.bars)
+    } catch {
+      monthPct = null
+    }
+    return { ...c, monthPct }
+  })
+  const withMonth = enriched.filter(Boolean)
+
   // ② 模型选 Top100：分批喂精简量价，按「值得买入」挑，汇总去重。
-  onLog(`模型从 ${filtered.length} 只里选 Top${topCandidates}…`)
-  const candidates = await selectCandidates(cfg, filtered, topCandidates, onLog)
+  onLog(`模型从 ${withMonth.length} 只里选 Top${topCandidates}…`)
+  const candidates = await selectCandidates(cfg, withMonth, topCandidates, onLog)
 
   // ③ 逐只精评：带资讯 + K 线，输出 buyScore（买入视角）。
   let done = 0
