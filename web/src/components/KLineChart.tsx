@@ -29,7 +29,8 @@ function toTime(raw: string, intraday: boolean): Time {
   return raw as Time
 }
 
-const PALETTE = {
+/** 蜡烛配色：A股红涨绿跌，美股绿涨红跌（与 format.ts 的 trendClass 同一口径）。 */
+export const PALETTE = {
   cn: { up: '#e0454b', down: '#12a05c' },
   us: { up: '#12a05c', down: '#e0454b' },
 }

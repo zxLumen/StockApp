@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { fetchKline, fetchQuotes, fetchStockNews } from '../api'
-import { fmtAmount, fmtCap, fmtNum, fmtSigned, fmtTime, fmtVolume, trendClass } from '../format'
+import { fmtAmount, fmtCap, fmtNum, fmtSigned, fmtVolume, trendClass } from '../format'
 import KLineChart from './KLineChart'
+import NewsList from './NewsList'
 import AiPanel from './AiPanel'
 import SourceBadge from './SourceBadge'
 import type { Bar, Kline, NewsItem, Quote, Selection } from '../types'
@@ -131,23 +132,8 @@ export default function DetailView({
 
       <section>
         <h3 className="sec-title">相关热点</h3>
-        {news.length === 0 ? (
-          <div className="note">暂无相关新闻。</div>
-        ) : (
-          <ul className="news">
-            {news.map((n, i) => (
-              <li key={`${n.url ?? n.title}-${i}`}>
-                <a href={n.url ?? '#'} target="_blank" rel="noreferrer noopener">
-                  <span className="news-title">{n.title}</span>
-                  <span className="news-meta">
-                    {n.source}
-                    {n.time ? ` · ${fmtTime(n.time)}` : ''}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* key 挂 secid：换标的时展开状态回到折叠，别把上一只票的展开带过来 */}
+        <NewsList key={selection.secid} items={news} />
       </section>
     </div>
   )

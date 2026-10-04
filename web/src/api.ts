@@ -103,13 +103,22 @@ export const fetchFundRank = (sort: string, limit = 20, signal?: AbortSignal) =>
 export const fetchFundHot = (signal?: AbortSignal) =>
   get<{ groups: FundPickGroup[] }>('/api/fund/hot', signal)
 
+/** 两类新闻都多取一些：界面固定只显示 Top 10，剩下的靠「展开」露出来。 */
+export const NEWS_FETCH_LIMIT = 20
+
 /** `scope` 决定取哪个市场的新闻：美股页必须是美股自己的，不能沿用沪深港。 */
-export const fetchMarketNews = (limit = 20, signal?: AbortSignal, scope: 'cn' | 'us' = 'cn') =>
+export const fetchMarketNews = (limit = NEWS_FETCH_LIMIT, signal?: AbortSignal, scope: 'cn' | 'us' = 'cn') =>
   get<{ items: NewsItem[] }>(`/api/news?kind=market&limit=${limit}&scope=${scope}`, signal)
 
-export const fetchStockNews = (name: string, code: string, signal?: AbortSignal, scope: 'cn' | 'us' = 'cn') =>
+export const fetchStockNews = (
+  name: string,
+  code: string,
+  signal?: AbortSignal,
+  scope: 'cn' | 'us' = 'cn',
+  limit = NEWS_FETCH_LIMIT,
+) =>
   get<{ items: NewsItem[]; degraded: boolean }>(
-    `/api/news?kind=stock&name=${encodeURIComponent(name)}&code=${encodeURIComponent(code)}&scope=${scope}`,
+    `/api/news?kind=stock&name=${encodeURIComponent(name)}&code=${encodeURIComponent(code)}&scope=${scope}&limit=${limit}`,
     signal,
   )
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { fetchIndices, fetchMarketNews } from '../api'
 import MiniKline from './MiniKline'
+import NewsList from './NewsList'
 import SourceBadge from './SourceBadge'
-import { fmtSigned, fmtTime, trendClass } from '../format'
+import { PALETTE } from './KLineChart'
+import { fmtSigned, trendClass } from '../format'
 import type { Market, NewsItem, Quote, Selection } from '../types'
 
 interface Props {
@@ -10,12 +12,28 @@ interface Props {
   onPick: (s: Selection) => void
 }
 
-/** 沪 / 深 / 港三条日K，加三大指数快照。 */
-const MINI = [
-  { secid: '1.000001', name: '沪·上证指数' },
-  { secid: '0.399001', name: '深·深证成指' },
-  { secid: '100.HSI', name: '港·恒生指数' },
-]
+/**
+ * 指数日K。沪深港与美股各一份 —— 美股页以前整段日K都不渲染（这里原先写死
+ * `market === 'cn'`），但美股指数日K 是有的（新浪 `.DJI` / `.IXIC` / `.INX`）。
+ * `secid` 用东财口径，和 `/api/market/indices` 返回的保持一致。
+ */
+const MINI: Record<Exclude<Market, 'fund'>, { secid: string; name: string }[]> = {
+  cn: [
+    { secid: '1.000001', name: '沪·上证指数' },
+    { secid: '0.399001', name: '深·深证成指' },
+    { secid: '100.HSI', name: '港·恒生指数' },
+  ],
+  us: [
+    { secid: '100.DJIA', name: '美·道琼斯' },
+    { secid: '100.SPX', name: '美·标普500' },
+    { secid: '100.NDX', name: '美·纳斯达克100' },
+  ],
+}
+
+const MINI_TITLE: Record<Exclude<Market, 'fund'>, string> = {
+  cn: '沪 / 深 / 港 走势（日K）',
+  us: '美股三大指数走势（日K）',
+}
 
 /** 默认落地页：迷你 K 线 + 指数快照 + 当日热点新闻。 */
 export default function HomeView({ market, onPick }: Props) {
@@ -90,44 +108,34 @@ export default function HomeView({ market, onPick }: Props) {
         </div>
       </section>
 
-      {market === 'cn' && (
-        <section>
-          <h2 className="sec-title">沪 / 深 / 港 走势（日K）</h2>
-          <div className="mini-grid">
-            {MINI.map((m) => (
-              <button
-                key={m.secid}
-                className="mini-card"
-                onClick={() =>
-                  onPick({ kind: 'stock', secid: m.secid, code: '', name: m.name.split('·')[1], market })
-                }
-              >
-                <MiniKline secid={m.secid} name={m.name} up="#e0454b" down="#12a05c" />
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+      <section>
+        <h2 className="sec-title">{MINI_TITLE[market]}</h2>
+        <div className="mini-grid">
+          {MINI[market].map((m) => (
+            <button
+              key={m.secid}
+              className="mini-card"
+              onClick={() =>
+                onPick({ kind: 'stock', secid: m.secid, code: '', name: m.name.split('·')[1], market })
+              }
+            >
+              <MiniKline secid={m.secid} name={m.name} up={PALETTE[market].up} down={PALETTE[market].down} />
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section>
         <h2 className="sec-title">当日热点新闻</h2>
-        <ul className="news">
-          {news.map((n, i) => (
-            <li key={`${n.url ?? n.title}-${i}`}>
-              <a href={n.url ?? '#'} target="_blank" rel="noreferrer noopener">
-                <span className="news-title">{n.title}</span>
-                <span className="news-meta">
-                  {n.source}
-                  {n.time ? ` · ${fmtTime(n.time)}` : ''}
-                </span>
-              </a>
-            </li>
-          ))}
-          {loading && news.length === 0 && <li className="skeleton-row" aria-hidden />}
-          {!loading && news.length === 0 && (
-            <li className="note err">{newsErr ? `新闻暂不可用：${newsErr}` : '暂无新闻'}</li>
-          )}
-        </ul>
+        {/* loading / 出错态还留在 ul 里（骨架行和错误行），有内容才交给 NewsList 切片 */}
+        {(loading || newsErr) && news.length === 0 ? (
+          <ul className="news">
+            {loading && <li className="skeleton-row" aria-hidden />}
+            {!loading && <li className="note err">{newsErr ? `新闻暂不可用：${newsErr}` : '暂无新闻'}</li>}
+          </ul>
+        ) : (
+          <NewsList key={market} items={news} empty="暂无新闻" />
+        )}
       </section>
     </div>
   )

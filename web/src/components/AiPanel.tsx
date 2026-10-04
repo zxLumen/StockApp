@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { interpret } from '../api'
 import { reportAiState } from '../aiStatus'
 import type { AiUsage } from '../types'
+
+/**
+ * 模型回的是 markdown（`**走势结构**`、有序列表、表格…），之前当纯文本塞进
+ * div，用户看到的是一堆星号。渲染方式跟主站聊天组件一致：
+ * `react-markdown` + `remark-gfm`，**不开 `rehype-raw`** —— 不渲染原始 HTML，
+ * 于是不需要 dangerouslySetInnerHTML，也就没有 XSS 面。
+ */
+const mdComponents: Components = {
+  a({ node, ...props }) {
+    void node
+    return <a {...props} target="_blank" rel="noreferrer noopener" />
+  },
+}
 
 interface Props {
   secid: string
@@ -117,7 +132,12 @@ export default function AiPanel({ secid, name, enabled }: Props) {
       {err && <div className="note err">{err}</div>}
       {out && (
         <>
-          <div className="ai-out">{out}</div>
+          {/* ai-md 管排版；外层保留 .ai-out 的边框/滚动/上限 */}
+          <div className="ai-out ai-md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {out}
+            </ReactMarkdown>
+          </div>
           {usage && (
             <div className="ai-usage">
               tokens ↑{usage.input} ↓{usage.output}

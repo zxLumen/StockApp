@@ -5,12 +5,12 @@ import { fetchKline } from '../api'
 interface Props {
   secid: string
   name: string
-  /** A 股红涨绿跌，美股/港股沿用红涨绿跌（东财口径一致） */
+  /** A 股红涨绿跌，美股绿涨红跌 —— 调用方按 market 传 KLineChart 的 PALETTE */
   up: string
   down: string
 }
 
-/** 首页迷你 K 线：默认页要一眼看到「沪 / 深 / 港」三条走势。 */
+/** 首页迷你 K 线：默认页要一眼看到三条指数走势。 */
 export default function MiniKline({ secid, name, up, down }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
