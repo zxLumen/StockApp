@@ -47,14 +47,19 @@ async function dayExcess(dir, file, idxBars) {
   const idxBase = closeAt(idxBars, basis)
   if (!idxBase) return null
   const exs = []
+  const rets = []
   for (const t of d.top) {
     const bars = await getBars(t.secid)
     const base = closeAt(bars, basis)
     const sell = barAfter(bars, basis, H)
     const idxSell = sell ? closeAt(idxBars, sell.time) : null
-    if (base && sell?.close && idxSell) exs.push((sell.close / base - 1) * 100 - (idxSell / idxBase - 1) * 100)
+    if (base && sell?.close && idxSell) {
+      const r = (sell.close / base - 1) * 100
+      rets.push(r)
+      exs.push(r - (idxSell / idxBase - 1) * 100)
+    }
   }
-  return exs.length ? { basis, exs } : null
+  return exs.length ? { basis, exs, rets } : null
 }
 
 async function main() {
@@ -71,7 +76,7 @@ async function main() {
 
   const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN)
   const modes = [{ label: 'A only' }, { label: 'B only' }, ...THRS.map((t) => ({ label: `thr${t}`, thr: t }))]
-  const agg = modes.map((m) => ({ m, ex: [], win: [], byMonth: new Map() }))
+  const agg = modes.map((m) => ({ m, ex: [], rets: [], win: [], byMonth: new Map() }))
 
   for (const f of files) {
     // 用文件的 basisDate 算 tilt（A、B 同日 basisDate 相同）
@@ -88,22 +93,24 @@ async function main() {
     for (const a of agg) {
       const useA = a.m.label === 'A only' ? true : a.m.label === 'B only' ? false : tilt >= a.m.thr
       const exs = useA ? exA.exs : exB.exs
+      const rs = useA ? exA.rets : exB.rets
       for (const e of exs) a.ex.push(e)
+      for (const r of rs) a.rets.push(r)
       a.win.push(avg(exs) > 0 ? 1 : 0)
       if (!a.byMonth.has(month)) a.byMonth.set(month, [])
       for (const e of exs) a.byMonth.get(month).push(e)
     }
   }
 
-  console.log(`\n=== A/B regime 组合 ${FROM} ~ ${TO}（${files.length} 天）T+${H} 超额 ===`)
-  console.log('模式 | 均超额 | 日均胜率 | 最差月 | 正超额月 | 逐月均超额')
+  console.log(`\n=== A/B regime 组合 ${FROM} ~ ${TO}（${files.length} 天）T+${H} ===`)
+  console.log('模式 | 均绝对(主) | 均超额(辅) | 日均胜率 | 最差月 | 正超额月 | 逐月均超额')
   for (const a of agg) {
     const byM = [...a.byMonth.entries()].sort()
     const monthly = byM.map(([m, xs]) => avg(xs))
     const worst = Math.min(...monthly)
     const posM = monthly.filter((x) => x > 0).length
     console.log(
-      `${a.m.label.padEnd(8)} | ${avg(a.ex).toFixed(2).padStart(6)} | ${(avg(a.win) * 100).toFixed(0).padStart(3)}% | ` +
+      `${a.m.label.padEnd(8)} | ${avg(a.rets).toFixed(2).padStart(6)} | ${avg(a.ex).toFixed(2).padStart(6)} | ${(avg(a.win) * 100).toFixed(0).padStart(3)}% | ` +
         `${worst.toFixed(2).padStart(6)} | ${posM}/${byM.length} | ${byM.map(([m, xs]) => `${m.slice(5)} ${avg(xs).toFixed(2)}`).join('  ')}`,
     )
   }
