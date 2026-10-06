@@ -136,6 +136,22 @@ AI 配置是**分槽**的：每个服务商各自一套 `model` + `baseURL`，�
 
 见 `web/.env.example`。`SESSION_SECRET` 与主站一致才能单点登录。
 
+## 部署（push 即上线）
+
+`.github/workflows/docker-publish.yml` 的 `docker` job 推镜像
+（`ghcr.io/zxlumen/stock-web:<sha>` + `:latest`），成功后的 `deploy` job 用 SSH 触发
+`deploy/stock-ci-run.sh`：
+
+- 服务器 `authorized_keys` 里这把密钥 `command=` 强制绑定该脚本，只能触发部署；
+  **密钥与主站那把分开**，可单独吊销。
+- `SSH_ORIGINAL_COMMAND` 即镜像 tag（CI 传 git sha）。
+- 脚本**只** `pull + up -d stock`，不连带重建 app / caddy / 其它子应用
+  —— 用主站的 `ci-run.sh` 会因为拉不到 `zx-home:<sha>` 而整体失败。
+- 每次执行先从公开仓库取回脚本自身再跑（服务器从不 `git pull`），取回失败则沿用
+  服务器上现有版本。
+
+要部署**新配置**（`settings.json` / `keys.json`）不走这条流水线，文件在服务器上单独维护。
+
 ## 上游稳定性（重要）
 
 东财 `push2` / `push2his` 会按来源 IP 直接掐连接（返回 0 字节、无状态码）。
