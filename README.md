@@ -62,6 +62,36 @@ printf 'SESSION_SECRET=<同一值>\nSTOCK_VISITOR_AI=1\n' > web/.env
 
 默认落地页：**沪 / 深 / 港 三条日K + 沪深港主要指数快照 + 当日热点新闻**。
 
+## 每日推荐（regime 双链路）
+
+服务器 cron 收盘后跑 `docker exec docker-stock-1 node scripts/recommend.js`，产物落
+`DATA_DIR/recommend/<生效日>.json`（前端「推荐」页签读它）。
+
+**两条链路每天都跑，按当日 tilt 择一落盘**：
+
+| 链路 | 触发 | 候选池 | 选股 | 性格 |
+| --- | --- | --- | --- | --- |
+| A | `tilt >= 0.6` | 成交额池 500 只 | AI 初筛 100 + 买入评分 Top10 | 激进（强涨市弹性足） |
+| B | `tilt < 0.6` | 稳健池 1451 只 | 客观多因子 Top10（AI 只解读） | 保守（跌市/震荡市更稳） |
+
+`tilt` = 沪深300 近 20 日涨幅 + 高于 MA20 的幅度，线性映射到 `[0,1]`，只用 ≤ 基准日的日K
+（`lib/factors.js` 的 `regimeTilt`；口径集中在 `lib/recommend.js` 的 `resolveTilt`）。
+**逐日判断，不是按月**。产物里 `regime: { tilt, thr, chain, ranBoth }` 记录当天的判据，
+事后复盘「择链对不对」全靠它。
+
+常用开关：
+
+```bash
+node scripts/recommend.js --dry-run              # 只跑不落盘，打印 Top10
+node scripts/recommend.js --dual-thr 0.5          # 调阈值（默认 0.6）
+node scripts/recommend.js --single-chain          # 回退单链路（默认 B 口径）
+node scripts/recommend.js --single-chain --strategy ai   # 回退旧 AI 链路
+node scripts/recommend.js --out-subdir tmp-check  # 产物写别的目录（验证用）
+```
+
+择链口径与回测评估 `scripts/eval-ab-combo.js --thr 0.6` 一致；选型依据与后续优化方向见
+仓库根目录 `TODO.md`。
+
 ## 数据存储
 
 `STOCK_DATA_DIR`（容器内 `/data`）下：

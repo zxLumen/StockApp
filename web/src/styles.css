@@ -1474,13 +1474,244 @@ button.member-row:hover {
   margin: 0;
   font-size: 17px;
 }
-.rec-date {
-  margin-left: auto;
+.rec-date-btn {
   background: var(--panel, #16181d);
   color: inherit;
   border: 1px solid var(--line, #2a2d35);
   border-radius: 8px;
   padding: 4px 8px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.rec-date-btn:hover {
+  border-color: var(--accent, #4c8bf5);
+}
+/* 前一天 / 后一天：方形图标按钮，与日期按钮同高、同风格 */
+.rec-nav-btn {
+  background: var(--panel, #16181d);
+  color: inherit;
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rec-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent, #4c8bf5);
+}
+.rec-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rec-cal {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 244px;
+  padding: 8px;
+  background: var(--panel, #16181d);
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+.rec-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.rec-cal-head button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.rec-cal-head button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+/* 头部中间的「年 / 月」可点，点了弹出选择面板 */
+.rec-cal-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.rec-cal-ym {
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+}
+.rec-cal-ym .dim {
+  font-weight: 400;
+  font-size: 12px;
+}
+.rec-cal-ym.is-open {
+  background: rgba(76, 139, 245, 0.18);
+  color: var(--accent, #4c8bf5);
+}
+/* 年 / 月 选择面板：浮在日历上方，网格排布 */
+.rec-cal-pick {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 34px;
+  z-index: 2;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--panel, #16181d);
+  border: 1px solid var(--line, #2a2d35);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  display: grid;
+  gap: 4px;
+}
+.rec-cal-pick-year {
+  grid-template-columns: repeat(3, 1fr);
+}
+.rec-cal-pick-month {
+  grid-template-columns: repeat(4, 1fr);
+}
+.rec-cal-pick button {
+  background: none;
+  border: 1px solid transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.rec-cal-pick button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--line, #2a2d35);
+}
+.rec-cal-pick button.is-sel {
+  background: rgba(76, 139, 245, 0.18);
+  color: var(--accent, #4c8bf5);
+  font-weight: 600;
+}
+.rec-cal-pick button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.rec-cal-week,
+.rec-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.rec-cal-week span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--dim, #8b949e);
+  padding: 2px 0;
+}
+.rec-cal-day {
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim, #8b949e);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.rec-cal-day.has {
+  color: inherit;
+  background: rgba(76, 139, 245, 0.12);
+  cursor: pointer;
+}
+.rec-cal-day.has:hover {
+  border-color: var(--accent, #4c8bf5);
+}
+.rec-cal-day.is-sel {
+  background: var(--accent, #4c8bf5);
+  color: #fff;
+  font-weight: 700;
+}
+.rec-cal-day.is-empty {
+  visibility: hidden;
+}
+.rec-cal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+}
+/* 当日推荐整体盈亏（等权平均）。放在列表上方，两套口径并排：照 AI 周期 / 推荐日至今。 */
+.rec-perf {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel);
+}
+.rec-perf-lead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.rec-perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.rec-perf-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rec-perf-k {
+  font-size: 11px;
+  color: var(--zx-dim);
+}
+.rec-perf-cell b {
+  font-size: 20px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+/* 基准行：与上方个股两格同构（标签在上、大号数字），只是加一条分割线区分 */
+.rec-perf-bench {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--zx-border);
+}
+.rec-perf-bench-lead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+/* 超额：与收益数字同一套涨跌配色，但是小字、字重略高，读作「减去大盘后的净贡献」 */
+.rec-perf-alpha {
+  font-size: 11px;
+  color: var(--zx-dim);
+  font-variant-numeric: tabular-nums;
+}
+.rec-perf-alpha em {
+  font-style: normal;
+  font-weight: 600;
+}
+.rec-perf-alpha em.up {
+  color: var(--zx-up);
+}
+.rec-perf-alpha em.down {
+  color: var(--zx-down);
 }
 .rec-list {
   list-style: none;
@@ -1530,7 +1761,15 @@ button.member-row:hover {
   text-align: right;
   font-weight: 600;
 }
+.rec-hold {
+  font-variant-numeric: tabular-nums;
+  min-width: 104px;
+  text-align: right;
+  font-weight: 600;
+}
 .rec-dates {
+  position: relative;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;

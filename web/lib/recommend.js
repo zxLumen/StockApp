@@ -8,13 +8,25 @@ import { sinaKline } from './sina.js'
 import { getQuotes } from './market.js'
 import { cached } from './http.js'
 import { readJson, writeJson } from './store.js'
-import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars } from './rank.js'
+import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars, ma20Deviation, stablePool, OBJECTIVE } from './rank.js'
+import { computeFactors, compositeScores, regimeTilt } from './factors.js'
+import { financeFactors } from './finance.js'
+import { cachedKline } from './kline-cache.js'
 
-// 每日推荐：对近一月涨幅 Top100 逐只做 AI 解读（含 0-100 自评），再由 AI 二次评审挑出
-// Top10。产物落 DATA_DIR/recommend/<date>.json，前端「推荐」页签直接读。
+// 每日推荐：稳健池（沪深300+创业板+科创板）→ 客观初筛 → **多因子选股**（低波 + 短期
+// 反转 + 贴近 MA20，全部只用截至当日日K，无未来数据）→ AI 逐只解读出 buyScore /
+// holdDays / 摘要。产物落 DATA_DIR/recommend/<date>.json，前端「推荐」页签直接读。
+// 旧链路（AI 初筛 + 买入评分）保留在 selectMode='ai'（`scripts/recommend.js --strategy ai`）。
 
 const fmt = (n, d = 2) =>
   n == null || Number.isNaN(Number(n)) ? 'NA' : Number(n).toFixed(d)
+
+/** 建议持有周期只认四档：3 / 5 / 10 / 20 个交易日；非法或缺失回退 5。 */
+export const HOLD_DAYS = [3, 5, 10, 20]
+export function normalizeHoldDays(v) {
+  const n = Math.round(Number(v))
+  return HOLD_DAYS.includes(n) ? n : 5
+}
 
 const yi = (n) => (n == null || Number.isNaN(Number(n)) ? 'NA' : `${(Number(n) / 1e8).toFixed(2)} 亿`)
 
@@ -100,22 +112,37 @@ export function repairTruncatedJson(s) {
   }
 }
 
-/** 单只标的的解读上下文（行情 + 均线 + 资讯标题）。 */
-export async function stockContext(stock) {
-  const [kline, news] = await Promise.all([
-    sinaKline(stock.secid, { period: 'd', limit: 70 }).catch(() => null),
-    stockNews([stock.name, stock.code].filter(Boolean), { limit: 8, scope: 'cn' }).catch(() => ({ items: [] })),
-  ])
+/**
+ * 单只标的的解读上下文（行情 + 均线 + 资讯标题）。
+ *
+ * `deps` 用于**回测**注入历史数据（默认走实时源，行为不变）：
+ *   - `deps.kline(secid)` → 返回 bars（回测时已截断到历史日）
+ *   - `deps.news(stock)`  → 返回 { items }（回测时只给 ≤ 历史日的资讯）
+ * 传了 deps 就不再用 `sinaKline` / `stockNews`。
+ */
+export async function stockContext(stock, deps = {}) {
+  const klineP = deps.kline
+    ? Promise.resolve(deps.kline(stock)).catch(() => null)
+    : sinaKline(stock.secid, { period: 'd', limit: 70 }).catch(() => null)
+  const newsP = deps.news
+    ? Promise.resolve(deps.news(stock)).catch(() => ({ items: [] }))
+    : stockNews([stock.name, stock.code].filter(Boolean), { limit: 8, scope: 'cn' }).catch(() => ({ items: [] }))
+  const [kline, news] = await Promise.all([klineP, newsP])
   const bars = kline?.bars || []
   const closes = bars.map((b) => b.close).filter((v) => v != null)
   const last = bars[bars.length - 1] || {}
   const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null)
+  // 位置指标（回测时也是截断后的，无未来数据）：距 MA20 偏离 + 近5日涨幅
+  const dev = ma20Deviation(bars)
+  const c5 = bars.length >= 6 ? bars[bars.length - 6]?.close : null
+  const chg5 = c5 && last.close != null ? ((last.close / c5 - 1) * 100).toFixed(2) : null
   const lines = [
     `标的：${stock.name}（${stock.code}，A 股）`,
     `最新：${fmt(stock.price)}  当日涨跌：${fmt(stock.changePct)}%`,
     `成交额：${yi(stock.amount)}  换手：${fmt(stock.turnover)}%  总市值：${yi(stock.mktcap)}  流通市值：${yi(stock.floatCap)}`,
     `MA5=${fmt(last.ma5)}  MA10=${fmt(last.ma10)}  MA20=${fmt(last.ma20)}`,
-    `近一月涨幅：${fmt(monthChangeFromBars(bars))}%  近20日均价 ${fmt(avg(closes.slice(-20)))}` +
+    `**距 MA20 偏离 ${dev == null ? 'NA' : (dev > 0 ? '+' : '') + dev + '%'}  近5日涨幅 ${chg5 == null ? 'NA' : chg5 + '%'}` +
+      `  近一月涨幅：${fmt(monthChangeFromBars(bars))}%  近20日均价 ${fmt(avg(closes.slice(-20)))}` +
       (closes.length ? `  60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}` : ''),
     '',
     '近期相关资讯标题：',
@@ -125,7 +152,7 @@ export async function stockContext(stock) {
   return lines.join('\n')
 }
 
-const INTERPRET_SYSTEM =
+export const INTERPRET_SYSTEM =
   '你是一名严谨、克制的证券分析师。只依据给定的行情数据与资讯标题做判断，用简体中文。' +
   '数据里没有的就明说「未取到」，绝不编造事实或传闻。' +
   '只输出一个 JSON 对象，不要 markdown 代码块、不要任何多余文字。'
@@ -134,23 +161,41 @@ const INTERPRET_SYSTEM =
 // 评的是**「现在这个价位值不值得买」**（buyScore）。注意：**不要单向地把「涨幅大」当利空**
 // —— 上涨既可能是强势（买点也可能是回踩），也可能是过热（追高风险），要结合趋势位置、
 // 量能、均线、估值、资讯**综合判断**，而不是见涨就扣分。
-const interpretUser = (ctx) =>
+//
+// `holdDays` 由模型**按这只票的实际状态**判断，不给默认值：选股已由客观因子决定
+// （反转 + 上影线 + 年化ROE），持有期就按「这只票的逻辑多久兑现」来定。
+// 判据见下方「持有周期判断依据」—— 那是可解释的状态映射，不是拟合出来的数字。
+export const interpretUser = (ctx) =>
   `以下是某只 A 股的行情与资讯：\n\n${ctx}\n\n` +
   '从「**当前价位是否值得买入**」的角度，综合所有指标自行判断，只输出 JSON、不要解释：\n' +
   '{\n' +
   ' "buyScore": 0到100的整数（100=现在买很值得，0=完全不值得/应回避）,\n' +
+  ' "holdDays": 建议持有交易日数，**必须是 3 / 5 / 10 / 20 之一**，按这只票的实际状态判断（依据见下），\n' +
+  ' "holdReason": "为什么是这个持有周期，一句话，20到40字（要能看出依据的是哪条状态）",\n' +
   ' "summary": "一句话概括，40到60字（讲清为什么值得或不值得买）",\n' +
   ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
   ' "risks": ["风险，2到3条，每条20到30字"],\n' +
   ' "tags": ["题材或风格标签，3到5个"]\n' +
   '}\n' +
-  '判断要点（自行权衡，不要机械套用）：\n' +
-  '- **涨跌幅要结合位置看**：上升趋势中回踩均线可能是买点，脱离均线过远/连续涨停/高位放量' +
-  '滞涨才更要警惕；下跌趋势中即便跌得多也未必是买点。\n' +
-  '- 结合换手/成交额（放量突破 vs 缩量阴跌）、均线排列、市值与估值、资讯题材的**可信度与兑现度**。\n' +
-  '- 只对「明确」的过热/风险扣分（连续涨停、监管函/问询、机构大幅净卖出、明显泡沫化），' +
-  '不要因为「涨了几天」就一律给低分。\n' +
-  '- 数据缺失（如某项未取到）就按可得指标判断，不要臆测缺失项。'
+  '判断要点（务必据此打分，直接决定 buyScore 高低）：\n' +
+  '- **「距 MA20 偏离」是最关键的追高风险指标**：偏离 +15% 以上基本是追高，buyScore 应 ≤40；' +
+  '+8%~+15% 偏贵，≤55；-3%~+8%（贴近均线）是较舒服的买点，可给高分；跌破 MA20 但趋势未坏' +
+  '（缩量回踩）也可关注。\n' +
+  '- **近5日/当日大涨要警惕**：短期已大涨（近5日 >+10%）再买入，多为接盘；上升趋势中' +
+  '「缩量回踩均线」才是好买点，而非「放量突破新高」。\n' +
+  '- 结合换手/成交额（温和放量 vs 巨量滞涨）、均线排列、市值与估值、资讯题材的**可信度与兑现度**。\n' +
+  '- 明确过热的（连续涨停、监管函/问询、机构大幅净卖出、泡沫化）直接给低分。\n' +
+  '- 数据缺失就按可得指标判断，不要臆测。\n' +
+  '- **评分必须拉开区分度**：不要都挤在 60 分附近，好买点给 70-90，勉强给 45-55，追高/风险给 0-40。\n' +
+  '持有周期判断依据（**holdDays 必须由此推出，不要一律给同一个数**）：\n' +
+  '- **20 日**：逻辑兑现需要时间 —— 题材/业绩有明确催化、趋势健康（均线多头排列）、' +
+  '近一月刚启动而**未大幅偏离** MA20。\n' +
+  '- **10 日**：中期逻辑但催化不强 —— 贴近 MA20 的震荡区间、行业景气温和回升。\n' +
+  '- **5 日**：买点偏贵或短期动能已耗 —— 偏离 MA20 偏大（+8% 以上）、上影线多、' +
+  '巨量滞涨，或只是跟随大盘的普涨修复。\n' +
+  '- **3 日**：逻辑很短 —— 已经过热（近5日 >+15%、连续涨停）、技术破位（放量跌破 MA20）、' +
+  '或明确的风险事件（问询/减持/利空），反弹了就要走。\n' +
+  '- 若**买入评分本身很低**（<40），仍要给 3 或 5：不值得长期持有的票不该挂长周期。'
 
 // 第一步：从客观初筛后的候选里，按「值得买入」挑出 furtherPicks 只（分批喂，省 token）。
 const PRESELECT_SYSTEM =
@@ -255,6 +300,109 @@ export async function selectCandidates(cfg, pool, want, onLog = () => {}, { batc
   return picked.slice(0, want)
 }
 
+/** 东财个股行业（f127），带缓存；失败返回 '?'。 */
+const industryCache = new Map()
+export async function industryOf(secid, deps = {}) {
+  if (deps.industry) return deps.industry(secid)
+  if (industryCache.has(secid)) return industryCache.get(secid)
+  try {
+    const json = await cached(`ind:${secid}`, 24 * 60 * 60_000, () =>
+      fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f127`, {
+        headers: { Referer: 'https://quote.eastmoney.com/' },
+      }).then((r) => r.json()),
+    )
+    const v = json?.data?.f127 || '?'
+    industryCache.set(secid, v)
+    return v
+  } catch {
+    return '?'
+  }
+}
+
+/**
+ * **多因子选股**（客观、可回测、无未来数据）：在候选池上算价量 + 点时财务因子 →
+ * 截面 z-score 加权 → 行业分散（同行业 ≤ maxPerIndustry）→ 取 TopN。
+ * AI 不参与选股，只负责后续解读。
+ *
+ * `finance(secid)` 返回 `{ roeAnnual, bps }`（lib/finance.js 的 financeFactors），
+ * 按评估日做点时取数；不传则只用价量因子（权重项 `q` 贡献 0）。
+ */
+export async function selectByFactors(
+  pool,
+  { kline, finance, event, tilt = 0, indexBars = null, finalPicks = 10, maxPerIndustry = 99, industry, onLog = () => {} } = {},
+) {
+  // 指数收盘价 Map：供 computeFactors 算 beta / ivol（仅走强时 beta 生效）。
+  const idxClose = Array.isArray(indexBars) && indexBars.length
+    ? new Map(indexBars.map((b) => [b.time, b.close]))
+    : null
+  const withFeat = await mapLimit(pool, 12, async (c) => {
+    let bars = null
+    try {
+      bars = (await kline(c.secid))?.bars || null
+    } catch {
+      bars = null
+    }
+    if (!bars || bars.length < 21) return null
+    // 财务取不到就降级成 null（该票质量项贡献 0），不能因为财务源挂了就丢掉整只票。
+    let fin = null
+    if (finance) {
+      try {
+        fin = await finance(c.secid)
+      } catch {
+        fin = null
+      }
+    }
+    const feat = computeFactors(bars, idxClose, fin)
+    if (!feat) return null
+    // 公告事件净分（lib/ann-factor.js）：回测/生产注入，失败降级为该项不贡献。
+    if (event) {
+      try {
+        const ev = await event(c)
+        if (ev != null) feat.event = ev
+      } catch {
+        /* 事件源失败不丢整只票 */
+      }
+    }
+    return { ...c, feat }
+  })
+  const items = withFeat.filter(Boolean)
+  if (!items.length) throw new Error('因子选股：无有效候选')
+  const finCov = items.filter((x) => x.feat.roeAnnual != null).length
+  if (finance) onLog(`因子选股：财务覆盖 ${finCov}/${items.length} 只`)
+  const scores = compositeScores(items.map((x) => x.feat), { tilt })
+  const ranked = items
+    .map((x, i) => ({ ...x, factorScore: Number(scores[i].toFixed(4)) }))
+    .sort((a, b) => b.factorScore - a.factorScore)
+
+  // 不做行业分散（maxPerIndustry ≥ finalPicks）：直接取因子分前 N。
+  // 目的：① 结果确定（不依赖东财 f127 是否可用）；② 实证本池分散反而拖累。
+  if (maxPerIndustry >= finalPicks) {
+    onLog(`因子选股：${items.length} 只候选 → Top${finalPicks}（不做行业分散）`)
+    return ranked.slice(0, finalPicks)
+  }
+
+  const byInd = new Map()
+  const picked = []
+  const buf = []
+  for (const x of ranked) {
+    if (picked.length >= finalPicks) break
+    const ind = await industryOf(x.secid, { industry })
+    const used = byInd.get(ind) || 0
+    if (used < maxPerIndustry) {
+      byInd.set(ind, used + 1)
+      picked.push({ ...x, industry: ind })
+    } else {
+      buf.push({ ...x, industry: ind })
+    }
+  }
+  for (const x of buf) {
+    if (picked.length >= finalPicks) break
+    picked.push(x)
+  }
+  onLog(`因子选股：${items.length} 只候选 → Top${picked.length}（行业分散≤${maxPerIndustry}）`)
+  return picked
+}
+
 /**
  * 选出最终 Top10。**以买入评分为准**，评审只做「高分股太多」时的取舍：
  *   1. 取 `buyScore ≥ highBar` 的高分股，按分降序。
@@ -324,6 +472,37 @@ export async function selectTop10(cfg, scored, finalPicks = 10, onLog = () => {}
 }
 
 /**
+ * 市场状态 tilt：只用 ≤ basisDate 的沪深300 日K → 动量倾斜（0=纯反转，1=强动量）。
+ * 走强时把部分反转权重挪给动量/相对强度，适配普涨行情；走弱则回到反转。
+ * @returns {Promise<{tilt:number, idxBars:Array}>} idxBars 是 ≤ basisDate 的指数切片
+ *   （供 beta / ivol 计算，别处也用得到，故一并返回）。
+ * @param {object} [deps] `tilt` 可显式覆盖（回测/调参）；`indexBars` 可注入历史切片。
+ */
+export async function resolveTilt(deps = {}, basisDate) {
+  let idxBars = []
+  try {
+    const rawIdx = deps.indexBars
+      ? deps.indexBars
+      : ((await cachedKline(BENCH_SECID).catch(() => null))?.bars || [])
+    idxBars = Array.isArray(rawIdx) ? rawIdx.filter((b) => b.time <= basisDate) : []
+  } catch {
+    idxBars = []
+  }
+  return { tilt: Number.isFinite(deps.tilt) ? deps.tilt : regimeTilt(idxBars), idxBars }
+}
+
+/**
+ * regime 双链路择链：**逐日**看 tilt 决定走 A 还是 B（不是按月）。
+ *   tilt >= thr → 'A'：成交额池 + AI 初筛 + 买入评分（激进，强涨市弹性足）
+ *   tilt <  thr → 'B'：稳健池 + 客观多因子（保守，跌市/震荡市更稳）
+ * 纯函数（无 IO），供单测与调用方共用。
+ */
+export function pickChain(tilt, thr) {
+  if (!Number.isFinite(tilt) || !Number.isFinite(thr)) return 'B'
+  return tilt >= thr ? 'A' : 'B'
+}
+
+/**
  * 跑一次每日推荐。
  * @param {object} opts
  * @param {string} opts.dataDir 数据目录（落盘 recommend/<date>.json）
@@ -336,6 +515,10 @@ export async function selectTop10(cfg, scored, finalPicks = 10, onLog = () => {}
  * @param {number} [opts.concurrency]   解读并发（默认 4）
  * @param {boolean} [opts.dryRun]       只跑不落盘
  * @param {string} [opts.date]          覆盖日期
+ * @param {object} [opts.deps]          回测注入（默认走实时源，行为不变）：
+ *   `{ pool(), kline(secid), news(stock), finance(secid), basisDate, effectiveDate }`
+ *   `kline` 必须已截断到 basisDate（函数入口有断言，越界直接 throw）。
+ * @param {string} [opts.fileDate]      覆盖落盘文件名（回测用「生效日」）
  * @param {(m:string)=>void} [opts.onLog]
  */
 export async function runRecommendDaily({
@@ -347,44 +530,124 @@ export async function runRecommendDaily({
   finalPicks = 10,
   concurrency = 4,
   highBar = 60,
+  // 选股模式：'ai'=模型初筛+买入评分（旧链路）；'factors'=客观多因子选股（AI 只解读）。
+  selectMode = 'ai',
+  // 是否调 AI 逐只解读。快速回测可置 false：跳过 AI、买入评分留空、持有周期用 factorHoldDays。
+  interpretAi = true,
+  // 因子选股的行业分散上限；默认 99 = 不做分散（结果确定、实证更优）。
+  maxPerIndustry = 99,
+  // **兜底**持有交易日：只在 AI 未产出解读、或 --bare 快速回测（interpretAi=false）时使用。
+  // 正常路径下由 AI 按个股实际状态判断 holdDays（见 interpretUser），不受此值影响。
+  factorHoldDays = 10,
+  // 产物落盘子目录（默认 recommend）；回测调参可用别的目录与榜单隔离。
+  outSubdir = 'recommend',
   dryRun = false,
   date,
+  deps = {},
   onLog = () => {},
 } = {}) {
-  if (!cfg?.apiKey) throw new Error('AI 未配置 API Key（先在站内 ⚙ 设置里配好 provider / Key）')
+  if (interpretAi && !cfg?.apiKey) throw new Error('AI 未配置 API Key（先在站内 ⚙ 设置里配好 provider / Key）')
 
-  onLog(`拉取成交额候选池（前 ${poolPages * 100} 只）…`)
-  const pool = await aSharePool({ pages: poolPages })
-  if (!pool.length) throw new Error('候选池为空（新浪榜单接口没返回数据）')
+  // 红线：喂给因子的 K 线末根必须 ≤ 基准日（生产=今日，回测=回测日）。
+  // 收口在 `klineOf` 这一个入口，而不是散落在各个调用点 —— deps.kline 由调用方注入，
+  // 之前只有 backtest.js 自己在 `filter` 之后检查（filter 完再查 `> asOf` 永远不会触发，
+  // 等于没检查），真正的风险正是「调用方忘了截断」。
+  const basisDate = deps.basisDate || bjDate()
+  const rawKlineOf = deps.kline || ((secid) => sinaKline(secid, { period: 'd', limit: 70 }))
+  const klineOf = async (secid) => {
+    const r = await rawKlineOf(secid)
+    const bars = r?.bars
+    if (Array.isArray(bars) && bars.length) {
+      const lastTime = bars[bars.length - 1]?.time
+      if (lastTime && lastTime > basisDate) {
+        throw new Error(`未来数据泄漏：${secid} 日K ${lastTime} > 基准日 ${basisDate}`)
+      }
+    }
+    return r
+  }
+
+  // 候选池：默认「稳健池」（沪深300+创业板+科创板）；deps.pool 可覆盖（回测 / A 链路成交额池）。
+  onLog(deps.pool ? '拉取注入候选池（成交额池）…' : '拉取稳健候选池（沪深300 + 创业板 + 科创板）…')
+  const pool = deps.pool ? await deps.pool() : await stablePool()
+  if (!pool.length) throw new Error('候选池为空（新浪成分接口没返回数据）')
+
+  // 市场状态（regime）：口径集中在 resolveTilt，双链路与单链路必须一致。
+  const { tilt, idxBars: idxBarsForRegime } = await resolveTilt(deps, basisDate)
+  if (selectMode === 'factors') onLog(`市场状态 tilt=${tilt.toFixed(2)}（0=纯反转，1=强动量）`)
 
   // ① 客观初筛：只用方向中性的规则把 500 压到 objTarget（默认 200），方向交给模型。
-  const filtered = await objectiveFilter(pool, { target: objTarget, onLog })
+  // regime 自适应偏离上限：跌市收紧（15%，避追高）、涨市放宽（40%，纳入强势领涨股）。
+  // 与 optimize-factors 的 DEV_LO/DEV_HI 保持一致（先验，经 2026 检验）。
+  const devHi = Number(process.env.RECOMMEND_DEV_HI) || 40
+  const maxDeviation = OBJECTIVE.maxDeviation + tilt * (devHi - OBJECTIVE.maxDeviation)
+  const filtered = await objectiveFilter(pool, {
+    target: objTarget,
+    onLog,
+    maxDeviation,
+    kline: deps.kline ? (secid) => klineOf(secid) : undefined,
+  })
   if (!filtered.length) throw new Error('客观初筛后无候选')
 
-  // ①.5 给初筛后的候选补「近一月涨幅」（**只喂给模型看，不参与筛选**）—— 模型多次抱怨
-  // 缺中期趋势参考。objectiveFilter 已经拉过日 K，这里复用同一份（有 cached）。
-  onLog(`补近一月涨幅（${filtered.length} 只）…`)
-  const enriched = await mapLimit(filtered, 8, async (c) => {
-    let monthPct = null
-    try {
-      const k = await sinaKline(c.secid, { period: 'd', limit: 30 })
-      monthPct = monthChangeFromBars(k?.bars)
-    } catch {
-      monthPct = null
-    }
-    return { ...c, monthPct }
-  })
-  const withMonth = enriched.filter(Boolean)
+  // 选股：默认「AI 初筛」；`selectMode='factors'` 改走客观多因子（AI 不参与选股，只解读）。
+  let candidates
+  if (selectMode === 'factors') {
+    onLog(`因子选股（候选 ${filtered.length} 只 → Top${topCandidates}）…`)
+    candidates = await selectByFactors(filtered, {
+      kline: (secid) => klineOf(secid),
+      // 点时财务：按 basisDate 取「披露日 ≤ basisDate」的报告期。
+      // 回测可注入 deps.finance（用已缓存的历史财务，避免联网），生产走默认实现。
+      finance:
+        deps.finance || ((secid) => financeFactors(secid, basisDate, { dataDir }).catch(() => null)),
+      // 公告事件净分：调用方注入 deps.event（按 basisDate 预计算 Map）。
+      // 生产见 scripts/recommend.js；回测见 scripts/backtest.js；未注入则该项不贡献。
+      event: deps.event,
+      // regime 动量倾斜（0=纯反转，1=强动量）：见上方 regimeTilt。
+      tilt,
+      // 指数切片（≤ basisDate）：供 beta / ivol 计算。
+      indexBars: idxBarsForRegime,
+      finalPicks: topCandidates,
+      maxPerIndustry,
+      industry: deps.industry,
+      onLog,
+    })
+  } else {
+    // ①.5 给初筛后的候选补「近一月涨幅」（**只喂给模型看，不参与筛选**）。
+    onLog(`补近一月涨幅（${filtered.length} 只）…`)
+    const enriched = await mapLimit(filtered, 8, async (c) => {
+      let monthPct = null
+      try {
+        const k = await klineOf(c.secid)
+        monthPct = monthChangeFromBars(k?.bars)
+      } catch {
+        monthPct = null
+      }
+      return { ...c, monthPct }
+    })
+    const withMonth = enriched.filter(Boolean)
 
-  // ② 模型选 Top100：分批喂精简量价，按「值得买入」挑，汇总去重。
-  onLog(`模型从 ${withMonth.length} 只里选 Top${topCandidates}…`)
-  const candidates = await selectCandidates(cfg, withMonth, topCandidates, onLog)
+    // ② 模型选 Top100：分批喂精简量价，按「值得买入」挑，汇总去重。
+    onLog(`模型从 ${withMonth.length} 只里选 Top${topCandidates}…`)
+    candidates = await selectCandidates(cfg, withMonth, topCandidates, onLog)
+  }
 
   // ③ 逐只精评：带资讯 + K 线，输出 buyScore（买入视角）。
+  //    `interpretAi=false`（快速回测）跳过 AI：买入评分留空、持有周期用默认 5 日。
   let done = 0
   const arr = (v, n) => (Array.isArray(v) ? v.map((s) => String(s).trim()).filter(Boolean).slice(0, n) : [])
-  const withAi = await mapLimit(candidates, concurrency, async (c) => {
-    const ctx = await stockContext(c)
+  const noAi = (c) => ({
+    ...c,
+    ai: {
+      buyScore: null,
+      holdDays: factorHoldDays,
+      holdReason: '',
+      summary: '',
+      catalysts: [],
+      risks: [],
+      tags: [],
+    },
+  })
+  const withAi = !interpretAi ? candidates.map(noAi) : await mapLimit(candidates, concurrency, async (c) => {
+    const ctx = await stockContext(c, { kline: deps.kline && ((s) => klineOf(s.secid)), news: deps.news })
     let base = null
     try {
       base = parseJsonLoose(
@@ -400,7 +663,19 @@ export async function runRecommendDaily({
     if (done % 10 === 0 || done === candidates.length) onLog(`  解读 ${done}/${candidates.length}`)
     if (!base || base.error) {
       if (process.env.RECOMMEND_DEBUG) onLog(`  解析失败 ${c.code}: ${JSON.stringify(base)}`)
-      return { ...c, ai: { buyScore: null, summary: '', catalysts: [], risks: [], tags: [], ...(base || {}) } }
+      return {
+        ...c,
+        ai: {
+          buyScore: null,
+          holdDays: factorHoldDays,
+          holdReason: '',
+          summary: '',
+          catalysts: [],
+          risks: [],
+          tags: [],
+          ...(base || {}),
+        },
+      }
     }
     const buyScore = Number.isFinite(Number(base.buyScore))
       ? Math.max(0, Math.min(100, Math.round(Number(base.buyScore))))
@@ -409,6 +684,8 @@ export async function runRecommendDaily({
       ...c,
       ai: {
         buyScore,
+        holdDays: normalizeHoldDays(base.holdDays),
+        holdReason: String(base.holdReason || '').slice(0, 80),
         summary: String(base.summary || '').slice(0, 160),
         catalysts: arr(base.catalysts, 8),
         risks: arr(base.risks, 8),
@@ -418,17 +695,32 @@ export async function runRecommendDaily({
   })
   const scored = withAi.filter(Boolean)
 
+  // 【阶段 A：临时门控】持有周期仍由策略统一指定，AI 的判断先不采信。
+  //
+  // 为什么：历史 1300 条 holdDays 全是 10（本行覆盖 + 旧 prompt 写死「默认给 10」），
+  // 所以**LLM 自然会怎么分布完全没有数据**。而因子配置的超额高度依赖周期：
+  // T+5 只有 +0.48、T+10 +1.42、T+20 +2.30。若 LLM 偏保守、大量给 3/5，
+  // 期望超额会从 ~1.4 悄悄掉到 ~0.5。
+  // 切动态前先跑一天 `recommend.js --dry-run`，看 100 只候选的 holdDays 分布，
+  // 确认不是塌到 3/5，再删掉本行与 `factorHoldDays` 的兜底语义。
+  if (selectMode === 'factors') for (const c of scored) if (c.ai) c.ai.holdDays = factorHoldDays
+
   // 选 Top10：**先按买入评分**，高分才配进榜；评审只在「高分股超过 10 只」时用来取舍。
   // 早先无条件把 100 只交给评审，它会选进 18 分的股（评分才是逐只精评的可靠信号）。
-  const top = await selectTop10(cfg, scored, finalPicks, onLog, { highBar })
+  const top =
+    selectMode === 'factors'
+      ? scored.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'factor' }))
+      : await selectTop10(cfg, scored, finalPicks, onLog, { highBar })
   onLog(`Top10：${top.map((t) => `${t.code}(${t.ai.buyScore})`).join(' ')}`)
 
   const generatedOn = bjDate() // 分析发生日（收盘后那天）
   // `date` 可显式覆盖生效日（测试用）；否则 = 生成日的下一交易日。
   // 文件以**生效日**命名：用户看 2026-10-05 就是「10-05 这份推荐」。
-  const effective = date || nextTradingDay(generatedOn)
-  // 基准价 = 生成日的收盘价（脚本收盘后跑，快照价即当天收盘）。每只的 perf 都以它为基准。
-  const basisDate = generatedOn
+  // 回测可传 `deps.effectiveDate`（历史某天 → 其下一交易日）覆盖之。
+  const effective = date || deps.effectiveDate || nextTradingDay(generatedOn)
+  // 基准价 = 生成日的收盘价（脚本收盘后跑，快照价即当天收盘）。
+  // 回测里「生成日」= 回测的那一天 `deps.basisDate`。
+  // （`basisDate` 已在函数开头定下 —— 泄漏断言要用它，不能只在这里才算。）
   const payload = {
     date: effective,
     generatedAt: new Date().toISOString(),
@@ -438,11 +730,70 @@ export async function runRecommendDaily({
     top,
     candidates: scored,
   }
-  if (!dryRun) await writeJson(path.join(dataDir, 'recommend', `${effective}.json`), payload)
+  if (!dryRun) await writeJson(path.join(dataDir, outSubdir, `${effective}.json`), payload)
   onLog(
     `${dryRun ? '（dry-run，未落盘）' : '已写入'} ${effective}（生成于 ${generatedOn}）：池 ${pool.length} → 初筛 ${filtered.length} → 选${scored.length} → 推荐 ${top.length}`,
   )
   return payload
+}
+
+/**
+ * regime **双链路**每日推荐：两条链路都跑，再按当日 tilt 选一份落盘。
+ *
+ *   tilt >= thr → A 链路（激进）：成交额池（aSharePool）+ AI 初筛 100 + 买入评分 Top10
+ *   tilt <  thr → B 链路（保守）：稳健池（stablePool）+ 客观多因子 Top10
+ *
+ * 择链口径与回测评估 `scripts/eval-ab-combo.js --thr 0.6` 完全一致（逐日 tilt，非按月），
+ * 2024-09 / 2025-08 / 2025-09 / 2026 各窗均按此口径验过。
+ *
+ * 两条都用 dryRun 跑 —— 复用 runRecommendDaily 的全部选股逻辑而不复制一份，
+ * 只有**被选中的**那份写进 outSubdir（所以前端读法完全不变）。
+ * 「两条都跑」是有意的：既满足「每天产出可对照」，也能在事后核对当天的 tilt 到底选对了没有。
+ *
+ * 顺序执行 A 再 B（不并发）：上游东财/新浪按 IP 限流，并发翻倍容易踩熔断。
+ *
+ * @param {object} opts 透传给 runRecommendDaily（dataDir/cfg/concurrency/deps/dryRun 等）
+ * @param {number} [opts.thr=0.6] tilt 阈值，≥ 走 A
+ * @param {number} [opts.poolPages=5] A 链路成交额池页数（每页 100 → 500 只）
+ * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
+ */
+export async function runRecommendRegime(opts = {}) {
+  const { dataDir, cfg, thr = 0.6, poolPages = 5, finalPicks = 10, deps = {}, onLog = () => {} } = opts
+
+  const basisDate = deps.basisDate || bjDate()
+  const { tilt } = await resolveTilt(deps, basisDate)
+  const chain = pickChain(tilt, thr)
+  const useA = chain === 'A'
+  onLog(
+    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ ${useA ? 'A 链路：成交额池 + AI 选股（激进）' : 'B 链路：稳健池 + 客观因子（保守）'}`,
+  )
+
+  // A 注入成交额池；B 必须把 pool 显式打回 undefined，否则会继承 A 的注入。
+  const runOne = (label, cfgArgs) =>
+    runRecommendDaily({ ...opts, ...cfgArgs, dryRun: true, onLog: (m) => onLog(`[${label}] ${m}`) })
+
+  const payloadA = await runOne('A', {
+    selectMode: 'ai',
+    topCandidates: 100,
+    deps: { ...deps, pool: () => aSharePool({ pages: poolPages }) },
+  })
+  const payloadB = await runOne('B', {
+    selectMode: 'factors',
+    topCandidates: finalPicks,
+    deps: { ...deps, pool: undefined },
+  })
+
+  const chosen = useA ? payloadA : payloadB
+  // 记下当天的判据：事后复盘「tilt 选链」对不对，全靠这几个字段。
+  chosen.regime = { tilt: Number(tilt.toFixed(4)), thr, chain, ranBoth: true }
+  const outSubdir = opts.outSubdir || 'recommend'
+  if (!opts.dryRun) {
+    await writeJson(path.join(dataDir, outSubdir, `${chosen.date}.json`), chosen)
+    onLog(`已写入 ${outSubdir}/${chosen.date}.json（链路 ${chain}，tilt=${tilt.toFixed(2)}）`)
+  } else {
+    onLog(`（dry-run，未落盘）链路 ${chain}，tilt=${tilt.toFixed(2)}`)
+  }
+  return chosen
 }
 
 /** 「推荐失效」表现：给定推荐日价与最新价，返回涨跌百分比；任一为空/为 0 则 null。 */
@@ -458,12 +809,26 @@ export function pctFromPick(pickPrice, latestPrice) {
 }
 
 /** 已有的推荐日期列表（新→旧）。 */
+/**
+ * 回测/调参用过的日期区间 —— **不在应用里对外展示**。
+ *
+ * 这些天的推荐是「训练集 / 验证集」样本（用于拟合与检验因子权重），展示出来等于
+ * 把样本内数据当成实盘推荐，会让访客误以为策略当时真在跑、并污染「整体盈亏」的口径。
+ * 应用只应展示**训练窗口之后**的前瞻推荐。
+ *
+ * 窗口：2026-03-01 ~ 2026-09-30（验证 3-6 月 + 训练 7-9 月）。2026-10 起是真正的前瞻。
+ */
+export const HIDDEN_RECOMMEND_FROM = '2026-03-01'
+export const HIDDEN_RECOMMEND_TO = '2026-09-30'
+export const isHiddenRecommendDate = (d) => d >= HIDDEN_RECOMMEND_FROM && d <= HIDDEN_RECOMMEND_TO
+
 export async function listRecommendDates(dataDir) {
   try {
     const files = await fsp.readdir(path.join(dataDir, 'recommend'))
     return files
       .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
       .map((f) => f.slice(0, 10))
+      .filter((d) => !isHiddenRecommendDate(d))
       .sort()
       .reverse()
   } catch {
@@ -475,6 +840,9 @@ export async function listRecommendDates(dataDir) {
 export async function loadRecommend(dataDir, date) {
   if (date) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+    // 训练/验证窗口的推荐不对外（见 isHiddenRecommendDate）：显式指定日期也读不到，
+    // 避免用 `?date=2026-08-15` 绕过列表过滤。
+    if (isHiddenRecommendDate(date)) return null
     return readJson(path.join(dataDir, 'recommend', `${date}.json`), null)
   }
   const dates = await listRecommendDates(dataDir)
@@ -490,6 +858,66 @@ export async function loadRecommend(dataDir, date) {
  * 结果按天缓存 5 分钟（价格易变，但也不必每次请求都打上游）。
  * 取不到现价的条 sincePickPct 为 null（前端显示 —）。
  */
+/**
+ * 「按 AI 建议持有周期」的涨幅：基准 = 生成日(basisDate)收盘，卖出 = 其后第 holdDays 个
+ * 交易日收盘。周期未走完（还没有那根 K 线）→ holdPct=null、holdDone=false。
+ * 只读日K的历史切片，无未来数据。
+ */
+async function holdReturn(secid, basisDate, holdDays) {
+  if (!secid || !basisDate || !holdDays) return { holdPct: null, holdEndDate: null, holdDone: false }
+  try {
+    const bars = (await cachedKline(secid))?.bars || []
+    const idx = bars.findIndex((b) => b.time === basisDate)
+    if (idx < 0) return { holdPct: null, holdEndDate: null, holdDone: false }
+    const base = bars[idx].close
+    const sell = bars[idx + holdDays]
+    if (!base || !sell?.close) return { holdPct: null, holdEndDate: null, holdDone: false }
+    return {
+      holdPct: Number(((sell.close / base - 1) * 100).toFixed(2)),
+      holdEndDate: sell.time,
+      holdDone: true,
+    }
+  } catch {
+    return { holdPct: null, holdEndDate: null, holdDone: false }
+  }
+}
+
+/** 基准指数：沪深300。前端「整体盈亏」要拿它做同期对照。 */
+export const BENCH_SECID = '1.000300'
+export const BENCH_NAME = '沪深300'
+
+/**
+ * 基准指数在两个窗口的涨跌（%），与个股用**同一批交易日**对齐：
+ *   - 持有窗口：basisDate 收盘 → holdEndDate（个股各自 AI 持有周期走完那天）收盘
+ *   - 至今窗口：basisDate 收盘 → 指数最新一根日K收盘
+ * 这样前端等权平均后，就是「同一持有窗口下，大盘涨了多少」的可比数。
+ * 指数走日K缓存（收盘后即当日收盘价），与个股现价（实时行情）在盘中会略有时间差。
+ */
+function benchReturns(bars, basisDate, holdEndDate) {
+  // 取「≤ basisDate 的最后一根」而不是严格等于：basisDate 可能是节假日（如国庆），
+  // 严格相等会查不到、整列变 null。个股那份基准价同样是「≤ basisDate 的最后一根收盘」，
+  // 两边口径一致才能相减出超额。
+  let i = -1
+  for (let k = bars.length - 1; k >= 0; k -= 1) {
+    if (bars[k].time <= basisDate && bars[k].close) {
+      i = k
+      break
+    }
+  }
+  if (i < 0) return { holdIdxPct: null, sinceIdxPct: null }
+  const base = bars[i].close
+  const last = bars[bars.length - 1]
+  // 最后一根就是基准那根（basisDate 之后还没出新的交易日K线）→ 指数区间收益恰为 0，
+  // 不是「取不到」。返回 0 才能与个股那列（休市时现价=基准价，收益 0）对齐。
+  const sinceIdxPct = last?.close ? Number(((last.close / base - 1) * 100).toFixed(2)) : null
+  let holdIdxPct = null
+  if (holdEndDate) {
+    const j = bars.findIndex((b) => b.time === holdEndDate)
+    if (j >= 0 && bars[j].close) holdIdxPct = Number(((bars[j].close / base - 1) * 100).toFixed(2))
+  }
+  return { holdIdxPct, sinceIdxPct }
+}
+
 export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 5 * 60_000 } = {}) {
   if (!payload || !Array.isArray(payload.top) || !payload.top.length) return payload
   const secids = [...new Set(payload.top.map((s) => s.secid).filter(Boolean))]
@@ -503,13 +931,24 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
   } catch {
     /* 上游挂了就整段 null，不阻断展示 */
   }
-  const withPerf = payload.top.map((s) => {
+  // 基准指数日K只取一次；拿不到就整列 null（前端显示 —），不阻断个股盈亏。
+  const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
+  const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
+    const holdDays = s.ai?.holdDays ?? null
+    const hr = await holdReturn(s.secid, payload.basisDate, holdDays)
+    const bench = benchBars.length ? benchReturns(benchBars, payload.basisDate, hr.holdEndDate) : {}
     return {
       ...s,
       latestPrice: q?.price ?? null,
       sincePickPct: pctFromPick(s.price, q?.price),
+      holdDays,
+      holdPct: hr.holdPct,
+      holdEndDate: hr.holdEndDate,
+      holdDone: hr.holdDone,
+      holdIdxPct: bench.holdIdxPct ?? null,
+      sinceIdxPct: bench.sinceIdxPct ?? null,
     }
   })
-  return { ...payload, top: withPerf }
+  return { ...payload, top: withPerf, benchName: BENCH_NAME }
 }

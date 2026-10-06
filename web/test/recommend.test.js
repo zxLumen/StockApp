@@ -6,9 +6,27 @@ import {
   buildReviewRows,
   bjDate,
   nextTradingDay,
+  normalizeHoldDays,
   pctFromPick,
   selectTop10,
+  pickChain,
 } from '../lib/recommend.js'
+
+test('pickChain：逐日 tilt 门控（≥阈值走 A 激进链路，否则走 B 保守链路）', () => {
+  // 阈值 0.6 的实际分界：2024-09 实测 tilt 只取 0.00 / 1.00 两端。
+  assert.equal(pickChain(1.0, 0.6), 'A')
+  assert.equal(pickChain(0.6, 0.6), 'A', '边界含等号')
+  assert.equal(pickChain(0.59, 0.6), 'B')
+  assert.equal(pickChain(0.0, 0.6), 'B')
+  // 中间值同样按阈值切（37% 的交易日落在这段）。
+  assert.equal(pickChain(0.41, 0.6), 'B')
+  assert.equal(pickChain(0.66, 0.6), 'A')
+  // 阈值可配（日后用真实前瞻数据重标定）。
+  assert.equal(pickChain(0.41, 0.3), 'A')
+  // 拿不到 tilt / 阈值非法 → 保守走 B，绝不因为数据缺失去赌激进链路。
+  assert.equal(pickChain(NaN, 0.6), 'B')
+  assert.equal(pickChain(1.0, NaN), 'B')
+})
 
 test('parseJsonLoose：裸 JSON', () => {
   assert.deepEqual(parseJsonLoose('{"a":1}'), { a: 1 })
@@ -82,4 +100,23 @@ test('selectTop10：无高分时按分降序取（低分也保留，不崩）', 
   const scored = [st('a', 30), st('b', 20)]
   const top = await selectTop10(null, scored, 10, () => {}, { highBar: 60 })
   assert.deepEqual(top.map((t) => t.code), ['a', 'b'])
+})
+
+// ── normalizeHoldDays：AI 逐股判断持有周期 ─────────────────────────────────
+// 历史 1300 条 holdDays 全是 10（旧 prompt 写死「默认给 10」+ 运行期覆盖），
+// 所以这套归一化此前从没被真正验证过。切动态周期前必须钉住。
+test('normalizeHoldDays：3/5/10/20 原样保留', () => {
+  for (const n of [3, 5, 10, 20]) assert.equal(normalizeHoldDays(n), n)
+})
+
+test('normalizeHoldDays：合法值不回落到 5（防「默认 10」被静默改掉）', () => {
+  assert.equal(normalizeHoldDays('20'), 20)
+  assert.equal(normalizeHoldDays(3.4), 3, '小数四舍五入到最近档位')
+  assert.equal(normalizeHoldDays(19.6), 20)
+})
+
+test('normalizeHoldDays：非法值回落 5（不回落 10 —— 那是旧的写死默认值）', () => {
+  for (const v of [null, undefined, 0, -3, 7, 15, 'abc', NaN]) {
+    assert.equal(normalizeHoldDays(v), 5, `${String(v)} 应回落 5`)
+  }
 })

@@ -119,6 +119,10 @@ export interface RecommendStock {
   /** AI「值得买入」评分与要点（解读失败时 buyScore 为 null） */
   ai?: {
     buyScore: number | null
+    /** AI 建议持有交易日数（3 / 5 / 10 / 20） */
+    holdDays?: number | null
+    /** AI 给这个持有周期的理由（一句话） */
+    holdReason?: string
     summary: string
     catalysts?: string[]
     risks?: string[]
@@ -132,6 +136,18 @@ export interface RecommendStock {
   latestPrice?: number | null
   /** 自推荐日基准价到最新的涨跌幅（%）；取不到现价时为 null */
   sincePickPct?: number | null
+  /** AI 建议持有周期（交易日），服务端补 */
+  holdDays?: number | null
+  /** 按 AI 持有周期算的涨幅（%）；周期未走完或数据缺失为 null */
+  holdPct?: number | null
+  /** 持有周期的结束交易日 */
+  holdEndDate?: string | null
+  /** 该持有周期是否已走完 */
+  holdDone?: boolean
+  /** 同期沪深300涨跌（%）：推荐日→该股持有周期结束；与 holdPct 同一窗口 */
+  holdIdxPct?: number | null
+  /** 同期沪深300涨跌（%）：推荐日→最新；与 sincePickPct 同一窗口 */
+  sinceIdxPct?: number | null
 }
 
 export interface RecommendPayload {
@@ -140,8 +156,21 @@ export interface RecommendPayload {
   generatedAt: string
   /** 基准价对应的日期（生成日收盘） */
   basisDate?: string
+  /** 对照基准名（如「沪深300」），服务端补 */
+  benchName?: string
   model: string
   pool: { size: number; filtered?: number; candidates: number }
+  /** regime 双链路的择链判据（单链路产物无此字段） */
+  regime?: {
+    /** 当日沪深300 动量倾斜 tilt（0=纯反转，1=强动量） */
+    tilt: number
+    /** tilt 阈值：≥ 走 A 链路 */
+    thr: number
+    /** 实际选中的链路：A=成交额池+AI选股（激进），B=稳健池+客观因子（保守） */
+    chain: 'A' | 'B'
+    /** 两条是否都跑了（便于事后对照） */
+    ranBoth?: boolean
+  }
   top: RecommendStock[]
   candidates: RecommendStock[]
 }

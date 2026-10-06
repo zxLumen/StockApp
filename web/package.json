@@ -14,6 +14,11 @@
     "start": "node --env-file-if-exists=.env server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "recommend": "node --env-file-if-exists=.env scripts/recommend.js",
+    "archive:news": "node --env-file-if-exists=.env scripts/archive-news.js",
+    "backtest": "node --env-file-if-exists=.env scripts/backtest.js",
+    "eval:backtest": "node --env-file-if-exists=.env scripts/eval-backtest.js",
+    "opt:factors": "node --env-file-if-exists=.env scripts/optimize-factors.js",
+    "opt:factors:cv": "node --env-file-if-exists=.env scripts/optimize-factors.js --cv",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

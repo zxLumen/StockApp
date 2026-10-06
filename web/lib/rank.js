@@ -27,6 +27,46 @@ export function secidOfSinaSymbol(symbol) {
   return `${m[1].toLowerCase() === 'sh' ? 1 : 0}.${m[2]}`
 }
 
+/** 稳健候选池的默认成分节点：沪深300（蓝筹）+ 创业板 + 科创板（成长）。 */
+export const STABLE_NODES = ['hs300', 'cyb', 'kcb']
+
+/**
+ * 按**指数成分**取稳健候选池（沪深300 + 创业板 + 科创板）。
+ * 相比「成交额 Top500」（全是高波动活跃股，下跌市重灾区），成分股质量高、抗跌。
+ * 新浪单节点分页，每页最多 100。
+ */
+export async function stablePool({ nodes = STABLE_NODES } = {}) {
+  const bySecid = new Map()
+  for (const node of nodes) {
+    for (let p = 1; p <= 6; p += 1) {
+      const url = `${LIST_API}?page=${p}&num=100&sort=amount&asc=0&node=${node}&symbol=`
+      let rows
+      try {
+        rows = await cached(`snnode:${node}:${p}`, 10 * 60_000, () => fetchJson(url, { headers: REFERER }))
+      } catch {
+        break
+      }
+      if (!Array.isArray(rows) || !rows.length) break
+      for (const r of rows) {
+        const secid = secidOfSinaSymbol(r?.symbol)
+        if (!secid || bySecid.has(secid)) continue
+        bySecid.set(secid, {
+          secid,
+          code: String(r.code || ''),
+          name: String(r.name || '').trim(),
+          price: num(r.trade),
+          changePct: num(r.changepercent),
+          amount: num(r.amount),
+          turnover: num(r.turnoverratio),
+          mktcap: num(r.mktcap) == null ? null : Number((num(r.mktcap) * 1e4).toFixed(0)),
+          floatCap: num(r.nmc) == null ? null : Number((num(r.nmc) * 1e4).toFixed(0)),
+        })
+      }
+    }
+  }
+  return [...bySecid.values()]
+}
+
 /**
  * 按成交额降序取全 A 股候选池（默认前 500）。
  * 新浪单页最多 100 条，所以 pages=5 → 约 500 只。
@@ -118,6 +158,7 @@ export const OBJECTIVE = {
   streakWindow: 5,
   maxTurnover: 40, // %
   maxAmplitude: 25, // %
+  maxDeviation: 15, // 收盘距 MA20 偏离 >15% → 追高，剔除
   target: 200,
 }
 
@@ -154,14 +195,33 @@ export function lastAmplitude(bars) {
   return Number.isFinite(amp) ? Number(amp.toFixed(2)) : null
 }
 
+/** 最新收盘相对 MA20 的偏离（%）。数据不足 20 根返回 null。 */
+export function ma20Deviation(bars) {
+  if (!Array.isArray(bars) || bars.length < 20) return null
+  const recent = bars.slice(-20)
+  const ma20 = recent.reduce((a, b) => a + (b.close || 0), 0) / 20
+  const last = bars[bars.length - 1]?.close
+  if (!ma20 || last == null) return null
+  return Number(((last / ma20 - 1) * 100).toFixed(2))
+}
+
 /**
  * @param {Array} pool 成交额候选（含 price/changePct/amount/turnover/name/code/secid）
  * @param {{ target?:number, kline?: (secid:string)=>Promise<any>, onLog?:Function }} opts
  *   kline 缺省走新浪日 K；纯逻辑测试时传入假实现。
  */
-export async function objectiveFilter(pool, { target = OBJECTIVE.target, kline, onLog = () => {} } = {}) {
-  const getK = kline || ((secid) => sinaKline(secid, { period: 'd', limit: 12 }))
-  const reasons = { noPrice: 0, st: 0, limitUp: 0, hot: 0 }
+export async function objectiveFilter(
+  pool,
+  { target = OBJECTIVE.target, kline, onLog = () => {}, maxDeviation } = {},
+) {
+  const getK = kline || ((secid) => sinaKline(secid, { period: 'd', limit: 25 }))
+  // 偏离上限：显式参数 > env 覆盖 > 默认。regime 自适应时由调用方按 tilt 传入。
+  const maxDev = Number.isFinite(maxDeviation)
+    ? maxDeviation
+    : Number.isFinite(Number(process.env.RECOMMEND_MAX_DEV))
+      ? Number(process.env.RECOMMEND_MAX_DEV)
+      : OBJECTIVE.maxDeviation
+  const reasons = { noPrice: 0, st: 0, limitUp: 0, hot: 0, extended: 0 }
   const kept = []
   // 先做便宜的判断（停牌/ST），再拉日 K 做连板/振幅（有网络成本）
   const pre = pool.filter((x) => {
@@ -185,9 +245,15 @@ export async function objectiveFilter(pool, { target = OBJECTIVE.target, kline, 
       bars = null
     }
     const amp = lastAmplitude(bars)
+    const dev = ma20Deviation(bars)
     const turnover = Number(x.turnover)
     if (hasLimitUpStreak(bars, OBJECTIVE.limitUpStreak, OBJECTIVE.streakWindow)) {
       reasons.limitUp += 1
+      return null
+    }
+    // 偏离 MA20 过大（脱离均线太远）→ 追高，剔除
+    if (dev != null && dev > maxDev) {
+      reasons.extended += 1
       return null
     }
     if (
@@ -197,13 +263,13 @@ export async function objectiveFilter(pool, { target = OBJECTIVE.target, kline, 
       reasons.hot += 1
       return null
     }
-    return { ...x, amplitude: amp }
+    return { ...x, amplitude: amp, ma20Dev: dev }
   })
 
   for (const x of checked) if (x) kept.push(x)
   kept.sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0))
   onLog(
-    `客观初筛：${pool.length} → ${kept.length}（取前 ${target}）；剔停牌 ${reasons.noPrice}、ST ${reasons.st}、连板 ${reasons.limitUp}、过热 ${reasons.hot}`,
+    `客观初筛：${pool.length} → ${kept.length}（取前 ${target}）；剔停牌 ${reasons.noPrice}、ST ${reasons.st}、连板 ${reasons.limitUp}、过热 ${reasons.hot}、偏离过大 ${reasons.extended}`,
   )
   return kept.slice(0, target)
 }
