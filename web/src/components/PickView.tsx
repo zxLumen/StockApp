@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRecommend, fetchRecommendDates } from '../api'
-import type { RecommendStock } from '../types'
+import type { RecommendPayload, RecommendStock } from '../types'
 
 const fmt = (n: number | null | undefined, d = 2) =>
   n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toFixed(d)
@@ -10,6 +10,38 @@ const yi = (n: number | null | undefined) =>
 
 const tone = (n: number | null | undefined) =>
   n == null ? 'dim' : n > 0 ? 'up' : n < 0 ? 'down' : 'dim'
+
+/** 榜单产物的链路信息：优先取 regime（双链路产物），老口径产物退回按 pickedBy 推断。
+ *  前端据此把「A/B 口径」展示出来，不再写死成某一条链路。 */
+function chainMeta(data: Pick<RecommendPayload, 'regime' | 'pool' | 'top'>) {
+  const r = data.regime
+  if (r) {
+    const a = r.chain === 'A'
+    return {
+      badge: a ? 'A 激进' : 'B 保守',
+      cls: a ? 'rec-chain-a' : 'rec-chain-b',
+      poolLabel: a ? '成交额池' : '稳健池',
+      flow: a
+        ? '成交额池 → 客观初筛 → AI 初筛 → 买入评分 Top10'
+        : '稳健池 → 客观初筛 → 多因子选股（反转 + 上影线 + 年化ROE）→ AI 解读',
+      fallback:
+        r.fellBack && r.intended && r.intended !== r.chain
+          ? `（${r.intended} 链路本次不可用，已退回 ${r.chain}）`
+          : '',
+    }
+  }
+  const pb = [...new Set((data.top || []).map((t) => t.pickedBy).filter(Boolean))]
+  const factorOnly = pb.length > 0 && pb.every((p) => p === 'factor')
+  return {
+    badge: factorOnly ? '稳健池 · 多因子' : 'AI 链路（旧口径）',
+    cls: 'rec-chain-legacy',
+    poolLabel: factorOnly ? '稳健池' : '成交额池',
+    flow: factorOnly
+      ? '稳健池 → 客观初筛 → 多因子选股（反转 + 上影线 + 年化ROE）→ AI 解读'
+      : '成交额初筛 → 模型选股 → AI「值得买入」评估的 Top10',
+    fallback: '',
+  }
+}
 
 /** 0~1 的比例转成整数百分比字符串（null 安全）。 */
 const pctStr = (n: number | null | undefined) =>
@@ -78,7 +110,7 @@ function pickSummary(top: RecommendStock[] | undefined) {
   }
 }
 
-/** 每日推荐：成交额初筛 → 模型选股 → AI「值得买入」评估的 Top10，点开看详情。 */
+/** 每日推荐：regime 双链路（tilt ≥ 阈值走 A 成交额池+AI，否则走 B 稳健池+多因子）的 Top10，点开看详情。 */
 export default function PickView({ onPick }: { onPick: (s: { code: string; name: string; secid: string }) => void }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof fetchRecommend>>>(null)
   const [dates, setDates] = useState<string[]>([])
@@ -172,19 +204,22 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           <h2>每日推荐</h2>
         </div>
         <div className="note">
-          今日推荐尚未生成。服务器会在收盘后自动跑：稳健池（沪深300+创业板+科创板）→ 客观初筛 →
-          多因子选股（反转 + 上影线 + 年化ROE）→ AI 逐只解读，挑出 Top10。
+          今日推荐尚未生成。服务器会在收盘后自动跑双链路：当日动量倾斜 ≥ 阈值走「成交额池 +
+          AI 选股」（激进），否则走「稳健池 + 多因子」（保守），挑出 Top10。
         </div>
       </div>
     )
   }
+
+  const meta = chainMeta(data)
 
   return (
     <div className="rec-wrap">
       <div className="rec-head">
         <h2>每日推荐</h2>
         <span className="note small">
-          {data.date} 生效 · 成交额 {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
+          <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
+          {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
         </span>
         {dates.length > 0 && (
@@ -401,7 +436,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       </ol>
 
       <div className="note small">
-        榜单由程序按「稳健池 → 客观初筛 → 多因子选股（反转 + 上影线 + 年化ROE）→ AI 解读」自动生成，仅供研究参考，
+        榜单由程序按「{meta.flow}」自动生成{meta.fallback}，仅供研究参考，
         <strong>不构成投资建议</strong>。
       </div>
     </div>

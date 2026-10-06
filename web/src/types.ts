@@ -131,7 +131,7 @@ export interface RecommendStock {
   }
   /** 二次评审给的理由（仅进 Top10 的会有） */
   reason?: string
-  pickedBy?: 'ai' | 'score'
+  pickedBy?: 'ai' | 'score' | 'fill' | 'factor'
   /** 最新价（服务端补；盘中=实时价，收盘后=收盘价） */
   latestPrice?: number | null
   /** 自推荐日基准价到最新的涨跌幅（%）；取不到现价时为 null */

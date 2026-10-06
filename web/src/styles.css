@@ -1868,3 +1868,21 @@ button.member-row:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--dim, #8b949e);
 }
+/* 榜单链路徽章：A 暖色（激进）/ B 冷色（保守），老口径灰色 */
+.rec-chain {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dim, #8b949e);
+}
+.rec-chain-a {
+  background: rgba(229, 72, 77, 0.16);
+  color: #ff9aa0;
+}
+.rec-chain-b {
+  background: rgba(0, 145, 255, 0.16);
+  color: #8cc6ff;
+}
