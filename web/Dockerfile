@@ -14,6 +14,8 @@ ENV NODE_ENV=production \
 COPY web/package.json ./
 COPY web/server.js ./
 COPY web/lib/ ./lib/
+# 可训练参数（"模型"）：web/config/model.json（由训练流水线产出；代码不写死策略参数）
+COPY web/config/ ./config/
 # 批处理脚本（每日推荐 cron：docker exec <容器> node scripts/recommend.js）
 COPY web/scripts/ ./scripts/
 COPY --from=build /app/dist ./dist

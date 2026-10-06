@@ -4,6 +4,8 @@
 // 价量因子只用「截至当日」的日 K（bars 已按回测日截断）；财务因子只用 `NOTICE_DATE <= 评估日`
 // 的报告期（见 lib/finance.js）。两类都天然无未来数据。
 
+import { factorWeights, tiltRange } from './model-config.js'
+
 const num = (v) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : null
@@ -205,71 +207,19 @@ export function zscore(arr) {
 }
 
 /**
- * 多因子权重。全部按「越高越好」的方向：
- *   reversal(短期反转，避高) + midRev(中期反转) + upShadow(上影线波动小) +
- *   q(年化 ROE，质量) + ep(1/BPS，价值) + lowVol(低波) +
- *   proximity(贴近/略低于MA20) + liquidity(流动性适中) - turnStd(换手波动)
- *
- * ⚠️ 权重来源：**不是**网格搜出来的。历史上一版在 2026-07/08/09 三个月上枚举上千配置、
- * 又把同三个月当报告集，报的是训练集内成绩；留一月交叉验证显示「按训练集选优」无正价值
- * （本轮复跑：网格选优留出月均 -0.66%，而固定配置 +1.18%）。故改用少参数粗配置，不按单月调。
- *
- * 本会话在 8 个月（2026-02~09，价量 + 点时财务 + 公告事件）固定权重实测，T+10 相对沪深300
- * 超额，各月（Feb…Sep）：
- *   0.59 1.08 0.32 -0.75 3.79 1.27 2.28 0.85 → 均 +1.18 / 训(7-9) +1.47 / 验(3-6) +1.11 / 最差月 -0.75
- * 加 event=0.3（单参数、非搜索）后：
- *   0.12 1.48 0.89 -0.48 4.26 0.08 2.20 1.04 → 均 +1.20 / 训 +1.11 / 验 +1.54 / 最差月 -0.48
- * 即 event 不损失全窗均值，且改善验证窗口与最差月。q=0.3 是两边折中的取值，非任一边最优。
- *
- * ⚠️ 勿当未来收益：窗口仅 8 个月；且含下面「已知局限」的偏差，偏乐观。
- *
- * 持有周期不再写死在这里 —— 由 AI 按个股实际状态判断（见 recommend.js 的 interpretUser）。
- * `factorHoldDays` 只作为 AI 未产出 / `--bare` 快速回测时的兜底周期。
- *
- * 已知局限：stablePool() 用**当前**成分股回溯历史，含幸存者偏差，上述数字都含此偏差。
+ * 多因子权重（全部按「越高越好」方向）。
+ * **来源：可训练配置** `web/config/model.json`（→ `lib/model-config.js`），由训练流水线在
+ * 「2024 训练集」上拟合、2025 验证；**代码不写死**。旧的 2026 调参结论已归档
+ * （`docs/archive/2026-10/`）。
+ * 已知局限：`stablePool()` 用**当前**成分股回溯历史，含幸存者偏差，历史成绩偏乐观。
  */
-export const DEFAULT_WEIGHTS = {
-  reversal: 0.20, // 短期反转（近5日）—— A股最稳的横截面效应之一
-  midRev: 0.35, // 中期反转（近20日）—— IC 最强（chg20 IR -0.26）。
-  //   2026 训练集(Jul-Sep)与验证集(Mar-Jun)一致指向 0.35：训练均 1.77、验证均 1.94；
-  //   留一月 CV 所有留出月都选 0.35（CV 1.70 vs 0.3 的 1.53）。代价是最差月略降（-0.06）。
-  upShadow: 0.40, // 上影线波动小（负向取值）—— 实测在弱市里是最抗跌的一项
-  q: 0.30, // 年化 ROE（质量）—— 点时取披露日 ≤ 评估日的报告期，见 lib/finance.js
-  // 以下暂不启用（0），保留字段以便日后按同样口径启用时不必改结构。
-  ep: 0.0, // 价值（1/BPS）。实测未带来增量，去掉少一个参数
-  // 公告事件净分（lib/ann-factor.js，回看 5 天）：固定生产权重、只加这一项时的实测（T+10 超额%）
-  //   8 个月（2026-02~09）：全月均 1.18→1.20、验证均(3-6月) 1.11→1.54、最差月 -0.75→-0.48
-  //   封存样本外（2025-09，仅评估一次）：T+10 超额 -3.56%→-3.37%、胜率 33%→34%
-  // 单参数、非网格搜索；2025-09 仍为负，只是边际改善，不代表策略整体已跑赢。
-  event: 0.3,
-  // beta / nearHigh（市场弹性，仅走强时生效）：默认 0，待 2026 训练/验证窗标定后再启用。
-  beta: 0.0,
-  nearHigh: 0.0,
-  // 成长（净利/营收同比，点时财务）：默认 0，待 2026 标定。
-  growth: 0.0,
-  revGrowth: 0.0,
-  lowVol: 0.0,
-  ampMean: 0.0,
-  ivol: 0.0,
-  proximity: 0.0,
-  liquidity: 0.0,
-  turnStd: 0.0,
-  revScaled: 0.0,
-  lottery: 0.0,
-}
+// 因子权重来自可训练配置（web/config/model.json → lib/model-config.js），由训练流水线在
+// 训练集上拟合；**代码不再写死**。`RECOMMEND_FACTOR_WEIGHTS` 可临时覆盖（调参/回测）。
+// 字段含义（越高越好方向）：reversal 短期反转、midRev 中期反转、upShadow 上影线波动小、
+// q 年化 ROE、ep 1/BPS、event 公告事件净分、lowVol 低波、proximity 贴近 MA20、liquidity 流动性。
+export const DEFAULT_WEIGHTS = factorWeights()
 
-/** 调参用：`RECOMMEND_FACTOR_WEIGHTS='{"reversal":0.5}'` 覆盖默认权重（生产不设即默认）。 */
-function weightsFromEnv() {
-  const raw = process.env.RECOMMEND_FACTOR_WEIGHTS
-  if (!raw) return DEFAULT_WEIGHTS
-  try {
-    return { ...DEFAULT_WEIGHTS, ...JSON.parse(raw) }
-  } catch {
-    return DEFAULT_WEIGHTS
-  }
-}
-
-export const FACTOR_WEIGHTS = weightsFromEnv()
+export const FACTOR_WEIGHTS = DEFAULT_WEIGHTS
 
 /**
  * 市场状态 → 动量倾斜系数 tilt ∈ [0,1]。
@@ -289,8 +239,7 @@ export function regimeTilt(idxBars) {
   const above = ma20 ? closes[n - 1] / ma20 - 1 : 0 // 高于 MA20 的幅度
   const raw = mom20 + above // 合成强度
   // 线性映射到 [0,1]：强度 ≤ lo → 0；≥ hi → 1。阈值可经 env 覆盖做稳健性检验。
-  const lo = Number.isFinite(Number(process.env.RECOMMEND_REGIME_LO)) ? Number(process.env.RECOMMEND_REGIME_LO) : -0.02
-  const hi = Number.isFinite(Number(process.env.RECOMMEND_REGIME_HI)) ? Number(process.env.RECOMMEND_REGIME_HI) : 0.04
+  const { lo, hi } = tiltRange()
   const t = (raw - lo) / (hi - lo)
   return Math.max(0, Math.min(1, t))
 }

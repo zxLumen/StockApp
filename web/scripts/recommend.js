@@ -12,6 +12,11 @@ import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
 import { runRecommendDaily, runRecommendRegime, bjDate } from '../lib/recommend.js'
 import { eventScores } from '../lib/ann-factor.js'
+import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
+
+// 策略参数来自可训练配置（web/config/model.json）；代码不写死。
+const SEL = selectConfig()
+const OBJ = objectiveConfig()
 
 const argv = process.argv.slice(2)
 const has = (f) => argv.includes(f)
@@ -25,7 +30,7 @@ const opt = (name, dflt) => {
 const dryRun = has('--dry-run')
 // 默认 regime 双链路（两条都跑、按 tilt 择一）；`--single-chain` 回退单链路。
 const dualChain = !has('--single-chain')
-const dualThr = opt('--dual-thr', 0.6)
+const dualThr = opt('--dual-thr', tiltThreshold())
 // 单链路模式下的选股方式：默认「客观多因子」（低波+反转，AI 只解读）；`--strategy ai` 回退旧链路。
 const strategy = (argv.indexOf('--strategy') >= 0 ? argv[argv.indexOf('--strategy') + 1] : '') || 'factors'
 const cfg = await aiConfig(DATA_DIR)
@@ -48,9 +53,9 @@ try {
   const shared = {
     dataDir: DATA_DIR,
     cfg,
-    poolPages: opt('--pool-pages', 5),
-    objTarget: opt('--obj-target', 200),
-    finalPicks: opt('--final', 10),
+    poolPages: opt('--pool-pages', SEL.poolPages),
+    objTarget: opt('--obj-target', OBJ.target),
+    finalPicks: opt('--final', SEL.finalPicks),
     concurrency: opt('--concurrency', 4),
     outSubdir: (argv.indexOf('--out-subdir') >= 0 ? argv[argv.indexOf('--out-subdir') + 1] : '') || 'recommend',
     dryRun,
@@ -62,7 +67,7 @@ try {
     : await runRecommendDaily({
         ...shared,
         selectMode: strategy,
-        topCandidates: opt('--top', strategy === 'factors' ? 10 : 100),
+        topCandidates: opt('--top', strategy === 'factors' ? SEL.finalPicks : SEL.topCandidates),
       })
   if (dryRun) {
     console.log(

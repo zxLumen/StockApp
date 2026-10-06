@@ -12,6 +12,10 @@ import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars, ma20Deviati
 import { computeFactors, compositeScores, regimeTilt } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
+import { tiltThreshold, selectConfig } from './model-config.js'
+
+// 策略参数来自可训练配置（web/config/model.json）；代码不写死。
+const SEL = selectConfig()
 
 // 每日推荐：稳健池（沪深300+创业板+科创板）→ 客观初筛 → **多因子选股**（低波 + 短期
 // 反转 + 贴近 MA20，全部只用截至当日日K，无未来数据）→ AI 逐只解读出 buyScore /
@@ -537,10 +541,10 @@ export function resolveChainPayload({ useA, a, b }) {
 export async function runRecommendDaily({
   dataDir,
   cfg,
-  poolPages = 5,
-  objTarget = 200,
-  topCandidates = 100,
-  finalPicks = 10,
+  poolPages = SEL.poolPages,
+  objTarget = OBJECTIVE.target,
+  topCandidates = SEL.topCandidates,
+  finalPicks = SEL.finalPicks,
   concurrency = 4,
   highBar = 60,
   // 选股模式：'ai'=模型初筛+买入评分（旧链路）；'factors'=客观多因子选股（AI 只解读）。
@@ -548,7 +552,7 @@ export async function runRecommendDaily({
   // 是否调 AI 逐只解读。快速回测可置 false：跳过 AI、买入评分留空、持有周期用 factorHoldDays。
   interpretAi = true,
   // 因子选股的行业分散上限；默认 99 = 不做分散（结果确定、实证更优）。
-  maxPerIndustry = 99,
+  maxPerIndustry = SEL.maxPerIndustry,
   // **兜底**持有交易日：只在 AI 未产出解读、或 --bare 快速回测（interpretAi=false）时使用。
   // 正常路径下由 AI 按个股实际状态判断 holdDays（见 interpretUser），不受此值影响。
   factorHoldDays = 10,
@@ -591,7 +595,7 @@ export async function runRecommendDaily({
   // ① 客观初筛：只用方向中性的规则把 500 压到 objTarget（默认 200），方向交给模型。
   // regime 自适应偏离上限：跌市收紧（15%，避追高）、涨市放宽（40%，纳入强势领涨股）。
   // 与 optimize-factors 的 DEV_LO/DEV_HI 保持一致（先验，经 2026 检验）。
-  const devHi = Number(process.env.RECOMMEND_DEV_HI) || 40
+  const devHi = Number(process.env.RECOMMEND_DEV_HI) || OBJECTIVE.devHi
   const maxDeviation = OBJECTIVE.maxDeviation + tilt * (devHi - OBJECTIVE.maxDeviation)
   const filtered = await objectiveFilter(pool, {
     target: objTarget,
@@ -800,7 +804,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
  */
 export async function runRecommendRegime(opts = {}) {
-  const { dataDir, cfg, thr = 0.6, poolPages = 5, finalPicks = 10, deps = {}, onLog = () => {} } = opts
+  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, deps = {}, onLog = () => {} } = opts
 
   const basisDate = deps.basisDate || bjDate()
   const { tilt } = await resolveTilt(deps, basisDate)

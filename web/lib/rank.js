@@ -1,5 +1,6 @@
 import { fetchJson, cached } from './http.js'
 import { sinaKline } from './sina.js'
+import { objectiveConfig } from './model-config.js'
 
 // 每日推荐的数据源。东财 push2 整条线对服务器 502、同花顺榜单 ajax 401、雪球要登录，
 // 实测**只有新浪**能拿到全 A 股列表 + 日 K。所以：
@@ -153,14 +154,8 @@ export async function mapLimit(items, limit, fn) {
  *   - 单日换手 > 40% 或 振幅 > 25% → 剔（过热）
  * 剩下的按成交额降序取前 target。
  */
-export const OBJECTIVE = {
-  limitUpStreak: 3, // 近 5 日连续涨停达此数就剔
-  streakWindow: 5,
-  maxTurnover: 40, // %
-  maxAmplitude: 25, // %
-  maxDeviation: 15, // 收盘距 MA20 偏离 >15% → 追高，剔除
-  target: 200,
-}
+// 客观初筛参数来自可训练配置（web/config/model.json）；代码不写死。
+export const OBJECTIVE = objectiveConfig()
 
 /** ST / 退市/风险警示 标题一律剔除。 */
 export function isSt(name) {
