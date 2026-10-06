@@ -1,0 +1,1 @@
+node scripts/optimize-factors.js --train 2024 --val 2025 --narrow
