@@ -168,7 +168,11 @@ export interface RecommendPayload {
     thr: number
     /** 实际选中的链路：A=成交额池+AI选股（激进），B=稳健池+客观因子（保守） */
     chain: 'A' | 'B'
-    /** 两条是否都跑了（便于事后对照） */
+    /** tilt 本来选中的是哪条（与 chain 不一致说明链路挂了退了fallback） */
+    intended?: 'A' | 'B'
+    /** 是否因选中链路不可用而退回了另一条 */
+    fellBack?: boolean
+    /** 两条是否都跑成了（便于事后对照） */
     ranBoth?: boolean
   }
   top: RecommendStock[]

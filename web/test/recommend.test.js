@@ -10,6 +10,7 @@ import {
   pctFromPick,
   selectTop10,
   pickChain,
+  resolveChainPayload,
 } from '../lib/recommend.js'
 
 test('pickChain：逐日 tilt 门控（≥阈值走 A 激进链路，否则走 B 保守链路）', () => {
@@ -26,6 +27,19 @@ test('pickChain：逐日 tilt 门控（≥阈值走 A 激进链路，否则走 B
   // 拿不到 tilt / 阈值非法 → 保守走 B，绝不因为数据缺失去赌激进链路。
   assert.equal(pickChain(NaN, 0.6), 'B')
   assert.equal(pickChain(1.0, NaN), 'B')
+})
+
+test('resolveChainPayload：优先落 tilt 选中的那条；那条挂了退回另一条；全挂返回 null', () => {
+  const A = { id: 'A' }
+  const B = { id: 'B' }
+  // 正常：tilt 选 A → 落 A
+  assert.deepEqual(resolveChainPayload({ useA: true, a: A, b: B }), { payload: A, chain: 'A', fellBack: false })
+  assert.deepEqual(resolveChainPayload({ useA: false, a: A, b: B }), { payload: B, chain: 'B', fellBack: false })
+  // A 跑挂了（null）而 tilt 选 A → 退回 B，并标记 fellBack（cron 仍能出当天的排行）
+  assert.deepEqual(resolveChainPayload({ useA: true, a: null, b: B }), { payload: B, chain: 'B', fellBack: true })
+  assert.deepEqual(resolveChainPayload({ useA: false, a: A, b: null }), { payload: A, chain: 'A', fellBack: true })
+  // 两条都挂 → null，交给调用方抛错（当天无产出）
+  assert.equal(resolveChainPayload({ useA: true, a: null, b: null }), null)
 })
 
 test('parseJsonLoose：裸 JSON', () => {

@@ -503,6 +503,17 @@ export function pickChain(tilt, thr) {
 }
 
 /**
+ * 双链路择链时挑哪份 payload 落盘：优先用 tilt 选中的那条；那条缺失（跑挂了）就退回另一条。
+ * 两条都没了就返回 null（调用方抛错）。纯函数，供单测。
+ * @returns {{payload:object, chain:'A'|'B', fellBack:boolean}|null}
+ */
+export function resolveChainPayload({ useA, a, b }) {
+  if (useA ? a : b) return { payload: useA ? a : b, chain: useA ? 'A' : 'B', fellBack: false }
+  if (useA ? b : a) return { payload: b || a, chain: useA ? 'B' : 'A', fellBack: true }
+  return null
+}
+
+/**
  * 跑一次每日推荐。
  * @param {object} opts
  * @param {string} opts.dataDir 数据目录（落盘 recommend/<date>.json）
@@ -769,29 +780,52 @@ export async function runRecommendRegime(opts = {}) {
   )
 
   // A 注入成交额池；B 必须把 pool 显式打回 undefined，否则会继承 A 的注入。
-  const runOne = (label, cfgArgs) =>
-    runRecommendDaily({ ...opts, ...cfgArgs, dryRun: true, onLog: (m) => onLog(`[${label}] ${m}`) })
+  // 单条链路失败不阻断整体：cron 每天必须出排行，哪怕只剩一条链路可用。
+  const safeRun = async (label, cfgArgs) => {
+    try {
+      return await runRecommendDaily({
+        ...opts,
+        ...cfgArgs,
+        dryRun: true,
+        onLog: (m) => onLog(`[${label}] ${m}`),
+      })
+    } catch (e) {
+      onLog(`[${label}] 链路失败（不阻断，另一条继续）：${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
+  }
 
-  const payloadA = await runOne('A', {
+  const payloadA = await safeRun('A', {
     selectMode: 'ai',
     topCandidates: 100,
     deps: { ...deps, pool: () => aSharePool({ pages: poolPages }) },
   })
-  const payloadB = await runOne('B', {
+  const payloadB = await safeRun('B', {
     selectMode: 'factors',
     topCandidates: finalPicks,
     deps: { ...deps, pool: undefined },
   })
 
-  const chosen = useA ? payloadA : payloadB
+  const picked = resolveChainPayload({ useA, a: payloadA, b: payloadB })
+  if (!picked) throw new Error('A / B 两条链路都失败，今天没有推荐产出')
+
+  const { payload: chosen, chain: actualChain, fellBack } = picked
   // 记下当天的判据：事后复盘「tilt 选链」对不对，全靠这几个字段。
-  chosen.regime = { tilt: Number(tilt.toFixed(4)), thr, chain, ranBoth: true }
+  chosen.regime = {
+    tilt: Number(tilt.toFixed(4)),
+    thr,
+    chain: actualChain,
+    intended: useA ? 'A' : 'B',
+    fellBack,
+    ranBoth: !!(payloadA && payloadB),
+  }
+  if (fellBack) onLog(`⚠ tilt 选中的 ${useA ? 'A' : 'B'} 链路不可用，已退回 ${actualChain} 链路`)
   const outSubdir = opts.outSubdir || 'recommend'
   if (!opts.dryRun) {
     await writeJson(path.join(dataDir, outSubdir, `${chosen.date}.json`), chosen)
-    onLog(`已写入 ${outSubdir}/${chosen.date}.json（链路 ${chain}，tilt=${tilt.toFixed(2)}）`)
+    onLog(`已写入 ${outSubdir}/${chosen.date}.json（链路 ${actualChain}，tilt=${tilt.toFixed(2)}）`)
   } else {
-    onLog(`（dry-run，未落盘）链路 ${chain}，tilt=${tilt.toFixed(2)}`)
+    onLog(`（dry-run，未落盘）链路 ${actualChain}，tilt=${tilt.toFixed(2)}`)
   }
   return chosen
 }
