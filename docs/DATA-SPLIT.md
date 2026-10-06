@@ -102,11 +102,19 @@
 | `data/recommend-ai-fwd/` | 前瞻归档·A | 每日真实前瞻时**同时归档**的 A 链路 Top10（2026-10 起累积）|
 | `data/recommend-factors-fwd/` | 前瞻归档·B | 同上，B 链路；哪天是哪条由文件内 `regime.tilt` 决定 |
 | `data/recommend-2025-09/` | 样本外封存 | 2025-09 OOS |
+| `data/recommend-factors-oos/` | 真样本外·B | 干净窗口 B 回测（2026-10-06），覆盖 2024-06~08 等未训练月份 |
 | `data/llm-rank/` | 调参 | LLM 逐股打分（`score-candidates.js`），默认 2026-07~08 |
 | `data/llm-rank-regime/` | 调参 | 同上，regime 条件化 prompt，覆盖到 2026-09-30 |
 | `data/info-sent/` | 调参 | LLM 资讯情绪分 |
 | `data/ann-archive/`、`data/news-archive/` | 因子输入 | 公告/新闻归档（`≤D` 只读）|
 | `data/kline-cache/`、`data/finance/` | 因子输入 | 日K / 点时财务缓存（非划分产物）|
+
+> **数据可用性（决定干净窗口能否真跑）**
+> - 日K：`kline-cache` 最早 **2024-04-15**（limit 600 根）。
+> - 财务：点时缓存，实测 2024-06 起覆盖正常（`latestFinance` 按 `notice <= asOf` 过滤，无前视）。
+> - 新闻：`news-archive` 经 `archive-history.js --cols 347` 回补后最早 **2024-04-15**
+>   （此前仅 2025-08-11 起）；**旧期只有单列 347，覆盖比 2026 稀**。
+> - 公告：`ann-archive` 仍最早 **2025-09-01**（事件因子在 2025-09 前为空）。
 
 ## 8. 脚本 → 默认窗口 对照
 
