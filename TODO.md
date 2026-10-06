@@ -16,10 +16,10 @@
   - [x] `docs/REQUIREMENTS.md` / `docs/DATA-SPLIT.md` / `docs/runs/` 骨架
   - [ ] 重置派生结果：`data/recommend*/`、`llm-rank*/`、`info-sent/`（保留 kline/news/ann/finance）
 - [ ] **1. 数据准备**
-  - [ ] 重抓日K（limit 1023，覆盖 2024 全年）
-  - [ ] 回补 2024 新闻（01~03，尽量多列）
-  - [ ] 回补 2024 公告（验证接口能否到 2024）
-  - [ ] 产出「数据可用性报告」→ `docs/runs/`
+  - [x] 重抓日K（limit 1023，覆盖 2024 全年）—— 1888 只 × 1023 根（2022-07 起）
+  - [x] 回补 2024 新闻（01~03 及缺口）—— news-archive 现 2023-12~2026-10
+  - [x] 回补 2024 公告（及 2025/2026-01 缺口）—— ann-archive 现 2024-01~2026-10
+  - [x] 产出「数据可用性报告」→ `docs/runs/DATA-AVAILABILITY.md`
 - [ ] **2. 参数化改造（"不写死"）**
   - [ ] 持仓周期：去掉 `normalizeHoldDays` 的 `{3,5,10,20}` 锁定；去掉 B 链路 `factorHoldDays` 强制，改为**模型按个股自由给**
   - [ ] 因子权重 `DEFAULT_WEIGHTS` → 训练产物
