@@ -21,11 +21,16 @@ import { cachedKline } from './kline-cache.js'
 const fmt = (n, d = 2) =>
   n == null || Number.isNaN(Number(n)) ? 'NA' : Number(n).toFixed(d)
 
-/** 建议持有周期只认四档：3 / 5 / 10 / 20 个交易日；非法或缺失回退 5。 */
-export const HOLD_DAYS = [3, 5, 10, 20]
-export function normalizeHoldDays(v) {
+/** 持仓周期：**不锁档位** —— 由模型按个股自由决定交易日数；这里只做异常值兜底。
+ *  上下限仅为挡住荒谬值（0/负数/上千天），**不是"档位"**（历史曾锁 3/5/10/20，已废弃）。 */
+export const HOLD_DAYS_MIN = 1
+export const HOLD_DAYS_MAX = 60
+/** 模型未产出/解析失败时的兜底周期（仅兜底，非"决定"）。 */
+export const HOLD_DAYS_FALLBACK = 5
+export function normalizeHoldDays(v, fallback = HOLD_DAYS_FALLBACK) {
   const n = Math.round(Number(v))
-  return HOLD_DAYS.includes(n) ? n : 5
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(HOLD_DAYS_MAX, Math.max(HOLD_DAYS_MIN, n))
 }
 
 const yi = (n) => (n == null || Number.isNaN(Number(n)) ? 'NA' : `${(Number(n) / 1e8).toFixed(2)} 亿`)
@@ -170,7 +175,7 @@ export const interpretUser = (ctx) =>
   '从「**当前价位是否值得买入**」的角度，综合所有指标自行判断，只输出 JSON、不要解释：\n' +
   '{\n' +
   ' "buyScore": 0到100的整数（100=现在买很值得，0=完全不值得/应回避）,\n' +
-  ' "holdDays": 建议持有交易日数，**必须是 3 / 5 / 10 / 20 之一**，按这只票的实际状态判断（依据见下），\n' +
+  ' "holdDays": 建议持有交易日数（**正整数；按这只票的逻辑多久兑现自由决定，不要固定档位**，依据见下），\n' +
   ' "holdReason": "为什么是这个持有周期，一句话，20到40字（要能看出依据的是哪条状态）",\n' +
   ' "summary": "一句话概括，40到60字（讲清为什么值得或不值得买）",\n' +
   ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
@@ -187,15 +192,12 @@ export const interpretUser = (ctx) =>
   '- 明确过热的（连续涨停、监管函/问询、机构大幅净卖出、泡沫化）直接给低分。\n' +
   '- 数据缺失就按可得指标判断，不要臆测。\n' +
   '- **评分必须拉开区分度**：不要都挤在 60 分附近，好买点给 70-90，勉强给 45-55，追高/风险给 0-40。\n' +
-  '持有周期判断依据（**holdDays 必须由此推出，不要一律给同一个数**）：\n' +
-  '- **20 日**：逻辑兑现需要时间 —— 题材/业绩有明确催化、趋势健康（均线多头排列）、' +
-  '近一月刚启动而**未大幅偏离** MA20。\n' +
-  '- **10 日**：中期逻辑但催化不强 —— 贴近 MA20 的震荡区间、行业景气温和回升。\n' +
-  '- **5 日**：买点偏贵或短期动能已耗 —— 偏离 MA20 偏大（+8% 以上）、上影线多、' +
-  '巨量滞涨，或只是跟随大盘的普涨修复。\n' +
-  '- **3 日**：逻辑很短 —— 已经过热（近5日 >+15%、连续涨停）、技术破位（放量跌破 MA20）、' +
-  '或明确的风险事件（问询/减持/利空），反弹了就要走。\n' +
-  '- 若**买入评分本身很低**（<40），仍要给 3 或 5：不值得长期持有的票不该挂长周期。'
+  '持有周期判断依据（**按个股自由给具体天数，不要一律给同一个数，也不限于任何固定档位**）：\n' +
+  '- 逻辑兑现越慢、趋势越健康（均线多头排列、题材/业绩有明确催化、近一月刚启动且未大幅偏离 MA20）→ 周期越长（可到十几~几十个交易日）。\n' +
+  '- 买点越贵、短期动能越耗（偏离 MA20 偏大、上影线多、巨量滞涨，或只是跟随大盘普涨）→ 周期越短（几个交易日）。\n' +
+  '- 已过热 / 技术破位 / 有明确风险事件（连续涨停、放量跌破 MA20、问询/减持/利空）→ 只给很短（1~3 日，反弹就走）。\n' +
+  '- 若**买入评分本身很低**（<40）→ 也给短周期：不值得长期持有的票不该挂长周期。\n' +
+  '- 请给出**具体天数**（如 4、7、12、23…），不要只挑整数档。'
 
 // 第一步：从客观初筛后的候选里，按「值得买入」挑出 furtherPicks 只（分批喂，省 token）。
 const PRESELECT_SYSTEM =
@@ -706,15 +708,9 @@ export async function runRecommendDaily({
   })
   const scored = withAi.filter(Boolean)
 
-  // 【阶段 A：临时门控】持有周期仍由策略统一指定，AI 的判断先不采信。
-  //
-  // 为什么：历史 1300 条 holdDays 全是 10（本行覆盖 + 旧 prompt 写死「默认给 10」），
-  // 所以**LLM 自然会怎么分布完全没有数据**。而因子配置的超额高度依赖周期：
-  // T+5 只有 +0.48、T+10 +1.42、T+20 +2.30。若 LLM 偏保守、大量给 3/5，
-  // 期望超额会从 ~1.4 悄悄掉到 ~0.5。
-  // 切动态前先跑一天 `recommend.js --dry-run`，看 100 只候选的 holdDays 分布，
-  // 确认不是塌到 3/5，再删掉本行与 `factorHoldDays` 的兜底语义。
-  if (selectMode === 'factors') for (const c of scored) if (c.ai) c.ai.holdDays = factorHoldDays
+  // 持仓周期：A、B 两条链路**都用模型按个股给的 holdDays**，不再由策略统一指定。
+  // （历史曾把 B 链路强制成 factorHoldDays，按"参数不写死"要求已移除；factorHoldDays
+  //   现在只在 AI 未产出/解析失败时兜底。）
 
   // 选 Top10：**先按买入评分**，高分才配进榜；评审只在「高分股超过 10 只」时用来取舍。
   // 早先无条件把 100 只交给评审，它会选进 18 分的股（评分才是逐只精评的可靠信号）。

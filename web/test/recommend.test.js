@@ -166,21 +166,20 @@ test('selectTop10：无高分时按分降序取（低分也保留，不崩）', 
   assert.deepEqual(top.map((t) => t.code), ['a', 'b'])
 })
 
-// ── normalizeHoldDays：AI 逐股判断持有周期 ─────────────────────────────────
-// 历史 1300 条 holdDays 全是 10（旧 prompt 写死「默认给 10」+ 运行期覆盖），
-// 所以这套归一化此前从没被真正验证过。切动态周期前必须钉住。
-test('normalizeHoldDays：3/5/10/20 原样保留', () => {
-  for (const n of [3, 5, 10, 20]) assert.equal(normalizeHoldDays(n), n)
+// ── normalizeHoldDays：模型按个股自由给持仓周期（不锁档位）──────────────────
+test('normalizeHoldDays：任意正整数原样保留（不再锁 3/5/10/20）', () => {
+  for (const n of [1, 3, 4, 5, 7, 10, 12, 20, 23, 45, 60]) assert.equal(normalizeHoldDays(n), n)
 })
 
-test('normalizeHoldDays：合法值不回落到 5（防「默认 10」被静默改掉）', () => {
+test('normalizeHoldDays：小数四舍五入', () => {
   assert.equal(normalizeHoldDays('20'), 20)
-  assert.equal(normalizeHoldDays(3.4), 3, '小数四舍五入到最近档位')
+  assert.equal(normalizeHoldDays(3.4), 3)
   assert.equal(normalizeHoldDays(19.6), 20)
 })
 
-test('normalizeHoldDays：非法值回落 5（不回落 10 —— 那是旧的写死默认值）', () => {
-  for (const v of [null, undefined, 0, -3, 7, 15, 'abc', NaN]) {
-    assert.equal(normalizeHoldDays(v), 5, `${String(v)} 应回落 5`)
-  }
+test('normalizeHoldDays：越界钳到 [1,60]，非法/缺失回落兜底 5', () => {
+  assert.equal(normalizeHoldDays(0), 5, '0 非法 → 兜底')
+  assert.equal(normalizeHoldDays(-3), 5)
+  assert.equal(normalizeHoldDays(999), 60, '上限 60')
+  for (const v of [null, undefined, 'abc', NaN]) assert.equal(normalizeHoldDays(v), 5)
 })
