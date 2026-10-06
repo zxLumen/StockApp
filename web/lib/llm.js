@@ -29,7 +29,7 @@ export const standardHeaders = (config, sessionId) => {
   return headers
 }
 
-export const requestBody = ({ model, messages, maxTokens, stream = false, includeUsage = false, temperature = 0.6, noThinking = false }) => {
+export const requestBody = ({ model, messages, maxTokens, stream = false, includeUsage = false, temperature = 0.6, noThinking = true }) => {
   const body = {
     model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -39,9 +39,9 @@ export const requestBody = ({ model, messages, maxTokens, stream = false, includ
   }
   if (stream && includeUsage) body.stream_options = { include_usage: true }
   // 思考链模型（deepseek-v4.x 等）把 reasoning 和正文记在同一份 max_tokens 上，
-  // 而本应用不渲染思考过程 —— 思考就是纯浪费预算，实测 reasoning_effort=none
-  // 能把它压到 0（正文 1274 字 / 9.5s，基线是 2048 全被思考吃掉、正文 0 字）。
-  // 只对实测支持的 opencode 端点发：DeepSeek / 智谱等未验证，贸然发未知字段可能被判 400。
+  // 而本应用不渲染思考过程 —— 思考就是纯浪费预算，reasoning_effort=none 能把它压到 0。
+  // 对所有端点统一发送：经 AI 网关时 baseURL 是网关地址，识别不出 opencode，
+  // 若还按 baseURL 挑端点就会漏发，导致思考吃满预算、正文为空。
   if (noThinking) body.reasoning_effort = 'none'
   return body
 }
@@ -132,8 +132,7 @@ const TIMEOUT_MS = 120_000
  * @param {string} options.sessionId
  * @param {(delta: { content: string }) => void} [options.onDelta]
  * @param {AbortSignal} [options.signal]
- * @param {boolean} [options.noThinking] 显式覆盖「是否注入 reasoning_effort:none」；
- *   不传则按 baseURL 自动判断（opencode 端点）。批处理务必传 true，否则思考链会吃光输出预算。
+ * @param {boolean} [options.noThinking] 是否注入 reasoning_effort:none；默认 true（所有端点统一压思考）。
  */
 export const streamChat = async ({ config, messages, sessionId, onDelta, signal, noThinking }) => {
   if (!config.apiKey) throw new Error('未配置 API Key。')
@@ -152,7 +151,7 @@ export const streamChat = async ({ config, messages, sessionId, onDelta, signal,
         stream: true,
         includeUsage: true,
         temperature: config.temperature ?? 0.6,
-        noThinking: noThinking ?? isOpenCode(config.baseURL),
+        noThinking: noThinking ?? true,
       }),
     ),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,

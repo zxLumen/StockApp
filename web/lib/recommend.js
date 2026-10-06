@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
-import { streamChat, isOpenCode } from './llm.js'
+import { streamChat } from './llm.js'
 import { stockNews } from './news.js'
 import { sinaKline } from './sina.js'
 import { getQuotes } from './market.js'
@@ -246,17 +246,28 @@ const reviewUser = (candidates, finalPicks) =>
 /**
  * 单次对话。**必须关思考链**：deepseek-v4.x / opencode 这类模型默认先写几千字
  * `reasoning_content`，而它与正文共用 max_tokens —— 推荐这种「一次要几十次调用」的
- * 批处理下，思考预算吃光就意味着正文恒为空 / 被截断。server.js 的实时解读走的是
- * 同一条 `noThinking` 判断（`isOpenCode`），这里对齐。
+ * 批处理下，思考预算吃光就意味着正文恒为空 / 被截断。统一对所有端点关思考。
  */
 async function chatOnce(cfg, messages) {
-  const result = await streamChat({
-    config: cfg,
-    messages,
-    sessionId: crypto.randomUUID(),
-    noThinking: isOpenCode(cfg.baseURL),
-  })
-  return result.text
+  // 带重试：批处理下网络瞬时失败（fetch failed / 超时 / 断流）很常见，重试可避免
+  // 「选股批次失败 → 退化成交额兜底」污染回测。只对网络类重试，鉴权/参数类直接抛。
+  const maxTries = 3
+  for (let i = 1; ; i += 1) {
+    try {
+      const result = await streamChat({
+        config: cfg,
+        messages,
+        sessionId: crypto.randomUUID(),
+        noThinking: true,
+      })
+      return result.text
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const retriable = /fetch failed|超时|网络|中断|ECONN|ETIMEDOUT|socket|other side closed/i.test(msg)
+      if (!retriable || i >= maxTries) throw e
+      await new Promise((r) => setTimeout(r, 700 * i * i))
+    }
+  }
 }
 
 /**

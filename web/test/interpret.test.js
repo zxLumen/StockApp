@@ -127,8 +127,8 @@ test('AI 解读：SSE 流式链路端到端跑通（回归：res 未定义会让
   assert.equal(up.seen.body.model, 'test-model')
   assert.equal(up.seen.body.stream, true)
   assert.deepEqual(up.seen.body.stream_options, { include_usage: true })
-  // 这个假上游不是 opencode 端点，不能给它塞未验证的字段
-  assert.equal('reasoning_effort' in up.seen.body, false, JSON.stringify(up.seen.body))
+  // 统一对所有端点压思考：必须带上 reasoning_effort=none
+  assert.equal(up.seen.body.reasoning_effort, 'none', JSON.stringify(up.seen.body))
 })
 
 test('AI 解读：思考链吃光 token 预算时必须报错，不能静默返回空白', async (t) => {

@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { streamChat, isOpenCode } from '../lib/llm.js'
+import { streamChat } from '../lib/llm.js'
 import { readJson, writeJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'
 import { objectiveFilter, mapLimit } from '../lib/rank.js'
@@ -47,7 +47,7 @@ async function chatOnce(cfg, messages) {
     config: cfg,
     messages,
     sessionId: crypto.randomUUID(),
-    noThinking: isOpenCode(cfg.baseURL),
+    noThinking: true,
   })
   return r.text
 }

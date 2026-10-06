@@ -18,7 +18,7 @@ const writeJson = async (dir, name, value) => {
 
 test('loadSettings: 没有文件时给全套默认值', async () => {
   const s = await loadSettings(await tmpDir())
-  assert.equal(s.provider, 'deepseek')
+  assert.equal(s.provider, 'zx-gateway')
   // 默认给到 4096：思考链模型会把 max_tokens 吃光，2048 太紧（见 llm.js 的说明）
   assert.equal(s.maxTokens, 4096)
   assert.equal(s.temperature, 0.6)
@@ -46,10 +46,10 @@ test('loadSettings: 旧版单槽形状并进对应服务商的槽位', async () 
   assert.equal(s.maxTokens, 4096)
 })
 
-test('loadSettings: 未知 provider 回落到 deepseek', async () => {
+test('loadSettings: 未知 provider 回落到默认(zx-gateway)', async () => {
   const dir = await tmpDir()
   await writeJson(dir, 'settings.json', { provider: 'nope' })
-  assert.equal((await loadSettings(dir)).provider, 'deepseek')
+  assert.equal((await loadSettings(dir)).provider, 'zx-gateway')
 })
 
 test('saveSettings: 切 provider 不动任何槽位', async () => {
@@ -163,7 +163,7 @@ test('publicSettings: 列出全部槽位且只给掩码', async () => {
   const deepseek = pub.providers.find((p) => p.id === 'deepseek')
   assert.equal(deepseek.hasKey, true)
   assert.equal(deepseek.keyMask, 'sk-abc…mnop')
-  assert.equal(pub.providers.length, 5)
+  assert.equal(pub.providers.length, 6)
   // 全部 provider 都要有 label / 默认值，UI 才能渲染下拉与占位符
   for (const p of pub.providers) {
     assert.equal(typeof p.label, 'string')

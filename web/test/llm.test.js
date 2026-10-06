@@ -15,18 +15,18 @@ test('isOpenCode: 只认 opencode.ai 端点，大小写不敏感', () => {
   assert.equal(isOpenCode(undefined), false)
 })
 
-test('requestBody: 默认不发 reasoning_effort（未验证的端点别乱发未知字段）', () => {
+test('requestBody: 默认注入 reasoning_effort=none（所有端点统一压思考）', () => {
   const b = requestBody({ model: 'm', messages: msgs, maxTokens: 100 })
-  assert.equal('reasoning_effort' in b, false)
+  assert.equal(b.reasoning_effort, 'none')
   assert.equal(b.stream, false)
   assert.equal(b.max_tokens, 100)
   assert.equal(b.model, 'm')
   assert.deepEqual(b.messages, msgs)
 })
 
-test('requestBody: noThinking 才注入 reasoning_effort=none', () => {
-  const b = requestBody({ model: 'm', messages: msgs, maxTokens: 100, stream: true, includeUsage: true, noThinking: true })
-  assert.equal(b.reasoning_effort, 'none')
+test('requestBody: noThinking=false 不注入 reasoning_effort', () => {
+  const b = requestBody({ model: 'm', messages: msgs, maxTokens: 100, stream: true, includeUsage: true, noThinking: false })
+  assert.equal('reasoning_effort' in b, false)
   assert.deepEqual(b.stream_options, { include_usage: true })
 })
 

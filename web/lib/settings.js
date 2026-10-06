@@ -18,7 +18,7 @@ const settingsFile = (dataDir) => path.join(dataDir, 'settings.json')
 const keysFile = (dataDir) => path.join(dataDir, 'keys.json')
 
 export const DEFAULT_SETTINGS = {
-  provider: 'deepseek',
+  provider: 'zx-gateway',
   // 带思考链的模型（deepseek-v4.x 等）把 reasoning 和正文记在同一份 max_tokens 上，
   // 而我们不显示思考过程 —— 预算太小会出现「思考吃完额度、正文一个字都没有」。
   maxTokens: 4096,
@@ -51,7 +51,10 @@ const normalize = (stored) => {
     const slot = legacy ? {} : (raw.providers?.[preset.id] ?? {})
     providers[preset.id] = {
       model: str(legacy === preset.id ? raw.model : slot.model, preset.defaultModel),
-      baseURL: str(legacy === preset.id ? raw.baseURL : slot.baseURL, preset.defaultBaseURL),
+      baseURL:
+        preset.id === 'zx-gateway'
+          ? process.env.ZX_AI_GATEWAY_URL || preset.defaultBaseURL
+          : str(legacy === preset.id ? raw.baseURL : slot.baseURL, preset.defaultBaseURL),
     }
   }
 
@@ -129,9 +132,19 @@ export async function aiConfigFor(dataDir, provider) {
   const slot = s.providers[id]
   // 当前服务商没存 Key 时，按地址猜一次（老配置里 provider 常是 custom，但地址填的是官方的）
   const keyId = keys[id] ? id : detectProvider(slot.baseURL)
+  let apiKey = keys[keyId] || ''
+  if (!apiKey && (id === 'zx-gateway' || keyId === 'zx-gateway')) {
+    apiKey = (process.env.ZX_AI_APP_TOKEN || '').trim()
+  }
+  const isGw = id === 'zx-gateway' || keyId === 'zx-gateway'
+  const baseURL = isGw
+    ? process.env.ZX_AI_GATEWAY_URL ||
+      PROVIDERS.find((p) => p.id === 'zx-gateway')?.defaultBaseURL ||
+      slot.baseURL
+    : slot.baseURL
   return {
-    apiKey: keys[keyId] || '',
-    baseURL: slot.baseURL,
+    apiKey,
+    baseURL,
     model: slot.model,
     maxTokens: s.maxTokens,
     temperature: s.temperature,
