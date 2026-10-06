@@ -1,10 +1,11 @@
-name: docker publish
+name: build & deploy
 
 on:
   push:
     branches: [main]
     paths:
       - 'web/**'
+      - 'deploy/**'
       - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
@@ -30,3 +31,21 @@ jobs:
           tags: |
             ghcr.io/zxlumen/stock-web:latest
             ghcr.io/zxlumen/stock-web:${{ github.sha }}
+
+  # 部署：SSH 到服务器触发 deploy/stock-ci-run.sh（服务器 authorized_keys 用
+  # command= 把这把密钥强制绑到该脚本，只能触发部署、跑不了别的命令）。
+  # 传 git sha 当镜像 tag；该脚本**只** pull + 重建 stock 一个服务，
+  # 不像主站 deploy.sh 那样连带重建 app / caddy / 其它子应用。
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy stock service
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_DEPLOY_KEY }}
+          port: ${{ secrets.SERVER_PORT || '22' }}
+          # 只发一个 tag；即使密钥泄露也只能触发这一次 stock 部署
+          script: ${{ github.sha }}
