@@ -1,13 +1,12 @@
-// 稳健因子优化：逐月评估，优先「最差月份也不差」的配置。
-//   node scripts/optimize-factors.js         # 按最差月排序，看 8 个月
-//   node scripts/optimize-factors.js --cv    # 留一月交叉验证（判断「调参」本身有没有正价值）
+// 稳健因子(B 链路)优化：在「2024 训练集」上搜/定权重，用「2025 验证集」检验
+// （见 docs/DATA-SPLIT.md、docs/REQUIREMENTS.md）。
+//   node scripts/optimize-factors.js                              # 默认 --train 2024 --val 2025
+//   node scripts/optimize-factors.js --train 2024 --val 2025
+//   node scripts/optimize-factors.js --cv                         # 留一月交叉验证
+//   node scripts/optimize-factors.js --weights '{"midRev":0.35}'  # 只评单个配置
 //
-// 无未来数据：价量特征只用截至 D 的日K；财务只用 `NOTICE_DATE <= D` 的报告期（lib/finance.js）。
-//
-// ⚠️ 默认窗口从 2026-07/08/09 扩到 **2026-02~09**。原窗口只有三个月，而且那次搜索把同一三个月
-// 既当训练集又当报告集 —— 报出来的「7 月 +2.9%、8 月 +4.4%、9 月 +2.8%」是训练集内成绩。
-// 复核后训练-测试相关系数 -0.833、训练集第一名在验证集排 #571/728。窗口越宽，越能看出一个配置
-// 是不是只在某几个月成立。
+// 无未来数据：价量特征只用截至 D 的日K；财务只用 `NOTICE_DATE <= D` 的报告期（lib/finance.js）；
+// 公告只用 ≤ D。**2026 不参与本脚本**（测试集红线）。
 import { DATA_DIR } from '../lib/scope.js'
 import { readJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'
@@ -24,19 +23,26 @@ const WI = process.argv.indexOf('--weights')
 const FIXED_W = WI >= 0 ? JSON.parse(process.argv[WI + 1]) : null
 // `--narrow`：只搜 midRev/upShadow/turnStd 的小网格，看跨月稳健点。
 const NARROW = process.argv.includes('--narrow')
-const RANGES = [
-  { key: 'Feb', from: '2026-02-01', to: '2026-02-28' },
-  { key: 'Mar', from: '2026-03-01', to: '2026-03-31' },
-  { key: 'Apr', from: '2026-04-01', to: '2026-04-30' },
-  { key: 'May', from: '2026-05-01', to: '2026-05-31' },
-  { key: 'Jun', from: '2026-06-01', to: '2026-06-30' },
-  { key: 'Jul', from: '2026-07-01', to: '2026-07-31' },
-  { key: 'Aug', from: '2026-08-01', to: '2026-08-31' },
-  { key: 'Sep', from: '2026-09-01', to: '2026-09-30' },
-]
-// 报告「训练→验证」用：7-9 月调参、3-6 月检验。
-const TRAIN_KEYS = ['Jul', 'Aug', 'Sep']
-const HOLD_KEYS = ['Mar', 'Apr', 'May', 'Jun']
+// 训练/验证窗口按新协议参数化：默认 **2024 训练 / 2025 验证**（见 docs/DATA-SPLIT.md）。
+// 可用 `--train <year> --val <year>` 覆盖（仅年，逐月展开）。
+const argOf = (n) => {
+  const i = process.argv.indexOf(n)
+  return i >= 0 ? process.argv[i + 1] : ''
+}
+const TRAIN_YEAR = argOf('--train') || '2024'
+const VAL_YEAR = argOf('--val') || '2025'
+const monthsOf = (year) =>
+  Array.from({ length: 12 }, (_, i) => {
+    const mm = String(i + 1).padStart(2, '0')
+    const last = new Date(Date.UTC(Number(year), i + 1, 0)).getUTCDate()
+    return { key: `${year}-${mm}`, from: `${year}-${mm}-01`, to: `${year}-${mm}-${String(last).padStart(2, '0')}` }
+  })
+const TRAIN_RANGES = monthsOf(TRAIN_YEAR)
+const VAL_RANGES = monthsOf(VAL_YEAR)
+// 一次评估同时覆盖训练月与验证月；TRAIN/HOLD_KEYS 用于分组报告。
+const RANGES = [...TRAIN_RANGES, ...VAL_RANGES]
+const TRAIN_KEYS = TRAIN_RANGES.map((r) => r.key)
+const HOLD_KEYS = VAL_RANGES.map((r) => r.key)
 const INDEX = '1.000300'
 const FINAL = Number(process.env.RECOMMEND_FINAL) || 10
 const HORIZONS = [5, 10, 20]
@@ -265,7 +271,7 @@ async function main() {
   // `--tiltScan`：**训练集标定** regime 倾斜强度 tiltGain，**验证集判定**。
   // 只搜一个参数（tiltGain），符合「训练调参、验证定最终」，过拟合面最小。
   if (process.argv.includes('--tiltScan')) {
-    console.log('\n=== tiltGain 扫描：训练集(Jul/Aug/Sep)选优，验证集(Mar/Apr/May/Jun)判定 ===')
+    console.log(`\n=== tiltGain 扫描：训练集(${TRAIN_YEAR})选优，验证集(${VAL_YEAR})判定 ===`)
     const rows = []
     for (const g of [0, 0.5, 0.75, 1, 1.25, 1.5, 2]) {
       const w = { ...Z, ...DEFAULT_WEIGHTS, tiltMode: true, tiltGain: g }
@@ -292,7 +298,7 @@ async function main() {
     const arg = process.argv.find((a) => a.startsWith('--paramScan=')) || ''
     const [key, valsStr] = arg.slice('--paramScan='.length).split('=')
     const vals = valsStr.split(',').map(Number).filter(Number.isFinite)
-    console.log(`\n=== 单参数扫描 ${key} ∈ [${vals}]：训练集(Jul/Aug/Sep)选优，验证集判定 ===`)
+    console.log(`\n=== 单参数扫描 ${key} ∈ [${vals}]：训练集(${TRAIN_YEAR})选优，验证集(${VAL_YEAR})判定 ===`)
     const rows = []
     for (const v of vals) {
       const w = { ...Z, ...DEFAULT_WEIGHTS, tiltMode: true, [key]: v }
