@@ -1,6 +1,8 @@
 // A/B regime 组合评估：逐日按市场状态（regimeTilt）在 A、B 两个推荐目录间切换，
 // 取该目录当天的 Top10，算 T+10 相对沪深300超额/胜率。
 //   node scripts/eval-ab-combo.js --a recommend-ai-ab --b recommend-factors-ab --from ... --to ... [--thr 0.5]
+//   # 真实前瞻（每天双链路各归档一份，见 lib/recommend.js 的 runRecommendRegime）：
+//   node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd
 // 规则：tilt >= thr → 用 A（上涨市）；否则用 B（下跌/震荡市）。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -76,7 +78,9 @@ async function main() {
     const aData = await readJson(path.join(DATA_DIR, A, f), null)
     const basis = aData?.basisDate
     if (!basis) continue
-    const tilt = regimeTilt(idxBars.filter((b) => b.time <= basis))
+    // 前瞻归档里记了当天的 tilt，优先用它（regimeTilt 实现日后若变动，历史 tilt 不会跟着漂）；
+    // 老回测目录没有 regime，回退到用当前实现重算。
+    const tilt = aData?.regime?.tilt ?? regimeTilt(idxBars.filter((b) => b.time <= basis))
     const exA = await dayExcess(A, f, idxBars)
     const exB = await dayExcess(B, f, idxBars)
     if (!exA || !exB) continue

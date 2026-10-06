@@ -46,10 +46,13 @@
 ## 3. 测试集 / 前瞻 Test / Forward —— 2026-10-01 起
 
 - **用途**：真实前瞻（生产 cron 每天产出），**线上唯一对外展示**的推荐。
-- **红线**：**任何调参、选型、阈值重标定都不得使用 2026-10 之后的数据**；
-  用它回测来「挑参数」会立刻污染前瞻口径。
+- **红线**：把 2026-10 起的前瞻数据当**测试集**（只判不改）。若将来要据此重标 `thr`
+  （`TODO.md` 第 2 项），须把那批数据在本文里**重新归类为验证**，此后新产出才是新测试集 ——
+  不能用「测试集」反复调参。
 - **线上形态**：`recommend.js` 默认双链路（`thr=0.6`）每日落盘
   `DATA_DIR/recommend/<生效日>.json`，经 `/api/recommend*` 展示。
+- **双链路归档**：每日同时把 A、B 两条各写一份到 `recommend-ai-fwd/`、`recommend-factors-fwd/`
+  （标准 payload + 当天 `tilt/thr`），用于积累样本外 A/B 对照。归档**只增不改**。
 
 ## 4. 评估集 / 回测窗口
 
@@ -96,6 +99,8 @@
 | `data/recommend-bt/` | 回测 | `backtest.js` 默认输出；**不可写进 `recommend/`**（`:41-43` 警告会顶掉真实历史）|
 | `data/recommend-ai-ab/` | 评估集·A | A 链路回测样本 |
 | `data/recommend-factors-ab/` | 评估集·B | B 链路回测样本 |
+| `data/recommend-ai-fwd/` | 前瞻归档·A | 每日真实前瞻时**同时归档**的 A 链路 Top10（2026-10 起累积）|
+| `data/recommend-factors-fwd/` | 前瞻归档·B | 同上，B 链路；哪天是哪条由文件内 `regime.tilt` 决定 |
 | `data/recommend-2025-09/` | 样本外封存 | 2025-09 OOS |
 | `data/llm-rank/` | 调参 | LLM 逐股打分（`score-candidates.js`），默认 2026-07~08 |
 | `data/llm-rank-regime/` | 调参 | 同上，regime 条件化 prompt，覆盖到 2026-09-30 |

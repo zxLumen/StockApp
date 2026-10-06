@@ -48,8 +48,11 @@ A（LLM 链路）的优势集中在知名行情月（2024-09 的 9·24、2025-08
 
 两条路都可做：
 
-- **走真实前瞻**：`runRecommendRegime` 现在每天都把两条都跑，把**两条的 Top10 都归档**
-  （`regime-regime/<date>.json` 存 `{tilt, A, B}`），积累 1~2 个月后直接对比。
+- **走真实前瞻** ✅ 代码已实现（2026-10-06，本地），**待上线后开始积累**：
+  `runRecommendRegime` 每天在写 `recommend/` 的同时，把**两条链路各归档一份**到
+  `recommend-ai-fwd/`、`recommend-factors-fwd/`（标准 payload，含当天的 `tilt/thr`）。
+  攒够 1~2 个月后直接：
+  `node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd`
   未来数据模型不可能背过，这是最干净的证据。
 - **换模型对照**：用知识截止早于评估窗口的模型重跑 A 的 2024/2025 窗口，看优势是否消失。
 

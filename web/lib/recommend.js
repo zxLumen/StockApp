@@ -748,6 +748,41 @@ export async function runRecommendDaily({
   return payload
 }
 
+/** 前瞻归档目录：两条链路各一份，标准 payload 格式，可直接喂 `scripts/eval-ab-combo.js`。 */
+export const FORWARD_A_DIR = 'recommend-ai-fwd'
+export const FORWARD_B_DIR = 'recommend-factors-fwd'
+
+/**
+ * 把一条链路的当天结果压成「前瞻归档」：只留 pool + top + 判据（`candidates` 太重且对照用不到），
+ * 并带上当天的 `tilt`/`thr` —— 日后重标阈值时直接读它，不必用当前 `regimeTilt` 重算历史。
+ *
+ * 存在意义：A（LLM）的优势是否来自「模型背过历史行情」现有样本判不了，只能靠**真实前瞻**
+ * 积累样本外数据（未来行情模型不可能背过）。两条都归档 = 每天都有 A/B 对照，
+ * 攒够后再用 `eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd` 直接比。
+ */
+export function forwardArchive({ payload, chain, tilt, thr }) {
+  if (!payload) return null
+  return {
+    date: payload.date,
+    generatedAt: payload.generatedAt,
+    basisDate: payload.basisDate,
+    model: payload.model,
+    pool: payload.pool,
+    top: payload.top,
+    regime: { tilt: Number(tilt.toFixed(4)), thr, chain },
+  }
+}
+
+/** 两条链路都归档；任一条挂了就只归档另一条（不阻断当日产出）。 */
+export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, thr, onLog }) {
+  const a = forwardArchive({ payload: payloadA, chain: 'A', tilt, thr })
+  const b = forwardArchive({ payload: payloadB, chain: 'B', tilt, thr })
+  if (a) await writeJson(path.join(dataDir, FORWARD_A_DIR, `${a.date}.json`), a)
+  if (b) await writeJson(path.join(dataDir, FORWARD_B_DIR, `${b.date}.json`), b)
+  const wrote = [a && `${FORWARD_A_DIR}/${a.date}.json`, b && `${FORWARD_B_DIR}/${b.date}.json`].filter(Boolean)
+  onLog(`前瞻归档：${wrote.length ? wrote.join('、') : '两条都无产出，未归档'}`)
+}
+
 /**
  * regime **双链路**每日推荐：两条链路都跑，再按当日 tilt 选一份落盘。
  *
@@ -824,6 +859,8 @@ export async function runRecommendRegime(opts = {}) {
   if (!opts.dryRun) {
     await writeJson(path.join(dataDir, outSubdir, `${chosen.date}.json`), chosen)
     onLog(`已写入 ${outSubdir}/${chosen.date}.json（链路 ${actualChain}，tilt=${tilt.toFixed(2)}）`)
+    // 无论选中哪条，两条都归档一份，供日后用真实前瞻数据判 A/B、重标 thr。
+    await archiveForwardChains(dataDir, { payloadA, payloadB, tilt, thr, onLog })
   } else {
     onLog(`（dry-run，未落盘）链路 ${actualChain}，tilt=${tilt.toFixed(2)}`)
   }

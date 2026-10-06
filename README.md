@@ -92,6 +92,12 @@ node scripts/recommend.js --out-subdir tmp-check  # 产物写别的目录（验�
 择链口径与回测评估 `scripts/eval-ab-combo.js --thr 0.6` 一致；选型依据与后续优化方向见
 仓库根目录 `TODO.md`。
 
+**每日双链路归档**：写 `recommend/` 的同时，会把 A、B 两条**各归档一份**到
+`recommend-ai-fwd/`、`recommend-factors-fwd/`（含当天 `tilt/thr`），用于积累真实前瞻的
+A/B 对照数据 —— 判定「A 是不是背过历史行情」、日后重标阈值都靠它。线上展示仍只读
+`recommend/`。攒够后用：
+`node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd`。
+
 > **数据划分（训练/验证/测试/评估、隐藏窗口）见 [`docs/DATA-SPLIT.md`](docs/DATA-SPLIT.md)** ——
 > 线上只展示 2026-10 起的前瞻，2026-03~09 是训练/验证样本故隐藏。改任何窗口都要同时
 > 改该文档与代码常量。

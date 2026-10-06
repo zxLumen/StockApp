@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fsp from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
+import { readJson } from '../lib/store.js'
 import {
   parseJsonLoose,
   buildReviewRows,
@@ -11,6 +15,10 @@ import {
   selectTop10,
   pickChain,
   resolveChainPayload,
+  forwardArchive,
+  archiveForwardChains,
+  FORWARD_A_DIR,
+  FORWARD_B_DIR,
 } from '../lib/recommend.js'
 
 test('pickChain：逐日 tilt 门控（≥阈值走 A 激进链路，否则走 B 保守链路）', () => {
@@ -40,6 +48,48 @@ test('resolveChainPayload：优先落 tilt 选中的那条；那条挂了退回�
   assert.deepEqual(resolveChainPayload({ useA: false, a: A, b: null }), { payload: A, chain: 'A', fellBack: true })
   // 两条都挂 → null，交给调用方抛错（当天无产出）
   assert.equal(resolveChainPayload({ useA: true, a: null, b: null }), null)
+})
+
+test('forwardArchive：只留 pool+top 并带上当天 tilt/thr（前瞻归档，供真实数据判 A/B）', () => {
+  const payload = {
+    date: '2026-10-08',
+    generatedAt: '2026-10-07T10:00:00.000Z',
+    basisDate: '2026-10-07',
+    model: 'm',
+    pool: { size: 500, filtered: 200, candidates: 100 },
+    top: [{ code: 'a' }],
+    candidates: [{ code: 'a' }, { code: 'b' }],
+  }
+  const a = forwardArchive({ payload, chain: 'A', tilt: 0.81234, thr: 0.6 })
+  assert.equal(a.date, '2026-10-08')
+  assert.equal(a.basisDate, '2026-10-07')
+  assert.deepEqual(a.top, [{ code: 'a' }])
+  assert.equal(a.candidates, undefined, 'candidates 不归档（太重且对照用不到）')
+  assert.deepEqual(a.regime, { tilt: 0.8123, thr: 0.6, chain: 'A' })
+  // 该链路当天没产出 → 不归档
+  assert.equal(forwardArchive({ payload: null, chain: 'B', tilt: 0, thr: 0.6 }), null)
+})
+
+test('archiveForwardChains：两条各写一份到 fwd 目录（真实落盘）', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fwd-'))
+  const mk = (code) => ({
+    date: '2026-10-08',
+    generatedAt: 't',
+    basisDate: '2026-10-07',
+    model: 'm',
+    pool: { size: 1 },
+    top: [{ code }],
+    candidates: [{ code }],
+  })
+  await archiveForwardChains(dir, { payloadA: mk('a'), payloadB: mk('b'), tilt: 0.5, thr: 0.6, onLog: () => {} })
+  const a = await readJson(path.join(dir, FORWARD_A_DIR, '2026-10-08.json'))
+  const b = await readJson(path.join(dir, FORWARD_B_DIR, '2026-10-08.json'))
+  assert.equal(a.top[0].code, 'a')
+  assert.equal(a.regime.chain, 'A')
+  assert.equal(a.candidates, undefined)
+  assert.equal(b.top[0].code, 'b')
+  assert.equal(b.regime.chain, 'B')
+  assert.equal(b.regime.tilt, 0.5)
 })
 
 test('parseJsonLoose：裸 JSON', () => {
