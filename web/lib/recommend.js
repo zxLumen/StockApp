@@ -249,9 +249,10 @@ const reviewUser = (candidates, finalPicks) =>
  * 批处理下，思考预算吃光就意味着正文恒为空 / 被截断。统一对所有端点关思考。
  */
 async function chatOnce(cfg, messages) {
-  // 带重试：批处理下网络瞬时失败（fetch failed / 超时 / 断流）很常见，重试可避免
-  // 「选股批次失败 → 退化成交额兜底」污染回测。只对网络类重试，鉴权/参数类直接抛。
-  const maxTries = 3
+  // 带重试：批处理下网络瞬时失败（fetch failed / 超时 / 断流）与限流（429）很常见，
+  // 重试可避免「选股批次失败 → 退化成交额兜底」污染回测（2025 年 5 月起即因此全空）。
+  // 只对网络/限流类重试，鉴权/参数类直接抛。限流退避更长。
+  const maxTries = 5
   for (let i = 1; ; i += 1) {
     try {
       const result = await streamChat({
@@ -263,9 +264,11 @@ async function chatOnce(cfg, messages) {
       return result.text
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const retriable = /fetch failed|超时|网络|中断|ECONN|ETIMEDOUT|socket|other side closed/i.test(msg)
+      const rateLimited = /429|usage limit|rate limit|too many requests/i.test(msg)
+      const retriable =
+        rateLimited || /fetch failed|超时|网络|中断|ECONN|ETIMEDOUT|socket|other side closed|50[234]/i.test(msg)
       if (!retriable || i >= maxTries) throw e
-      await new Promise((r) => setTimeout(r, 700 * i * i))
+      await new Promise((r) => setTimeout(r, (rateLimited ? 5000 : 700) * i * i))
     }
   }
 }
@@ -904,9 +907,13 @@ export const HIDDEN_RECOMMEND_FROM = '2026-03-01'
 export const HIDDEN_RECOMMEND_TO = '2026-09-30'
 export const isHiddenRecommendDate = (d) => d >= HIDDEN_RECOMMEND_FROM && d <= HIDDEN_RECOMMEND_TO
 
-export async function listRecommendDates(dataDir) {
+/** 链路 → 子目录：dual=每日按 regime 选中的那份；A/B=两条链路各自的前瞻归档。 */
+export const CHAIN_SUBDIR = { dual: 'recommend', A: FORWARD_A_DIR, B: FORWARD_B_DIR }
+const chainSubdir = (chain) => CHAIN_SUBDIR[chain] || 'recommend'
+
+export async function listRecommendDates(dataDir, chain = 'dual') {
   try {
-    const files = await fsp.readdir(path.join(dataDir, 'recommend'))
+    const files = await fsp.readdir(path.join(dataDir, chainSubdir(chain)))
     return files
       .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
       .map((f) => f.slice(0, 10))
@@ -918,18 +925,19 @@ export async function listRecommendDates(dataDir) {
   }
 }
 
-/** 读某天（默认最新）的推荐文件；没有就返回 null。 */
-export async function loadRecommend(dataDir, date) {
+/** 读某天（默认最新）的推荐文件；没有就返回 null。chain: dual（默认）| A | B。 */
+export async function loadRecommend(dataDir, date, chain = 'dual') {
+  const sub = chainSubdir(chain)
   if (date) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
     // 训练/验证窗口的推荐不对外（见 isHiddenRecommendDate）：显式指定日期也读不到，
     // 避免用 `?date=2026-08-15` 绕过列表过滤。
     if (isHiddenRecommendDate(date)) return null
-    return readJson(path.join(dataDir, 'recommend', `${date}.json`), null)
+    return readJson(path.join(dataDir, sub, `${date}.json`), null)
   }
-  const dates = await listRecommendDates(dataDir)
+  const dates = await listRecommendDates(dataDir, chain)
   if (!dates.length) return null
-  return readJson(path.join(dataDir, 'recommend', `${dates[0]}.json`), null)
+  return readJson(path.join(dataDir, sub, `${dates[0]}.json`), null)
 }
 
 /**

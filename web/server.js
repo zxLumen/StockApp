@@ -239,11 +239,15 @@ route('GET', /^\/api\/news$/, async (ctx) => {
 
 // 每日推荐：datasets = 有哪几天的；不带 date 给最新一天的完整（Top10 + 候选 + 解读）；
 // 带 date 给指定那天。找不到就是 null（前端显示「今日尚未生成」）。
-route('GET', /^\/api\/recommend\/dates$/, async () => ({ dates: await listRecommendDates(DATA_DIR) }))
+route('GET', /^\/api\/recommend\/dates$/, async (ctx) => ({
+  dates: await listRecommendDates(DATA_DIR, ctx.url.searchParams.get('chain') || 'dual'),
+}))
 
 route('GET', /^\/api\/recommend$/, async (ctx) => {
   const date = ctx.url.searchParams.get('date') || ''
-  const data = await loadRecommend(DATA_DIR, date)
+  // chain: dual（默认，按 regime 选中的那份）| A | B（两条链路各自的前瞻归档）。
+  const chain = ctx.url.searchParams.get('chain') || 'dual'
+  const data = await loadRecommend(DATA_DIR, date, chain)
   if (!data) return null
   // 补上「自推荐日到最新」的涨跌（公开数据，任何人可见）
   return attachPerformance(data)

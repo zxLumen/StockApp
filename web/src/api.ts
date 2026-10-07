@@ -100,12 +100,20 @@ export const searchBoards = (q: string, kind?: BoardCategory, signal?: AbortSign
     signal,
   )
 
-/** 每日推荐：不带 date 给最新一天的完整数据；没有生成过则为 null。 */
-export const fetchRecommend = (date?: string, signal?: AbortSignal) =>
-  get<RecommendPayload | null>(`/api/recommend${date ? `?date=${encodeURIComponent(date)}` : ''}`, signal)
+/** 链路：dual=每日按 regime 选中的那份（默认）；A/B=两条链路各自的前瞻归档。 */
+export type RecommendChain = 'dual' | 'A' | 'B'
 
-export const fetchRecommendDates = (signal?: AbortSignal) =>
-  get<{ dates: string[] }>('/api/recommend/dates', signal)
+/** 每日推荐：不带 date 给最新一天的完整数据；没有生成过则为 null。chain 选链路。 */
+export const fetchRecommend = (date?: string, chain: RecommendChain = 'dual', signal?: AbortSignal) => {
+  const qs = new URLSearchParams()
+  if (date) qs.set('date', date)
+  if (chain !== 'dual') qs.set('chain', chain)
+  const q = qs.toString()
+  return get<RecommendPayload | null>(`/api/recommend${q ? `?${q}` : ''}`, signal)
+}
+
+export const fetchRecommendDates = (chain: RecommendChain = 'dual', signal?: AbortSignal) =>
+  get<{ dates: string[] }>(`/api/recommend/dates${chain !== 'dual' ? `?chain=${chain}` : ''}`, signal)
 
 export const searchFunds = (q: string, signal?: AbortSignal) =>
   get<{ items: { code: string; name: string; type: string | null }[] }>(

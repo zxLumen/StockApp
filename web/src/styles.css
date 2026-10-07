@@ -1886,3 +1886,27 @@ button.member-row:hover {
   background: rgba(0, 145, 255, 0.16);
   color: #8cc6ff;
 }
+/* 链路切换（推荐页）：双链路 ↔ B 保守，用于真实前瞻对照 */
+.rec-chain-switch {
+  display: inline-flex;
+  border: 1px solid var(--line, #2a2d35);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel, #16181d);
+}
+.rec-chain-tab {
+  background: transparent;
+  color: var(--dim, #8b949e);
+  border: 0;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rec-chain-tab:hover {
+  color: inherit;
+}
+.rec-chain-tab.is-on {
+  background: rgba(76, 139, 245, 0.2);
+  color: #cfe1ff;
+}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchRecommend, fetchRecommendDates } from '../api'
+import { fetchRecommend, fetchRecommendDates, type RecommendChain } from '../api'
 import type { RecommendPayload, RecommendStock } from '../types'
 
 const fmt = (n: number | null | undefined, d = 2) =>
@@ -115,6 +115,8 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const [data, setData] = useState<Awaited<ReturnType<typeof fetchRecommend>>>(null)
   const [dates, setDates] = useState<string[]>([])
   const [date, setDate] = useState<string>('')
+  /** 展示哪条链路：dual=每日按 regime 选中的那份（默认）；B=稳健池多因子链路；A=成交额池 AI 链路。 */
+  const [chain, setChain] = useState<RecommendChain>('dual')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openCode, setOpenCode] = useState<string | null>(null)
@@ -133,11 +135,11 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
     latestRef.current = dates[0] || ''
   }, [dates])
 
-  const load = useCallback(async (d?: string) => {
+  const load = useCallback(async (d: string | undefined, c: RecommendChain) => {
     setLoading(true)
     setError('')
     try {
-      const payload = await fetchRecommend(d)
+      const payload = await fetchRecommend(d, c)
       setData(payload)
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败')
@@ -148,20 +150,20 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   }, [])
 
   useEffect(() => {
-    fetchRecommendDates()
+    fetchRecommendDates(chain)
       .then((r) => {
         setDates(r.dates)
         setDate(r.dates[0] || '')
       })
       .catch(() => setDates([]))
-    void load()
-  }, [load])
+    void load(undefined, chain)
+  }, [chain, load])
 
   // 实时：轮询榜单日期。跑批过程中新生成的一天会自动出现；当前停在最新/未选时自动切过去。
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
-        const r = await fetchRecommendDates()
+        const r = await fetchRecommendDates(chain)
         const newest = r.dates[0] || ''
         setDates(r.dates)
         if (newest && newest !== latestRef.current && (!dateRef.current || dateRef.current === latestRef.current)) {
@@ -172,14 +174,14 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       }
     }, 15000)
     return () => clearInterval(timer)
-  }, [])
+  }, [chain])
 
   const pickDate = (d: string) => {
     setDate(d)
     setOpenCode(null)
     setCalOpen(false)
     setCalPick('')
-    void load(d)
+    void load(d, chain)
   }
   pickRef.current = pickDate
   const dateSet = new Set(dates)
@@ -195,6 +197,24 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const years = useMemo(() => [...new Set(dates.map((d) => d.slice(0, 4)))].sort().reverse(), [dates])
   const curYear = (calMonth || date || dates[0] || '').slice(0, 4)
 
+  // 链路切换：双链路（按 regime 选中的那份）↔ B 保守（稳健池 + 多因子）。用于真实前瞻对照。
+  const chainSwitch = (
+    <div className="rec-chain-switch" role="tablist" aria-label="选择链路">
+      {([['dual', '双链路'], ['B', 'B 保守']] as [RecommendChain, string][]).map(([c, label]) => (
+        <button
+          key={c}
+          type="button"
+          role="tab"
+          aria-selected={chain === c}
+          className={`rec-chain-tab${chain === c ? ' is-on' : ''}`}
+          onClick={() => setChain(c)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+
   if (loading) return <div className="rec-wrap"><div className="note">加载推荐…</div></div>
   if (error) return <div className="rec-wrap"><div className="note">推荐加载失败：{error}</div></div>
   if (!data || !data.top?.length) {
@@ -202,10 +222,12 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       <div className="rec-wrap">
         <div className="rec-head">
           <h2>每日推荐</h2>
+          {chainSwitch}
         </div>
         <div className="note">
-          今日推荐尚未生成。服务器会在收盘后自动跑双链路：当日动量倾斜 ≥ 阈值走「成交额池 +
-          AI 选股」（激进），否则走「稳健池 + 多因子」（保守），挑出 Top10。
+          该链路今日推荐尚未生成。服务器会在收盘后自动跑双链路：当日动量倾斜 ≥ 阈值走「成交额池 +
+          AI 选股」（激进），否则走「稳健池 + 多因子」（保守），挑出 Top10；两条链路各自的前瞻归档
+          是「B 保守」与「A 激进」的来源。
         </div>
       </div>
     )
@@ -217,6 +239,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
     <div className="rec-wrap">
       <div className="rec-head">
         <h2>每日推荐</h2>
+        {chainSwitch}
         <span className="note small">
           <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
           {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
