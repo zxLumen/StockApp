@@ -375,6 +375,7 @@ async function main() {
       const m = metrics(months[r.key].days, months[r.key].feats, allBars, idxBars, w)
       per[r.key] = {
         ex: Object.fromEntries(HORIZONS.map((n) => [n, m.avg(m.excs.get(n))])),
+        ab: Object.fromEntries(HORIZONS.map((n) => [n, m.avg(m.rets.get(n))])),
         win: Object.fromEntries(HORIZONS.map((n) => [n, m.win(m.rets.get(n)) * 100])),
       }
     }
@@ -400,6 +401,17 @@ async function main() {
   for (const r of results.slice(0, 15)) console.log(row(r, 10))
   console.log('\n按「全窗口最差月 T+5 超额」排序 Top15：')
   for (const r of [...results].sort((a, b) => b.robust5 - a.robust5).slice(0, 15)) console.log(row(r, 5))
+
+  // 主指标 = **绝对收益**（组合等权），见 docs/REQUIREMENTS.md §5；相对基准超额仅为辅助。
+  const absMean = (r, keys, h) => {
+    const xs = keys.map((k) => r.per[k].ab[h]).filter(Number.isFinite)
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN
+  }
+  const rowAbs = (r, h) =>
+    `${tagOf(r.w).padEnd(30)} | 训绝对${n3(absMean(r, TRAIN_KEYS, h))} 验绝对${n3(absMean(r, HOLD_KEYS, h))}`
+  console.log('\n按「训练集绝对收益 T+10」排序 Top15（主指标 = 绝对收益，不是超额）：')
+  for (const r of [...results].sort((a, b) => absMean(b, TRAIN_KEYS, 10) - absMean(a, TRAIN_KEYS, 10)).slice(0, 15))
+    console.log(rowAbs(r, 10))
 
   // 固定配置基线：与 lib/factors.js 的生产默认权重一致（逐月抽出来做对照）
   const fixed = results.find((r) => tagOf(r.w) === tagOf(DEFAULT_WEIGHTS)) || results[0]
