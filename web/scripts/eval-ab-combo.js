@@ -1,5 +1,5 @@
 // A/B regime 组合评估：逐日按市场状态（regimeTilt）在 A、B 两个推荐目录间切换，
-// 取该目录当天的 Top10，算 T+10 相对沪深300超额/胜率。
+// 取该目录当天的 Top10，按每票自身持有周期（ai.holdDays）算绝对收益/相对沪深300超额/胜率。
 //   node scripts/eval-ab-combo.js --a recommend-ai-ab --b recommend-factors-ab --from ... --to ... [--thr 0.5]
 //   # 真实前瞻（每天双链路各归档一份，见 lib/recommend.js 的 runRecommendRegime）：
 //   node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd
@@ -48,11 +48,13 @@ async function dayExcess(dir, file, idxBars) {
   if (!idxBase) return null
   const exs = []
   const rets = []
-  for (const t of d.top) {
-    const bars = await getBars(t.secid)
-    const base = closeAt(bars, basis)
-    const sell = barAfter(bars, basis, H)
-    const idxSell = sell ? closeAt(idxBars, sell.time) : null
+    for (const t of d.top) {
+      const bars = await getBars(t.secid)
+      const base = closeAt(bars, basis)
+      // 逐票用各自的持有周期（A 链=模型给的 holdDays；B 链=factorHoldDays）；缺失回退 H。
+      const hold = t.ai?.holdDays || H
+      const sell = barAfter(bars, basis, hold)
+      const idxSell = sell ? closeAt(idxBars, sell.time) : null
     if (base && sell?.close && idxSell) {
       const r = (sell.close / base - 1) * 100
       rets.push(r)
@@ -102,7 +104,7 @@ async function main() {
     }
   }
 
-  console.log(`\n=== A/B regime 组合 ${FROM} ~ ${TO}（${files.length} 天）T+${H} ===`)
+  console.log(`\n=== A/B regime 组合 ${FROM} ~ ${TO}（${files.length} 天，逐票持有周期） ===`)
   console.log('模式 | 均绝对(主) | 均超额(辅) | 日均胜率 | 最差月 | 正超额月 | 逐月均超额')
   for (const a of agg) {
     const byM = [...a.byMonth.entries()].sort()
