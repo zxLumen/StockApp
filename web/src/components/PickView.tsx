@@ -197,10 +197,10 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const years = useMemo(() => [...new Set(dates.map((d) => d.slice(0, 4)))].sort().reverse(), [dates])
   const curYear = (calMonth || date || dates[0] || '').slice(0, 4)
 
-  // 链路切换：双链路（按 regime 选中的那份）↔ B 保守（稳健池 + 多因子）。用于真实前瞻对照。
+  // 链路切换：双链路（按 regime 选中的那份）↔ A 激进（成交额池 + AI）↔ B 保守（稳健池 + 多因子）。
   const chainSwitch = (
     <div className="rec-chain-switch" role="tablist" aria-label="选择链路">
-      {([['dual', '双链路'], ['B', 'B 保守']] as [RecommendChain, string][]).map(([c, label]) => (
+      {([['dual', '双链路'], ['A', 'A 激进'], ['B', 'B 保守']] as [RecommendChain, string][]).map(([c, label]) => (
         <button
           key={c}
           type="button"
