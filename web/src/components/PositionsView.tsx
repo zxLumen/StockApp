@@ -78,6 +78,7 @@ export default function PositionsView({
 
   const ch = data?.chains?.[chain] ?? null
   const m: PositionMode | null = ch ? ch[mode] : null
+  const openStocks = m ? new Set(m.open.map((p) => p.code)).size : 0
 
   return (
     <div className="pos-wrap">
@@ -163,7 +164,7 @@ export default function PositionsView({
             </div>
           )}
 
-          <Section title="持仓中" count={m.open.length} defaultOpen>
+          <Section title="持仓中" count={openStocks} defaultOpen>
             <PositionTable key={`${chain}-${mode}-open`} rows={m.open} kind="open" onPick={onPick} />
           </Section>
           <Section title="已了结" count={m.closed.length} defaultOpen>
@@ -222,6 +223,65 @@ function PositionTable({
 }) {
   const [page, setPage] = useState(1)
   if (!rows.length) return <div className="note small">暂无</div>
+
+  // 持仓中：按股票合并（同一票多天买入 → 一条，买入价为成本均价），按盈亏降序。
+  if (kind === 'open') {
+    const agg = new Map<string, { secid: string; code: string; name: string; shares: number; cost: number; lastPrice: number | null; pnl: number }>()
+    for (const p0 of rows) {
+      const a = agg.get(p0.code) ?? { secid: p0.secid, code: p0.code, name: p0.name, shares: 0, cost: 0, lastPrice: p0.lastPrice, pnl: 0 }
+      a.shares += p0.shares
+      a.cost += p0.cost
+      a.pnl += p0.pnl ?? 0
+      a.lastPrice = p0.lastPrice ?? a.lastPrice
+      agg.set(p0.code, a)
+    }
+    const list = [...agg.values()]
+      .map((a) => ({
+        ...a,
+        avgBuy: a.shares ? a.cost / a.shares : null,
+        mv: a.lastPrice != null ? a.shares * a.lastPrice : null,
+        retPct: a.cost ? (a.pnl / a.cost) * 100 : null,
+      }))
+      .sort((x, y) => y.pnl - x.pnl)
+    const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE))
+    const p = Math.min(page, pages)
+    const slice = list.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
+    return (
+      <>
+        <div className="pos-list">
+          <div className="pos-row pos-row-head open">
+            <span>名称</span>
+            <span>买入均价</span>
+            <span>现价</span>
+            <span>股数</span>
+            <span>当前市值</span>
+            <span>盈亏%</span>
+          </div>
+          {slice.map((a) => (
+            <div
+              className="pos-row open"
+              key={a.code}
+              role="button"
+              tabIndex={0}
+              onClick={() => onPick({ code: a.code, name: a.name, secid: a.secid })}
+            >
+              <span className="pos-name">
+                {a.name} <span className="dim small">{a.code}</span>
+              </span>
+              <span>{a.avgBuy != null ? a.avgBuy.toFixed(2) : '—'}</span>
+              <span>{a.lastPrice != null ? a.lastPrice.toFixed(2) : '—'}</span>
+              <span>{sharesStr(a.shares)}</span>
+              <span>{money(a.mv)}</span>
+              <span className={`pos-pct ${tone(a.retPct)}`}>{pctStr(a.retPct)}</span>
+            </div>
+          ))}
+        </div>
+        <Pager page={p} pages={pages} onPage={setPage} />
+      </>
+    )
+  }
+
+  // 已了结：逐笔明细
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const p = Math.min(page, pages)
   const slice = rows.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
@@ -232,10 +292,10 @@ function PositionTable({
           <span>名称</span>
           <span>买入日</span>
           <span>买入价</span>
-          <span>{kind === 'open' ? '现价' : '卖出价'}</span>
+          <span>卖出价</span>
           <span>股数</span>
           <span>盈亏%</span>
-          <span>{kind === 'open' ? '预计卖出' : '卖出日'}</span>
+          <span>卖出日</span>
           <span>持有</span>
         </div>
         {slice.map((p0) => (
@@ -253,10 +313,10 @@ function PositionTable({
             </span>
             <span>{p0.buyDate}</span>
             <span>{p0.buyPrice?.toFixed(2)}</span>
-            <span>{p0.lastPrice?.toFixed(2) ?? '—'}</span>
+            <span>{p0.sellPrice?.toFixed(2) ?? '—'}</span>
             <span>{sharesStr(p0.shares)}</span>
             <span className={`pos-pct ${tone(p0.retPct)}`}>{pctStr(p0.retPct)}</span>
-            <span>{kind === 'open' ? p0.expectedSellDate : p0.sellDate}</span>
+            <span>{p0.sellDate}</span>
             <span className="dim">{p0.effHoldDays} 日</span>
           </div>
         ))}
