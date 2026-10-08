@@ -316,37 +316,37 @@ export type AiState = 'idle' | 'thinking' | 'working' | 'busy' | 'success' | 'er
 // ── 模拟推荐持仓 ────────────────────────────────────────────────────────────
 export type PositionChain = 'dual' | 'A' | 'B'
 
-export interface PositionItem {
+/** 持仓中（移动加权口径，按股票合并一条）。 */
+export interface PositionOpen {
   secid: string
   code: string
   name: string
-  /** 来源推荐生效日 */
-  recDate: string
-  /** 买入日（= 推荐基准日） */
-  buyDate: string
-  buyPrice: number | null
   shares: number
-  /** 实际成本（shares × buyPrice，≈1 万） */
-  cost: number
-  /** 最新价（持仓中=现价；已了结=卖出价） */
+  /** 摊薄成本（移动加权均价） */
+  avgCost: number | null
+  /** 估值日收盘价 */
   lastPrice: number | null
-  /** 自买入涨跌（%） */
-  retPct: number | null
-  /** 盈亏金额 */
+  /** 当前市值 = 股数 × 现价 */
+  mv: number | null
+  /** 浮动盈亏 = 股数 ×（现价 − 摊薄成本） */
   pnl: number | null
-  /** 原始持有交易日数 */
-  holdDays: number
-  /** 生效持有交易日数（AI 延长后） */
-  effHoldDays: number
-  /** 已了结时的卖出日 */
-  sellDate: string | null
+  /** 相对摊薄成本的涨跌（%） */
+  retPct: number | null
+}
+
+/** 已了结（移动加权口径，按每个卖出事件一条）。 */
+export interface PositionClosed {
+  secid: string
+  code: string
+  name: string
+  sellDate: string
   sellPrice: number | null
-  /** 预计/实际卖出日 */
-  expectedSellDate: string | null
+  shares: number
+  /** 卖出时点的摊薄成本 */
+  avgCost: number | null
+  /** 已实现盈亏 = 股数 ×（卖出价 − 摊薄成本） */
+  pnl: number
   reason: 'cycle' | 'ai' | null
-  extended: boolean
-  terminated: boolean
-  open: boolean
 }
 
 export interface PositionTrade {
@@ -358,6 +358,8 @@ export interface PositionTrade {
   shares: number
   price: number | null
   amount: number
+  /** 卖出时点的摊薄成本（买入行为 null） */
+  avgCost?: number | null
   pnl?: number | null
   reason?: 'cycle' | 'ai' | null
 }
@@ -379,8 +381,8 @@ export interface PositionSummary {
 
 export interface PositionMode {
   summary: PositionSummary
-  open: PositionItem[]
-  closed: PositionItem[]
+  open: PositionOpen[]
+  closed: PositionClosed[]
   trades: PositionTrade[]
 }
 

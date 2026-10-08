@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ColorType, LineSeries, LineStyle, createChart, type IChartApi, type Time } from 'lightweight-charts'
 import { fetchPositions, type PositionsPayload } from '../api'
 import { useSessionState } from '../sessionState'
-import type { PositionChain, PositionItem, PositionMode, PositionTrade } from '../types'
+import type { PositionChain, PositionClosed, PositionMode, PositionOpen, PositionTrade } from '../types'
 
 const pctStr = (n: number | null | undefined) => (n == null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(2)}%`)
 const money = (n: number | null | undefined) => (n == null ? '—' : `¥${Math.round(n).toLocaleString('zh-CN')}`)
@@ -78,7 +78,6 @@ export default function PositionsView({
 
   const ch = data?.chains?.[chain] ?? null
   const m: PositionMode | null = ch ? ch[mode] : null
-  const openStocks = m ? new Set(m.open.map((p) => p.code)).size : 0
 
   return (
     <div className="pos-wrap">
@@ -163,11 +162,11 @@ export default function PositionsView({
             </div>
           )}
 
-          <Section title="持仓中" count={openStocks} defaultOpen>
-            <PositionTable key={`${chain}-${mode}-open`} rows={m.open} kind="open" onPick={onPick} />
+          <Section title="持仓中" count={m.open.length} defaultOpen>
+            <OpenTable key={`${chain}-${mode}-open`} rows={m.open} onPick={onPick} />
           </Section>
           <Section title="已了结" count={m.closed.length} defaultOpen>
-            <PositionTable key={`${chain}-${mode}-closed`} rows={m.closed} kind="closed" onPick={onPick} />
+            <ClosedTable key={`${chain}-${mode}-closed`} rows={m.closed} onPick={onPick} />
           </Section>
           <Section title="交易流水" count={m.trades.length} defaultOpen={false}>
             <TradesTable key={`${chain}-${mode}-trades`} trades={m.trades} />
@@ -211,112 +210,93 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
   )
 }
 
-function PositionTable({
+function OpenTable({
   rows,
-  kind,
   onPick,
 }: {
-  rows: PositionItem[]
-  kind: 'open' | 'closed'
+  rows: PositionOpen[]
   onPick: (s: { code: string; name: string; secid: string }) => void
 }) {
   const [page, setPage] = useState(1)
   if (!rows.length) return <div className="note small">暂无</div>
-
-  // 持仓中：按股票合并（同一票多天买入 → 一条，买入价为成本均价），按盈亏降序。
-  if (kind === 'open') {
-    const agg = new Map<string, { secid: string; code: string; name: string; shares: number; cost: number; lastPrice: number | null; pnl: number }>()
-    for (const p0 of rows) {
-      const a = agg.get(p0.code) ?? { secid: p0.secid, code: p0.code, name: p0.name, shares: 0, cost: 0, lastPrice: p0.lastPrice, pnl: 0 }
-      a.shares += p0.shares
-      a.cost += p0.cost
-      a.pnl += p0.pnl ?? 0
-      a.lastPrice = p0.lastPrice ?? a.lastPrice
-      agg.set(p0.code, a)
-    }
-    const list = [...agg.values()]
-      .map((a) => ({
-        ...a,
-        avgBuy: a.shares ? a.cost / a.shares : null,
-        mv: a.lastPrice != null ? a.shares * a.lastPrice : null,
-        retPct: a.cost ? (a.pnl / a.cost) * 100 : null,
-      }))
-      .sort((x, y) => y.pnl - x.pnl)
-    const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE))
-    const p = Math.min(page, pages)
-    const slice = list.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
-    return (
-      <>
-        <div className="pos-list">
-          <div className="pos-row pos-row-head open">
-            <span>名称</span>
-            <span>买入均价</span>
-            <span>现价</span>
-            <span>股数</span>
-            <span>当前市值</span>
-            <span>盈亏%</span>
-          </div>
-          {slice.map((a) => (
-            <div
-              className="pos-row open"
-              key={a.code}
-              role="button"
-              tabIndex={0}
-              onClick={() => onPick({ code: a.code, name: a.name, secid: a.secid })}
-            >
-              <span className="pos-name">
-                {a.name} <span className="dim small">{a.code}</span>
-              </span>
-              <span>{a.avgBuy != null ? a.avgBuy.toFixed(2) : '—'}</span>
-              <span>{a.lastPrice != null ? a.lastPrice.toFixed(2) : '—'}</span>
-              <span>{sharesStr(a.shares)}</span>
-              <span>{money(a.mv)}</span>
-              <span className={`pos-pct ${tone(a.retPct)}`}>{pctStr(a.retPct)}</span>
-            </div>
-          ))}
-        </div>
-        <Pager page={p} pages={pages} onPage={setPage} />
-      </>
-    )
-  }
-
-  // 已了结：逐笔明细
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
   const p = Math.min(page, pages)
   const slice = rows.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
   return (
     <>
       <div className="pos-list">
-        <div className="pos-row pos-row-head">
+        <div className="pos-row pos-row-head open">
           <span>名称</span>
-          <span>买入日</span>
-          <span>买入价</span>
-          <span>卖出价</span>
+          <span>买入均价</span>
+          <span>现价</span>
           <span>股数</span>
+          <span>当前市值</span>
           <span>盈亏%</span>
-          <span>卖出日</span>
-          <span>持有</span>
         </div>
-        {slice.map((p0) => (
+        {slice.map((a) => (
           <div
-            className="pos-row"
-            key={`${p0.secid}-${p0.recDate}-${p0.buyDate}`}
+            className="pos-row open"
+            key={a.code}
             role="button"
             tabIndex={0}
-            onClick={() => onPick({ code: p0.code, name: p0.name, secid: p0.secid })}
+            onClick={() => onPick({ code: a.code, name: a.name, secid: a.secid })}
           >
             <span className="pos-name">
-              {p0.name} <span className="dim small">{p0.code}</span>
-              {p0.terminated && <em className="pos-tag pos-tag-ai">已提前终止</em>}
-              {p0.extended && <em className="pos-tag pos-tag-ext">延长 +{p0.effHoldDays - p0.holdDays}</em>}
+              {a.name} <span className="dim small">{a.code}</span>
             </span>
-            <span>{p0.buyDate}</span>
-            <span>{p0.buyPrice?.toFixed(2)}</span>
-            <span>{p0.sellPrice?.toFixed(2) ?? '—'}</span>
-            <span>{sharesStr(p0.shares)}</span>
-            <span className={`pos-pct ${tone(p0.retPct)}`}>{pctStr(p0.retPct)}</span>
-            <span>{p0.sellDate}</span>
-            <span className="dim">{p0.effHoldDays} 日</span>
+            <span>{a.avgCost != null ? a.avgCost.toFixed(2) : '—'}</span>
+            <span>{a.lastPrice != null ? a.lastPrice.toFixed(2) : '—'}</span>
+            <span>{sharesStr(a.shares)}</span>
+            <span>{money(a.mv)}</span>
+            <span className={`pos-pct ${tone(a.retPct)}`}>{pctStr(a.retPct)}</span>
+          </div>
+        ))}
+      </div>
+      <Pager page={p} pages={pages} onPage={setPage} />
+    </>
+  )
+}
+
+function ClosedTable({
+  rows,
+  onPick,
+}: {
+  rows: PositionClosed[]
+  onPick: (s: { code: string; name: string; secid: string }) => void
+}) {
+  const [page, setPage] = useState(1)
+  if (!rows.length) return <div className="note small">暂无</div>
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const p = Math.min(page, pages)
+  const slice = rows.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
+  return (
+    <>
+      <div className="pos-list">
+        <div className="pos-row pos-row-head closed">
+          <span>名称</span>
+          <span>卖出日</span>
+          <span>卖出价</span>
+          <span>股数</span>
+          <span>摊薄成本</span>
+          <span>已实现盈亏</span>
+        </div>
+        {slice.map((c, i) => (
+          <div
+            className="pos-row closed"
+            key={`${c.secid}-${c.sellDate}-${i}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onPick({ code: c.code, name: c.name, secid: c.secid })}
+          >
+            <span className="pos-name">
+              {c.name} <span className="dim small">{c.code}</span>
+              {c.reason === 'ai' && <em className="pos-tag pos-tag-ai">AI终止</em>}
+            </span>
+            <span>{c.sellDate}</span>
+            <span>{c.sellPrice != null ? c.sellPrice.toFixed(2) : '—'}</span>
+            <span>{sharesStr(c.shares)}</span>
+            <span>{c.avgCost != null ? c.avgCost.toFixed(2) : '—'}</span>
+            <span className={`pos-pct ${tone(c.pnl)}`}>{money(c.pnl)}</span>
           </div>
         ))}
       </div>
@@ -340,6 +320,7 @@ function TradesTable({ trades }: { trades: PositionTrade[] }) {
           <span>名称</span>
           <span>股数</span>
           <span>价格</span>
+          <span>成本均价</span>
           <span>金额</span>
           <span>盈亏</span>
         </div>
@@ -352,6 +333,7 @@ function TradesTable({ trades }: { trades: PositionTrade[] }) {
             </span>
             <span>{sharesStr(t.shares)}</span>
             <span>{t.price?.toFixed(2)}</span>
+            <span>{t.avgCost != null ? t.avgCost.toFixed(2) : '—'}</span>
             <span>{money(t.amount)}</span>
             <span className={t.pnl != null ? tone(t.pnl) : 'dim'}>{t.pnl != null ? money(t.pnl) : '—'}</span>
           </div>

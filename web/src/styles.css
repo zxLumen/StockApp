@@ -2199,12 +2199,16 @@ button.member-row:hover {
   cursor: pointer;
 }
 .pos-row.trade {
-  grid-template-columns: 1fr 0.6fr 2fr 1fr 0.9fr 1.1fr 1fr;
+  grid-template-columns: 1fr 0.6fr 2fr 1fr 0.9fr 0.9fr 1.1fr 1fr;
   cursor: default;
 }
 /* 持仓中：按股票合并后的 6 列 */
 .pos-row.open {
   grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 0.9fr;
+}
+/* 已了结：按卖出事件的 6 列 */
+.pos-row.closed {
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
 }
 .pos-row:last-child {
   border-bottom: 0;
