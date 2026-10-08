@@ -14,7 +14,6 @@ import path from 'node:path'
 import { readJson } from './store.js'
 import { cached } from './http.js'
 import { cachedKline } from './kline-cache.js'
-import { getQuotes } from './market.js'
 import { mapLimit } from './rank.js'
 import {
   bjDate,
@@ -38,7 +37,6 @@ export function sharesFor(price) {
 }
 
 const round2 = (n) => (n == null || !Number.isFinite(Number(n)) ? null : Number(Number(n).toFixed(2)))
-const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 
 /** 全部链路 × 两套口径（结果整体缓存：盘中 6min / 盘后长 TTL）。 */
 export async function buildPositionsAll(dataDir, { ttlMs = recommendTtlMs() } = {}) {
@@ -49,6 +47,9 @@ async function computeAll(dataDir) {
   const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
   const actions = raw && raw.positions ? raw.positions : {}
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
+  // 估值日 = 最近一个「有日K」的交易日（未开盘的今天不合成，避免幽灵点）。
+  // 全页统一按该日收盘估值，保证「上方汇总 == 曲线末点」。
+  const valuationDate = benchBars.length ? benchBars[benchBars.length - 1].time : bjDate()
   // 全局起点 = 所有链路里最早的买入日：三条曲线共用同一 x 轴（A/B 数据晚也画得出来）。
   let globalStart = null
   for (const chain of ['dual', 'A', 'B']) {
@@ -57,9 +58,9 @@ async function computeAll(dataDir) {
   }
   const chains = {}
   for (const chain of ['dual', 'A', 'B']) {
-    chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart).catch(() => emptyChain())
+    chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate).catch(() => emptyChain())
   }
-  return { benchName: BENCH_NAME, asOf: bjDate(), chains }
+  return { benchName: BENCH_NAME, asOf: valuationDate, chains }
 }
 
 /** 该链路最早一天的基准日（买入日）。 */
@@ -81,7 +82,7 @@ function emptySummary() {
   return { count: 0, openCount: 0, closedCount: 0, invested: 0, realized: 0, unrealized: 0, total: 0, returnPct: null, winPct: null }
 }
 
-async function computeChain(dataDir, chain, actions, benchBars, globalStart) {
+async function computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate) {
   const sub = CHAIN_SUBDIR[chain] || 'recommend'
   const dates = (await listRecommendDates(dataDir, chain)).slice().sort() // 升序
   if (!dates.length) return emptyChain()
@@ -125,35 +126,14 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart) {
     }
   })
 
-  const today = bjDate()
-  const endOf = (b, mode) => {
-    if (mode === 'ai' && b.pos?.exited && b.pos?.exit?.date) return b.pos.exit.date
-    return addTradingDays(b.buyDate, effHoldOf(b, mode))
-  }
-
-  // 3) 现价（仅持仓中的票需要）
-  const openSecids = new Set()
-  for (const b of buys) {
-    if (endOf(b, 'orig') > today || endOf(b, 'ai') > today) openSecids.add(b.secid)
-  }
-  const quotes = new Map()
-  try {
-    const q = await getQuotes([...openSecids])
-    for (const x of q.items || []) quotes.set(x.secid, x)
-  } catch {
-    /* 无行情则用最近收盘 */
-  }
-
-  const spotOf = (b) => {
-    const q = quotes.get(b.secid)
-    if (q?.price != null) return q.price
-    return lastClose.get(b.secid)?.close ?? null
-  }
+  // 持仓估值一律用「估值日收盘」：不再取实时价（未开盘时实时=上一收盘、且与日K可能不同源，
+  // 会让曲线末点与逐日点对不上）。缺当日收盘则退回该票最近一根收盘。
   const closeOn = (b, day) => closeMap.get(b.secid)?.get(day) ?? null
+  const spotOf = (b) => closeOn(b, valuationDate) ?? lastClose.get(b.secid)?.close ?? null
 
-  const o = buildMode(buys, 'orig', { today, closeOn, spotOf })
-  const a = buildMode(buys, 'ai', { today, closeOn, spotOf })
-  const equity = buildEquity(buys, { closeMap, benchBars, today, orig: o.positions, ai: a.positions, globalStart })
+  const o = buildMode(buys, 'orig', { valuationDate, closeOn, spotOf })
+  const a = buildMode(buys, 'ai', { valuationDate, closeOn, spotOf })
+  const equity = buildEquity(buys, { closeMap, benchBars, valuationDate, orig: o.positions, ai: a.positions, globalStart })
   return {
     orig: { summary: summarize(o.positions), ...split(o.positions), trades: o.trades },
     ai: { summary: summarize(a.positions), ...split(a.positions), trades: a.trades },
@@ -168,7 +148,7 @@ function effHoldOf(b, mode) {
 }
 
 /** 生成某口径下的所有持仓（未了结在 open，已了结在 closed），并带交易流水。 */
-function buildMode(buys, mode, { today, closeOn, spotOf }) {
+function buildMode(buys, mode, { valuationDate, closeOn, spotOf }) {
   const positions = []
   const trades = []
   for (const b of buys) {
@@ -187,8 +167,10 @@ function buildMode(buys, mode, { today, closeOn, spotOf }) {
       sellDate = addTradingDays(b.buyDate, eff)
       reason = 'cycle'
     }
-    const closed = !!sellDate && sellDate <= today
-    if (closed && !Number.isFinite(sellPrice)) sellPrice = closeOn(b, sellDate)
+    // 只有「结束日 ≤ 估值日」且**取得到结束日收盘**才算已卖出；否则保持持仓（按估值日收盘估值）。
+    const dueClosed = !!sellDate && sellDate <= valuationDate
+    if (dueClosed && !Number.isFinite(sellPrice)) sellPrice = closeOn(b, sellDate)
+    const closed = dueClosed && sellPrice != null
     const priceNow = closed ? sellPrice : spotOf(b)
     const sharesNow = shares
     const pnl = priceNow != null ? Number((sharesNow * (priceNow - b.buyPrice)).toFixed(2)) : null
@@ -249,18 +231,18 @@ function summarize(positions) {
   }
 }
 
-/** 甲·净值法：组合日收益 = 当日持仓等权涨跌，逐日链式累乘；沪深300 同起点归一。 */
-function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }) {
+/** 金额法：逐日（已实现+浮动）/累计投入；沪深300 同起点按收盘归一。 */
+function buildEquity(buys, { closeMap, benchBars, valuationDate, orig, ai, globalStart }) {
   const benchByDay = new Map()
   for (const b of benchBars) if (b.close != null) benchByDay.set(b.time, b.close)
   const chainStart = buys.reduce((m, b) => (b.buyDate < m ? b.buyDate : m), buys[0].buyDate)
   const start = globalStart && globalStart < chainStart ? globalStart : chainStart
-  const cal = benchBars.map((b) => b.time).filter((t) => t >= start && t <= today).sort()
+  const cal = benchBars.map((b) => b.time).filter((t) => t >= start && t <= valuationDate).sort()
   if (cal.length === 0) return []
 
   const closeOf = (secid, day) => closeMap.get(secid)?.get(day) ?? null
-  // 金额法：某日收益率 =（当日已实现 + 当日浮动）/ 截至当日累计投入。末点用实时价，
-  // 与上方「总盈亏/累计投入」完全一致（就是对不上净值法的原因，本页统一用金额法）。
+  // 金额法：某日收益率 =（当日已实现 + 当日浮动）/ 截至当日累计投入。估值日收尾，
+  // 与上方「总盈亏/累计投入」一致。
   const seriesAccount = (positions) => {
     const out = []
     for (const t of cal) {
@@ -280,12 +262,6 @@ function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }
       }
       out.push({ date: t, pct: invested > 0 ? round2(((realized + unrealized) / invested) * 100) : 0 })
     }
-    const realizedNow = positions.filter((p) => !p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0)
-    const unrealizedNow = positions.filter((p) => p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0)
-    const investedNow = positions.reduce((a, p) => a + p.cost, 0)
-    const finalPct = investedNow > 0 ? round2(((realizedNow + unrealizedNow) / investedNow) * 100) : null
-    if (out.length && out[out.length - 1].date === today) out[out.length - 1] = { date: today, pct: finalPct }
-    else out.push({ date: today, pct: finalPct })
     return out
   }
   const origS = seriesAccount(orig)
@@ -304,10 +280,6 @@ function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }
       }
       cum = c != null && base ? c / base : cum
       out.push({ date: t, pct: round2((cum - 1) * 100) })
-    }
-    // 当日指数日K尚未出时，基准线沿用最后一根 → 与前两条同为 today 末点。
-    if (out.length && out[out.length - 1].date !== today) {
-      out.push({ date: today, pct: out[out.length - 1].pct })
     }
     return out
   })()
