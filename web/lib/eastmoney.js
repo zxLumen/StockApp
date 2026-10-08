@@ -144,15 +144,17 @@ export function withDerived(bars) {
 }
 
 /** K 线（含 MA5/10/20）。字段顺序为 日期,开,收,高,低,量(手),额,振幅,涨跌%,涨跌额,换手% */
-export async function getKline(secid, { period = 'd', fq = 1, limit = 240 } = {}) {
+export async function getKline(secid, { period = 'd', fq = 1, limit = 240, end = '20500101' } = {}) {
   const klt = KLT[period] || 101
   // 分时（m1）：东财 klt=1 用任意正 lmt 都返回「当前交易日全部分钟」（lmt=0 反而返回空），
   // 盘前/休市则回退到上一个交易日整天，故这里沿用常规 lmt，随后再按最后一个交易日过滤。
+  // end：往前翻页用（东财按 end 日期往前数 lmt 根）。默认 20500101 = 一直取到最新。
+  const e = /^\d{8}$/.test(String(end)) ? String(end) : '20500101'
   const pathAndQuery =
     `/api/qt/stock/kline/get?secid=${enc(secid)}` +
     `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` +
-    `&klt=${klt}&fqt=${fq}&end=20500101&lmt=${Math.min(600, Math.max(20, limit))}`
-  const json = await cached(`k:${secid}:${klt}:${fq}:${limit}`, 5 * 60_000, () => klinePool(pathAndQuery))
+    `&klt=${klt}&fqt=${fq}&end=${e}&lmt=${Math.min(600, Math.max(20, limit))}`
+  const json = await cached(`k:${secid}:${klt}:${fq}:${limit}:${e}`, 5 * 60_000, () => klinePool(pathAndQuery))
   const d = json?.data
   if (!d || !Array.isArray(d.klines) || !d.klines.length) throw new Error('无 K 线数据')
   let bars = d.klines.map((line) => {

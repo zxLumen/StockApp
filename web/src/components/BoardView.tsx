@@ -87,7 +87,7 @@ export default function BoardView({ selection, aiEnabled, onPick, onBack }: Prop
     const ac = new AbortController()
     setKLoading(true)
     setKErr('')
-    fetchKline(selection.secid, period, 240, ac.signal)
+    fetchKline(selection.secid, period, 600, ac.signal)
       .then((k) => setKline(k))
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return

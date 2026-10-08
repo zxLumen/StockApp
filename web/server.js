@@ -156,8 +156,10 @@ route('GET', /^\/api\/market\/kline$/, async (ctx) => {
   const secid = ctx.url.searchParams.get('secid') || ''
   if (!/^\d+\.[A-Za-z0-9._-]+$/.test(secid)) throw new HttpError(400, 'secid 不合法')
   const period = ctx.url.searchParams.get('period') || 'd'
-  const limit = Number(ctx.url.searchParams.get('limit')) || 240
-  const k = await getKline(secid, { period, limit })
+  // 单页上限 600（东财单次硬顶）；往前翻页用 end 游标（YYYYMMDD）。
+  const limit = Math.min(600, Number(ctx.url.searchParams.get('limit')) || 240)
+  const end = ctx.url.searchParams.get('end') || undefined
+  const k = await getKline(secid, { period, limit, end })
   return { ...k, sourceLabel: sourceLabel(k.source) }
 })
 
@@ -334,7 +336,7 @@ export async function buildContext(secid, name) {
   const isBoard = market === 'board'
   const board = isBoard ? await boardContext(secid, name).catch(() => null) : null
   const [kline, quote, news] = await Promise.all([
-    getKline(secid, { period: 'd', limit: 60 }).catch(() => null),
+    getKline(secid, { period: 'd', limit: 120 }).catch(() => null),
     // getQuotes 返回 { items, source }，不是数组 —— 兜底也得是同形状，
     // 否则下面取 items[0] 会静默拿到 null，成交额/换手率/市值又全成了 NA。
     getQuotes([secid]).catch(() => ({ items: [] })),
@@ -358,6 +360,34 @@ export async function buildContext(secid, name) {
   const amplitude = first(last?.amplitude, q?.amplitude)
   const volume = first(last?.volume, q?.volume)
 
+  // 方向性信号：只给裸均线数值时模型难以下方向判断，这里把「结论性」的排列/动量/位置/量能算好喂进去，
+  // 让模型有据可依地给看多/看空，而不是一直落在中间档「中性」。
+  const pctAgo = (n) =>
+    closes.length > n && closes[closes.length - 1 - n] > 0
+      ? (closes[closes.length - 1] / closes[closes.length - 1 - n] - 1) * 100
+      : null
+  const ma5 = last?.ma5
+  const ma10 = last?.ma10
+  const ma20 = last?.ma20
+  const close = last?.close
+  const trend =
+    ma5 != null && ma10 != null && ma20 != null && close != null
+      ? close > ma20 && ma5 > ma10 && ma10 > ma20
+        ? '多头排列（偏多）'
+        : close < ma20 && ma5 < ma10 && ma10 < ma20
+          ? '空头排列（偏空）'
+          : '均线纠缠（震荡）'
+      : null
+  const devMa20 = ma20 ? (close / ma20 - 1) * 100 : null
+  const win = closes.slice(-60)
+  const hi = win.length ? Math.max(...win) : null
+  const lo = win.length ? Math.min(...win) : null
+  const pos60 = hi != null && lo != null && hi > lo ? ((close - lo) / (hi - lo)) * 100 : null
+  const vols = bars.map((b) => b.volume).filter((v) => v != null)
+  const vol5 = avg(vols.slice(-5))
+  const vol20 = avg(vols.slice(-20))
+  const volRatio = vol5 != null && vol20 ? vol5 / vol20 : null
+
   // 缺哪个就明说哪个，别打「NA」让模型自己脑补 —— 它会直接说「无法评估」。
   // 板块没有「换手率 / 市值」这回事（成分股 dozens 只，各自动态），列进去只会让
   // 模型反复念叨「未取到」，所以按市场类型决定要查哪些。
@@ -377,8 +407,11 @@ export async function buildContext(secid, name) {
     `最新：${fmt(last?.close)}  涨跌：${fmt(changePct)}%  振幅：${fmt(amplitude)}%`,
     `成交量：${fmt(volume, 0)} 手  成交额：${fmt(amount, 0)} 元${isBoard ? '' : `  换手：${fmt(turnover)}%`}`,
     `MA5=${fmt(last?.ma5)}  MA10=${fmt(last?.ma10)}  MA20=${fmt(last?.ma20)}`,
+    `均线排列：${trend || 'NA'}  距MA20 ${fmt(devMa20)}%`,
+    `动量：近5日 ${fmt(pctAgo(5))}%  近20日 ${fmt(pctAgo(20))}%  近60日 ${fmt(pctAgo(60))}%`,
+    `位置：60日分位 ${fmt(pos60)}%（0=区间最低，100=最高）  量能比(5日/20日) ${fmt(volRatio)}`,
     `近20日均价 ${fmt(avg(closes.slice(-20)))}  近60日均价 ${fmt(avg(closes.slice(-60)))}`,
-    `区间：60日高 ${fmt(Math.max(...closes))}  60日低 ${fmt(Math.min(...closes))}`,
+    `区间：60日高 ${fmt(hi)}  60日低 ${fmt(lo)}`,
     ...(isBoard ? [] : [q ? `总市值 ${fmt(q.marketCap, 0)}  流通市值 ${fmt(q.floatCap, 0)}` : '']),
     missing.length ? `（本次未取到：${missing.join('、')}，请勿臆测具体数值）` : '',
     '',
@@ -416,15 +449,25 @@ export function boardLines(board) {
   return out
 }
 
+// 判定打分卡：把「什么情况该看多/看空」写清楚，否则模型在无判据时会默认挑中间档「中性」。
+const VERDICT_RULE =
+  '**判定参考（先按这些客观条件权衡，再落结论，不要默认给中性）：**\n' +
+  '- 趋势/均线：MA5>MA10>MA20 且价在 MA20 上方＝多头排列（偏多）；MA5<MA10<MA20 且价在 MA20 下方＝空头排列（偏空）；再看 MA20/MA60 的斜率方向。\n' +
+  '- 动量：近 20 日、近 60 日涨跌幅为正且延续＝偏多；为负且不断创新低＝偏空。\n' +
+  '- 位置：现价在 60 日高低区间的位置，越靠上越强；>80% 视为强势但追高风险，<20% 视为弱势。\n' +
+  '- 量价：放量上涨 / 缩量回调＝健康（偏多）；放量下跌 / 缩量反弹＝偏空。\n' +
+  '- 追高风险：距 MA20 偏离越大（如 >+12%）越不宜追。\n' +
+  '多数条件同向就给**看多/看空**；只有多空信号明显冲突、方向确实不明朗时才给**中性**。\n'
+
 const SYSTEM_PROMPT =
-  '你是一名克制的证券分析师。基于给定的行情数据与资讯标题做结构化解读，用简体中文输出。' +
-  '**先分项分析、最后再下结论**：不要一上来就抛判断 —— 顶部横幅要的是你把所有分项都看过一遍之后' +
-  '综合出来的定论，不是顺口说的第一个词。\n' +
+  '你是一名**客观、观点明确**的证券分析师。基于给定的行情数据与资讯标题做结构化解读，用简体中文输出。' +
+  '有方向就明确给方向，不要用「谨慎 / 观望 / 等待信号」这类话术回避结论；只有数据确实冲突时才给中性。\n' +
+  '**先分项分析、最后再下结论**：顶部横幅要的是你把所有分项都看过一遍之后综合出来的定论，不是顺口说的第一个词。\n' +
   '**必须严格按下面的小标题顺序输出，一个都不能少，也不要另加小标题：**\n' +
   '## 短期（1-2 周）\n' +
   '## 中期（1-3 个月）\n' +
   '## 长期（6-12 个月）\n' +
-  '上面三段各给可执行的观察/应对倾向（观望 / 分批参与 / 减仓等）与**量化参考**：' +
+  '上面三段各给明确的倾向（偏多 / 偏空 / 震荡）与**量化参考**：' +
   '尽量带上支撑位、压力位、目标区间、涨跌幅幅度这类具体数字，' +
   '数字后面用「%」「倍」「点」等单位。数据里推不出来的就明说「无数据支撑」，不要编。\n' +
   '## 走势结构\n' +
@@ -436,7 +479,8 @@ const SYSTEM_PROMPT =
   '也要点出与资讯相关的风险（如事件不确定性），以及上面各段里彼此矛盾的地方。\n' +
   '## 结论\n' +
   '**这一节放在最后**，是对上面所有分项的归纳。第一行只写倾向判断，用**加粗**包住，' +
-  '必须是「看多」「中性」「看空」三者之一，例：**中性**，短期偏多但长期均线压制，方向暂不明朗。\n' +
+  '必须是「看多」「中性」「看空」三者之一，例：**看多**，均线多头排列、近 20 日动量向上，回调不破 MA20 即维持强势。\n' +
+  VERDICT_RULE +
   '随后用 2-4 句说明这个判断怎么来的 —— 要点出分项之间哪些互相支持、哪些互相矛盾，' +
   '为什么最后落在这一档，而不是把前面某一段原样抄一遍。\n' +
   '只描述数据里能看到的事实；标注为未取到的字段就直说没有，不要估算。' +
@@ -469,15 +513,27 @@ route('POST', /^\/api\/ai\/interpret$/, async (ctx) => {
   ctx.req.on('close', () => controller.abort())
 
   try {
+    // 三个快捷问题给不同侧重指令（而非只当成普通提问拼进去），让回答更聚焦。
+    const FOCUS = {
+      '短期该怎么操作？': '本次侧重**短期（1-2 周）**：结论与短期段给出更明确的偏多/偏空/震荡倾向。',
+      '中长期的逻辑是什么？': '本次侧重**中长期（1-3 个月 / 6-12 个月）**：把中期与长期逻辑讲透。',
+      '主要风险在哪？': '本次侧重**风险**：先讲清主要风险与触发条件，再给综合倾向。',
+    }
+    const focus = FOCUS[question] || ''
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `以下是该标的的行情与资讯：\n\n${context}\n\n${question ? `我的问题：${question}\n\n` : ''}请解读。`,
+        content:
+          `以下是该标的的行情与资讯：\n\n${context}\n\n` +
+          `${question ? `我的问题：${question}\n\n` : ''}` +
+          `${focus ? `回答侧重：${focus}\n\n` : ''}` +
+          '请解读。',
       },
     ]
     const result = await streamChat({
-      config: cfg,
+      // 解读要方向明确、可复现：温度压低（0.25），减少在无判据时滑向模糊的「中性」。
+      config: { ...cfg, temperature: 0.25 },
       messages,
       sessionId: crypto.randomUUID(),
       signal: controller.signal,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fetchKline, fetchQuotes, fetchStockNews } from '../api'
 import { fmtAmount, fmtCap, fmtNum, fmtSigned, fmtVolume, trendClass } from '../format'
 import KLineChart from './KLineChart'
@@ -28,6 +28,17 @@ interface Props {
   onBack: () => void
 }
 
+/** 单页根数（东财单次硬顶 600）与累计上限（≈12 年，防内存膨胀）。 */
+const KLINE_PAGE = 600
+const KLINE_MAX = 3000
+
+/** K 线按时间戳取「前一个自然日」的 YYYYMMDD，作为往前翻页的 end 游标。 */
+function prevDay(time: string): string {
+  const d = new Date(`${time.slice(0, 10)}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10).replace(/-/g, '')
+}
+
 export default function DetailView({
   selection,
   period: periodProp,
@@ -41,6 +52,8 @@ export default function DetailView({
   const [quote, setQuote] = useState<Quote | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
   const [err, setErr] = useState('')
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   // 分时（m1）仅 A 股：港/美股若带着 m1 进来（会话状态残留），就地退回日K。
   const period = selection.market === 'cn' || periodProp !== 'm1' ? periodProp : 'd'
   const intraday = period.startsWith('m') && period !== 'm'
@@ -55,14 +68,38 @@ export default function DetailView({
     const ac = new AbortController()
     setErr('')
     setKline(null)
-    fetchKline(selection.secid, period, intraday ? 480 : 240, ac.signal)
-      .then(setKline)
+    setHasMore(false)
+    fetchKline(selection.secid, period, intraday ? 480 : KLINE_PAGE, ac.signal)
+      .then((k) => {
+        setKline(k)
+        // 分钟线不做往前翻页；日/周/月拿满一页说明可能还有更早的。
+        setHasMore(!intraday && k.bars.length >= KLINE_PAGE)
+      })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === 'AbortError') return
         setErr(e instanceof Error ? e.message : 'K 线加载失败')
       })
     return () => ac.abort()
   }, [selection.secid, period, intraday])
+
+  // 往前翻页：以「最早一根的前一日」为 end 游标再拉一页，prepend 到现有 bars 前。
+  const loadMore = useCallback(() => {
+    if (intraday || loadingMore || !hasMore || !kline?.bars.length) return
+    const oldest = kline.bars[0]?.time
+    if (!oldest) return
+    setLoadingMore(true)
+    fetchKline(selection.secid, period, KLINE_PAGE, undefined, prevDay(oldest))
+      .then((page) => {
+        const seen = new Set(kline.bars.map((b) => b.time))
+        const older = page.bars.filter((b) => !seen.has(b.time))
+        const merged = [...older, ...kline.bars]
+        const bars = merged.length > KLINE_MAX ? merged.slice(merged.length - KLINE_MAX) : merged
+        setKline({ ...kline, bars })
+        setHasMore(older.length > 0 && page.bars.length >= KLINE_PAGE && bars.length < KLINE_MAX)
+      })
+      .catch(() => setHasMore(false))
+      .finally(() => setLoadingMore(false))
+  }, [intraday, loadingMore, hasMore, kline, selection.secid, period])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -132,13 +169,22 @@ export default function DetailView({
 
       {err && <div className="note err">{err}</div>}
       {kline ? (
-        <KLineChart
-          bars={kline.bars}
-          market={selection.market}
-          intraday={intraday}
-          timeshare={timeshare}
-          prevClose={quote?.prevClose ?? null}
-        />
+        <div className="kline-wrap">
+          <KLineChart
+            bars={kline.bars}
+            market={selection.market}
+            intraday={intraday}
+            timeshare={timeshare}
+            prevClose={quote?.prevClose ?? null}
+            onLoadMore={loadMore}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+          />
+          {!intraday && loadingMore && <div className="kline-more">正在加载更早的 K 线…</div>}
+          {!intraday && !hasMore && kline.bars.length > KLINE_PAGE && (
+            <div className="kline-more dim">已到最早（{kline.bars.length} 根）</div>
+          )}
+        </div>
       ) : (
         !err && <div className="kline-box skeleton" style={{ height: 380 }} aria-hidden />
       )}

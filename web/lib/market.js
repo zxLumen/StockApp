@@ -117,12 +117,14 @@ async function getBoardKline(secid, opts) {
 /** K 线。返回 `{ secid, market, name, bars, source }`。 */
 export async function getKline(secid, opts = {}) {
   if (marketOf(secid) === 'board') return getBoardKline(secid, opts)
-  // 分时（m1）只有东财提供分钟级；腾讯/新浪没有 m1，会静默退化成日线，故只试东财。
-  if (opts.period === 'm1') {
+  // 分时（m1）只有东财提供分钟级；往前翻页依赖 end 游标（腾讯/新浪不认 end，会返回最新而非更早），
+  // 两种情况都只走东财，避免静默降级成日线 / 最新数据。
+  if (opts.period === 'm1' || opts.end) {
     try {
       return { ...(await emKline(secid, opts)), source: 'eastmoney' }
     } catch (err) {
-      throw new Error(`分时暂不可用（${err instanceof Error ? err.message : String(err)}）`)
+      const what = opts.period === 'm1' ? '分时' : '更早历史'
+      throw new Error(`${what}暂不可用（${err instanceof Error ? err.message : String(err)}）`)
     }
   }
   const attempts = [

@@ -59,8 +59,18 @@ export const searchMarket = (q: string, scope?: Exclude<Market, 'fund'>, signal?
     signal,
   )
 
-export const fetchKline = (secid: string, period: string, limit = 240, signal?: AbortSignal) =>
-  get<Kline>(`/api/market/kline?secid=${encodeURIComponent(secid)}&period=${period}&limit=${limit}`, signal)
+export const fetchKline = (
+  secid: string,
+  period: string,
+  limit = 240,
+  signal?: AbortSignal,
+  end?: string,
+) =>
+  get<Kline>(
+    `/api/market/kline?secid=${encodeURIComponent(secid)}&period=${period}&limit=${limit}` +
+      (end ? `&end=${encodeURIComponent(end)}` : ''),
+    signal,
+  )
 
 export const fetchQuotes = (secids: string[], signal?: AbortSignal) =>
   get<{ items: Quote[]; source?: string; sourceLabel?: string }>(

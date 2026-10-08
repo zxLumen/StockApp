@@ -479,6 +479,16 @@ h3 {
   padding: 8px;
 }
 
+.kline-wrap {
+  position: relative;
+}
+
+.kline-more {
+  padding: 6px 2px 0;
+  font-size: 12px;
+  color: var(--zx-dim);
+}
+
 .kline-tip {
   position: absolute;
   z-index: 6;

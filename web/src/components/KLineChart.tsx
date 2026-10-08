@@ -32,6 +32,12 @@ interface Props {
   timeshare?: boolean
   /** 昨收价：分时基线与「涨跌%」参照。 */
   prevClose?: number | null
+  /** 滚到最左时请求更早历史（日/周/月）。 */
+  onLoadMore?: () => void
+  /** 是否还有更早历史。 */
+  hasMore?: boolean
+  /** 正在加载更早历史。 */
+  loadingMore?: boolean
   height?: number
   onHover?: (bar: Bar | null) => void
 }
@@ -62,6 +68,9 @@ function pctClass(v: number | null): string {
   return ''
 }
 
+/** 首屏默认显示最近多少根（留出往前拖的余地）。 */
+const DEFAULT_VISIBLE = 250
+
 interface Tip {
   x: number
   y: number
@@ -76,6 +85,9 @@ export default function KLineChart({
   intraday,
   timeshare = false,
   prevClose = null,
+  onLoadMore,
+  hasMore = false,
+  loadingMore = false,
   height = 380,
   onHover,
 }: Props) {
@@ -91,6 +103,12 @@ export default function KLineChart({
   const avgByTime = useRef(new Map<string, number>())
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
+  const loadMoreRef = useRef(onLoadMore)
+  loadMoreRef.current = onLoadMore
+  const canLoadRef = useRef(false)
+  canLoadRef.current = hasMore && !loadingMore
+  // 记录上一次渲染的「尾部 bar」：尾不变而根数变多＝往前 prepend，需要平移视窗避免跳动。
+  const prevView = useRef<{ last: string; len: number } | null>(null)
   const [tip, setTip] = useState<Tip | null>(null)
 
   // 分时只画最新交易日（服务端已过滤，这里再兜一层）；其余周期用全量多日数据。
@@ -192,10 +210,17 @@ export default function KLineChart({
       hoverRef.current?.(bar)
     })
 
+    // 滚到最左（可视区间起点 < 3）且有更早历史时，请求上一页。
+    const onRange = (range: { from: number; to: number } | null) => {
+      if (range && range.from < 3 && canLoadRef.current) loadMoreRef.current?.()
+    }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange)
+
     chartRef.current = chart
     candleRef.current = candle
     volumeRef.current = volume
     return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange)
       chart.remove()
       chartRef.current = null
       candleRef.current = null
@@ -329,7 +354,20 @@ export default function KLineChart({
         )
       }
     }
-    chart.timeScale().fitContent()
+    // prepend（尾部 bar 不变、根数变多）时把可视区间整体右移，画面不跳；换票/换周期则重置视窗。
+    const lastTime = viewBars.length ? String(viewBars[viewBars.length - 1].time) : ''
+    const prev = prevView.current
+    if (prev && prev.last === lastTime && viewBars.length > prev.len) {
+      const delta = viewBars.length - prev.len
+      const lr = chart.timeScale().getVisibleLogicalRange()
+      if (lr) chart.timeScale().setVisibleLogicalRange({ from: lr.from + delta, to: lr.to + delta })
+    } else if (!timeshare && viewBars.length > DEFAULT_VISIBLE) {
+      // 默认只显示最近 ~250 根（像同花顺/东财），左侧留出「往前拖」的余地，拖到边再自动加载更早。
+      chart.timeScale().setVisibleLogicalRange({ from: viewBars.length - DEFAULT_VISIBLE, to: viewBars.length + 2 })
+    } else {
+      chart.timeScale().fitContent()
+    }
+    prevView.current = { last: lastTime, len: viewBars.length }
   }, [viewBars, intraday, timeshare, colors.up, colors.down, prevClose])
 
   const boxW = boxRef.current?.clientWidth ?? 0
