@@ -11,6 +11,7 @@ import type {
   Kline,
   Market,
   NewsItem,
+  PositionsPayload,
   Quote,
   RecommendPayload,
   SearchItem,
@@ -124,6 +125,9 @@ export const fetchRecommend = (date?: string, chain: RecommendChain = 'dual', si
 
 export const fetchRecommendDates = (chain: RecommendChain = 'dual', signal?: AbortSignal) =>
   get<{ dates: string[] }>(`/api/recommend/dates${chain !== 'dual' ? `?chain=${chain}` : ''}`, signal)
+
+/** 模拟推荐持仓：全部链路 × 原始/AI 两套（服务端一次算全 + 缓存）。 */
+export const fetchPositions = (signal?: AbortSignal) => get<PositionsPayload>('/api/positions', signal)
 
 export const searchFunds = (q: string, signal?: AbortSignal) =>
   get<{ items: { code: string; name: string; type: string | null }[] }>(
@@ -321,4 +325,4 @@ export function interpret(
   })()
 }
 
-export type { Bar, Board, FundItem, Kline, NewsItem, Quote, RecommendPayload, SearchItem, WatchItem }
+export type { Bar, Board, FundItem, Kline, NewsItem, PositionsPayload, Quote, RecommendPayload, SearchItem, WatchItem }

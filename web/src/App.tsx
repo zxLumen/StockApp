@@ -8,6 +8,7 @@ import FundHome from './components/FundHome'
 import BoardHome from './components/BoardHome'
 import BoardView from './components/BoardView'
 import PickView from './components/PickView'
+import PositionsView from './components/PositionsView'
 import Sidebar from './components/Sidebar'
 import SettingsPanel from './components/SettingsPanel'
 import { addWatch, fetchStatus, fetchWatchlist, removeWatch, fetchQuotes } from './api'
@@ -132,7 +133,7 @@ export default function App() {
         <div className="brand">股票速览</div>
         <MarketTabs value={market} onChange={changeMarket} />
         <div className="top-search">
-          <SearchBox market={market} onPick={pick} />
+          <SearchBox market={market === 'positions' ? 'cn' : market} onPick={pick} />
         </div>
         {status?.owner && (
           <button className="btn ghost" title="AI 设置" onClick={() => setShowSettings(true)}>
@@ -182,6 +183,10 @@ export default function App() {
               onPick={({ code, name, secid }) =>
                 pick({ kind: 'stock', secid, code, name, market: 'cn' })
               }
+            />
+          ) : market === 'positions' ? (
+            <PositionsView
+              onPick={({ code, name, secid }) => setSelection({ kind: 'stock', secid, code, name, market: 'cn' })}
             />
           ) : (
             <HomeView market={stockMarket} onPick={pick} />

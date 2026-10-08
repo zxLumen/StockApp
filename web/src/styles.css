@@ -2103,3 +2103,143 @@ button.member-row:hover {
   background: rgba(76, 139, 245, 0.2);
   color: #cfe1ff;
 }
+
+/* ---------- 模拟推荐持仓 ---------- */
+.pos-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pos-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pos-head h2 {
+  margin: 0 6px 0 0;
+  font-size: 18px;
+}
+.pos-mode {
+  display: inline-flex;
+  border: 1px solid var(--zx-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pos-mode-btn {
+  background: transparent;
+  border: 0;
+  color: var(--zx-dim);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pos-mode-btn.on {
+  background: var(--zx-up);
+  color: #fff;
+}
+.pos-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel);
+}
+.pos-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pos-k {
+  font-size: 12px;
+  color: var(--zx-dim);
+}
+.pos-cell b {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.pos-chart-wrap {
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel);
+  padding: 8px 10px 4px;
+}
+.pos-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.pos-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  padding: 2px 2px 6px;
+}
+.pos-section {
+  margin-top: 4px;
+}
+.pos-list {
+  border: 1px solid var(--zx-border);
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel);
+  overflow: hidden;
+}
+.pos-row {
+  display: grid;
+  grid-template-columns: 2.2fr 1fr 0.9fr 0.9fr 0.8fr 0.9fr 1.1fr 0.7fr;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--zx-border);
+  cursor: pointer;
+}
+.pos-row.trade {
+  grid-template-columns: 1fr 0.6fr 2fr 1fr 0.9fr 1.1fr 1fr;
+  cursor: default;
+}
+.pos-row:last-child {
+  border-bottom: 0;
+}
+.pos-row:not(.pos-row-head):hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.pos-row-head {
+  color: var(--zx-dim);
+  cursor: default;
+  background: rgba(255, 255, 255, 0.02);
+}
+.pos-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pos-pct {
+  font-weight: 600;
+}
+.pos-tag {
+  font-style: normal;
+  font-size: 11px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.pos-tag-ai {
+  background: rgba(74, 142, 240, 0.16);
+  color: #7aa7f0;
+}
+.pos-tag-ext {
+  background: rgba(232, 163, 61, 0.18);
+  color: #e8b76a;
+}
+.trade-buy {
+  color: var(--zx-up);
+}
+.trade-sell {
+  color: var(--zx-down);
+}

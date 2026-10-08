@@ -1,5 +1,5 @@
 /** 顶级页签。`board` / `pick` 与沪深港 / 美股齐平，不是某个市场下的子页。 */
-export type Market = 'board' | 'pick' | 'cn' | 'us' | 'fund'
+export type Market = 'board' | 'pick' | 'positions' | 'cn' | 'us' | 'fund'
 export type BoardKind = 'industry' | 'concept'
 /** 中证一级行业（官方口径的 10 个，与同花顺分类无法互相映射，独立成类）。 */
 export type CsiBoardKind = 'csi'
@@ -313,3 +313,92 @@ export interface AiUsage {
 }
 
 export type AiState = 'idle' | 'thinking' | 'working' | 'busy' | 'success' | 'error' | 'blocked'
+// ── 模拟推荐持仓 ────────────────────────────────────────────────────────────
+export type PositionChain = 'dual' | 'A' | 'B'
+
+export interface PositionItem {
+  secid: string
+  code: string
+  name: string
+  /** 来源推荐生效日 */
+  recDate: string
+  /** 买入日（= 推荐基准日） */
+  buyDate: string
+  buyPrice: number | null
+  shares: number
+  /** 实际成本（shares × buyPrice，≈1 万） */
+  cost: number
+  /** 最新价（持仓中=现价；已了结=卖出价） */
+  lastPrice: number | null
+  /** 自买入涨跌（%） */
+  retPct: number | null
+  /** 盈亏金额 */
+  pnl: number | null
+  /** 原始持有交易日数 */
+  holdDays: number
+  /** 生效持有交易日数（AI 延长后） */
+  effHoldDays: number
+  /** 已了结时的卖出日 */
+  sellDate: string | null
+  sellPrice: number | null
+  /** 预计/实际卖出日 */
+  expectedSellDate: string | null
+  reason: 'cycle' | 'ai' | null
+  extended: boolean
+  terminated: boolean
+  open: boolean
+}
+
+export interface PositionTrade {
+  date: string
+  code: string
+  name: string
+  secid: string
+  dir: 'buy' | 'sell'
+  shares: number
+  price: number | null
+  amount: number
+  pnl?: number | null
+  reason?: 'cycle' | 'ai' | null
+}
+
+export interface PositionSummary {
+  count: number
+  openCount: number
+  closedCount: number
+  invested: number
+  realized: number
+  unrealized: number
+  total: number
+  returnPct: number | null
+  winPct: number | null
+}
+
+export interface PositionMode {
+  summary: PositionSummary
+  open: PositionItem[]
+  closed: PositionItem[]
+  trades: PositionTrade[]
+}
+
+export interface PositionEquityPoint {
+  date: string
+  /** 原始组合累计收益率（%） */
+  orig: number | null
+  /** AI 动态组合累计收益率（%） */
+  ai: number | null
+  /** 沪深300 累计收益率（%） */
+  bench: number | null
+}
+
+export interface PositionsChain {
+  orig: PositionMode
+  ai: PositionMode
+  equity: PositionEquityPoint[]
+}
+
+export interface PositionsPayload {
+  benchName: string
+  asOf: string
+  chains: Record<PositionChain, PositionsChain>
+}

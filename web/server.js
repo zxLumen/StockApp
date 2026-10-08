@@ -24,6 +24,7 @@ import {
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
 import { loadRecommend, listRecommendDates, enrichRecommend, recommendTtlMs, isAshareSession } from './lib/recommend.js'
+import { buildPositionsAll } from './lib/positions.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -254,6 +255,9 @@ route('GET', /^\/api\/recommend$/, async (ctx) => {
   // 静态榜单 + 实时盈亏列 + 今日应卖出（行情合并成一次，见 enrichRecommend）。
   return enrichRecommend(DATA_DIR, data, { chain, ttlMs: recommendTtlMs() })
 })
+
+// 模拟推荐持仓：全部链路 × 原始/AI 两套（结果整体缓存 + 后台预热）。
+route('GET', /^\/api\/positions$/, async () => buildPositionsAll(DATA_DIR))
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))
 
@@ -697,6 +701,12 @@ async function warmRecommend() {
       await warmChain(chain, dates.slice(0, 1))
       warmedLatest.set(chain, dates[0])
     }
+  }
+  // 模拟持仓（全链路 × 两套）：一并预热，首个访客即命中热缓存。
+  try {
+    await buildPositionsAll(DATA_DIR, { ttlMs: recommendTtlMs() })
+  } catch {
+    /* 预热失败不影响服务 */
   }
 }
 setInterval(() => void warmRecommend(), WARM_INTERVAL_MS).unref()
