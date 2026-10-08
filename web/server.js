@@ -23,7 +23,7 @@ import {
 } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
-import { loadRecommend, listRecommendDates, attachPerformance } from './lib/recommend.js'
+import { loadRecommend, listRecommendDates, attachPerformance, dueOn, pctFromPick } from './lib/recommend.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -252,7 +252,24 @@ route('GET', /^\/api\/recommend$/, async (ctx) => {
   const data = await loadRecommend(DATA_DIR, date, chain)
   if (!data) return null
   // 补上「自推荐日到最新」的涨跌（公开数据，任何人可见）
-  return attachPerformance(data)
+  const withPerf = await attachPerformance(data)
+  // 按历史推荐的 AI 持有周期，列出「到期日 = 本页推荐生效日」的股票（随 chain 切换）。
+  const due = await dueOn(DATA_DIR, withPerf.date, { chain })
+  let dueOnItems = due
+  if (due.length) {
+    try {
+      const secids = [...new Set(due.map((d) => d.secid))]
+      const { items } = await getQuotes(secids)
+      const qm = new Map(items.map((q) => [q.secid, q]))
+      dueOnItems = due.map((d) => {
+        const price = qm.get(d.secid)?.price ?? null
+        return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
+      })
+    } catch {
+      /* 行情挂了就只给周期信息，不阻断 */
+    }
+  }
+  return { ...withPerf, dueOn: dueOnItems }
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))

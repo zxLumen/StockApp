@@ -71,3 +71,26 @@ export function nextTradingDay(iso) {
   }
   throw new Error(`nextTradingDay: 找不到下一个交易日（输入 ${iso}）`)
 }
+
+/**
+ * 上一交易日：从 iso 前一天起，跳过周末与法定节假日。iso 本身是交易日时返回它自己。
+ * 用于把可能落在节假日（脚本遇节假日仍会触发）的 basisDate 对齐到「≤ 它的最后一个交易日」。
+ */
+export function prevTradingDay(iso) {
+  let d = iso
+  for (let i = 0; i < 90; i += 1) {
+    if (isTradingDay(d)) return d
+    d = addDays(d, -1)
+  }
+  throw new Error(`prevTradingDay: 找不到上一个交易日（输入 ${iso}）`)
+}
+
+/**
+ * 从 iso 起往后第 n 个交易日（n≥0，0 返回对齐后的交易日本身）。
+ * 与推荐的 holdReturn 同口径：买入基准在基准交易日收盘，持有 n 个交易日后收盘卖出。
+ */
+export function addTradingDays(iso, n) {
+  let d = prevTradingDay(iso)
+  for (let i = 0; i < n; i += 1) d = nextTradingDay(d)
+  return d
+}

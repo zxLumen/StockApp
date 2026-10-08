@@ -13,7 +13,7 @@ import { computeFactors, compositeScores, regimeTilt } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
 import { tiltThreshold, selectConfig } from './model-config.js'
-import { nextTradingDay } from './trading-days.js'
+import { nextTradingDay, addTradingDays } from './trading-days.js'
 
 export { nextTradingDay }
 
@@ -895,18 +895,77 @@ export const isHiddenRecommendDate = (d) => d >= HIDDEN_RECOMMEND_FROM && d <= H
 export const CHAIN_SUBDIR = { dual: 'recommend', A: FORWARD_A_DIR, B: FORWARD_B_DIR }
 const chainSubdir = (chain) => CHAIN_SUBDIR[chain] || 'recommend'
 
-export async function listRecommendDates(dataDir, chain = 'dual') {
+export async function listRecommendDates(dataDir, chain = 'dual', { includeHidden = false } = {}) {
   try {
     const files = await fsp.readdir(path.join(dataDir, chainSubdir(chain)))
     return files
       .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
       .map((f) => f.slice(0, 10))
-      .filter((d) => !isHiddenRecommendDate(d))
+      .filter((d) => includeHidden || !isHiddenRecommendDate(d))
       .sort()
       .reverse()
   } catch {
     return []
   }
+}
+
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/** ISO 日期减 n 个自然日（本地实现，避免依赖 trading-days 的内部 helper）。 */
+function dateMinus(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d - n))
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`
+}
+
+/**
+ * 「按历史推荐的 AI 持有周期，指定日应卖出」的股票。
+ *
+ * 到期日 = basisDate 往后第 holdDays 个交易日（与 holdReturn / 页面「按 AI 持有周期」同口径）。
+ * 只收**到期日恰好等于 targetDate** 的（不含逾期）；同票多天命中**合并为一条**，
+ * 取最早推荐日（持仓最久）展示，命中次数记在 `times`。扫描范围限定在 targetDate 前
+ * 约 lookbackDays 天（holdDays ≤ 60，无需更早）。
+ */
+export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays = 140 } = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || ''))) return []
+  const from = dateMinus(targetDate, lookbackDays)
+  const dates = (await listRecommendDates(dataDir, chain, { includeHidden: true })).filter(
+    (d) => d >= from && d <= targetDate,
+  )
+  const byStock = new Map()
+  for (const d of dates) {
+    const payload = await readJson(path.join(dataDir, chainSubdir(chain), `${d}.json`), null)
+    if (!payload || !Array.isArray(payload.top)) continue
+    const basis = payload.basisDate || d
+    for (const s of payload.top) {
+      const holdDays = s.ai?.holdDays ?? s.holdDays
+      if (!s.secid || holdDays == null) continue
+      let sell
+      try {
+        sell = addTradingDays(basis, Number(holdDays))
+      } catch {
+        continue
+      }
+      if (sell !== targetDate) continue
+      const item = {
+        secid: s.secid,
+        code: s.code,
+        name: s.name,
+        holdDays: Number(holdDays),
+        fromDate: payload.date || d,
+        basisDate: basis,
+        pickPrice: s.price ?? null,
+        holdReason: s.ai?.holdReason ?? '',
+      }
+      const prev = byStock.get(s.secid)
+      if (!prev) byStock.set(s.secid, { ...item, times: 1 })
+      else {
+        prev.times += 1
+        if (item.fromDate < prev.fromDate) byStock.set(s.secid, { ...item, times: prev.times })
+      }
+    }
+  }
+  return [...byStock.values()].sort((a, b) => (a.fromDate < b.fromDate ? -1 : a.fromDate > b.fromDate ? 1 : 0))
 }
 
 /** 读某天（默认最新）的推荐文件；没有就返回 null。chain: dual（默认）| A | B。 */

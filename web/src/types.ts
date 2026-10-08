@@ -150,6 +150,27 @@ export interface RecommendStock {
   sinceIdxPct?: number | null
 }
 
+/** 「按历史推荐周期，本页生效日应卖出」的一条（服务端 dueOn 计算）。 */
+export interface DueItem {
+  secid: string
+  code: string
+  name: string
+  /** 该历史推荐的 AI 持有交易日数 */
+  holdDays: number
+  /** 来源推荐的生效日（合并时取最早） */
+  fromDate: string
+  basisDate: string
+  /** 来源推荐日基准价 */
+  pickPrice: number | null
+  holdReason?: string
+  /** 同票被多天推荐且同日到期时的命中次数 */
+  times: number
+  /** 现价（服务端补） */
+  price?: number | null
+  /** 自推荐日基准价到现在的涨跌（%）（服务端补） */
+  sincePct?: number | null
+}
+
 export interface RecommendPayload {
   /** 推荐生效日（生成日的下一交易日） */
   date: string
@@ -160,6 +181,8 @@ export interface RecommendPayload {
   benchName?: string
   model: string
   pool: { size: number; filtered?: number; candidates: number }
+  /** 按历史推荐周期、到期日 = 本页生效日 的应卖出股票（服务端补） */
+  dueOn?: DueItem[]
   /** regime 双链路的择链判据（单链路产物无此字段） */
   regime?: {
     /** 当日沪深300 动量倾斜 tilt（0=纯反转，1=强动量） */

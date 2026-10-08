@@ -398,6 +398,36 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
         )}
       </div>
 
+      {data.dueOn && data.dueOn.length > 0 && (
+        <div className="rec-due">
+          <div className="rec-due-head">
+            <span className="rec-due-title">⏰ {data.date} 应卖出</span>
+            <span className="dim small">
+              按历史推荐的 AI 持有周期到期（{data.date}）· 共 {data.dueOn.length} 只
+            </span>
+          </div>
+          <ul className="rec-due-list">
+            {data.dueOn.map((d) => (
+              <li key={d.secid}>
+                <button
+                  type="button"
+                  className="rec-due-item"
+                  onClick={() => onPick({ code: d.code, name: d.name, secid: d.secid })}
+                >
+                  <span className="rec-due-name">{d.name}</span>
+                  <span className="dim small">{d.code}</span>
+                  <span className="rec-due-meta">
+                    推荐 {d.fromDate} · 持有 {d.holdDays} 日{d.times > 1 ? ` ×${d.times}` : ''}
+                  </span>
+                  <span className="rec-due-num">现价 {fmt(d.price)}</span>
+                  <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="rec-perf">
         <div className="rec-perf-lead">
           当日推荐整体盈亏
