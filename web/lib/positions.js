@@ -28,12 +28,12 @@ import { addTradingDays, prevTradingDay } from './trading-days.js'
 const ACTIONS_FILE = 'recommend-actions.json'
 const PER_STOCK = 10000
 
-/** 目标成本 1 万：低价股整手取整（≥1 手）；一手就超 1 万的高价股用小数股。 */
+/** 目标成本 1 万，**股数一律取整**：低价股整手（100 股/手）；一手就超 1 万的高价股取整股。 */
 export function sharesFor(price) {
   const p = Number(price)
   if (!(p > 0)) return 0
   if (p * 100 <= PER_STOCK) return Math.max(100, Math.round(PER_STOCK / p / 100) * 100)
-  return Number((PER_STOCK / p).toFixed(4))
+  return Math.max(1, Math.round(PER_STOCK / p))
 }
 
 const round2 = (n) => (n == null || !Number.isFinite(Number(n)) ? null : Number(Number(n).toFixed(2)))
