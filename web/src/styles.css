@@ -485,7 +485,8 @@ h3 {
   pointer-events: none;
   min-width: 140px;
   padding: 6px 9px;
-  background: rgba(16, 20, 30, 0.97);
+  /* 微透：能透出后面的曲线/柱子，字仍清楚（对比过 A–F 透明度档） */
+  background: rgba(16, 20, 30, 0.78);
   border: 1px solid var(--zx-border);
   border-radius: 8px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
