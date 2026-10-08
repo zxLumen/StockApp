@@ -8,15 +8,30 @@ import {
   LineStyle,
   createChart,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type Time,
 } from 'lightweight-charts'
 import type { Bar } from '../types'
+import {
+  SESSION_SLOTS,
+  avgPrices,
+  barDay,
+  lastDayBars,
+  sessionSlot,
+  slotLabel,
+  slotTs,
+  tsToSlot,
+} from '../lib/intraday'
 
 interface Props {
   bars: Bar[]
   market: string
   intraday: boolean
+  /** 分时（当日 1 分钟折线）：价格线 + 均价线 + 昨收基线，X 轴压缩午休铺满 09:30–15:00。 */
+  timeshare?: boolean
+  /** 昨收价：分时基线与「涨跌%」参照。 */
+  prevClose?: number | null
   height?: number
   onHover?: (bar: Bar | null) => void
 }
@@ -33,17 +48,6 @@ function toTime(raw: string, intraday: boolean): Time {
   return raw as Time
 }
 
-/** 分钟线只画「最新交易日」开盘后的那一段（专业软件「分时」口径）；日/周/月不动。 */
-function lastSessionBars(bars: Bar[]): Bar[] {
-  let last = ''
-  for (const b of bars) {
-    const d = b.time.slice(0, 10)
-    if (d > last) last = d
-  }
-  if (!last) return bars
-  return bars.filter((b) => b.time.slice(0, 10) === last)
-}
-
 /** 蜡烛配色：A股红涨绿跌，美股绿涨红跌（与 format.ts 的 trendClass 同一口径）。 */
 export const PALETTE = {
   cn: { up: '#e0454b', down: '#12a05c' },
@@ -58,20 +62,39 @@ function pctClass(v: number | null): string {
   return ''
 }
 
-export default function KLineChart({ bars, market, intraday, height = 380, onHover }: Props) {
+interface Tip {
+  x: number
+  y: number
+  bar: Bar
+  avg: number | null
+  chgPct: number | null
+}
+
+export default function KLineChart({
+  bars,
+  market,
+  intraday,
+  timeshare = false,
+  prevClose = null,
+  height = 380,
+  onHover,
+}: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const maRefs = useRef<Record<string, ISeriesApi<'Line'> | null>>({})
+  const priceRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const avgRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const baseLineRef = useRef<IPriceLine | null>(null)
   const byTime = useRef(new Map<string, Bar>())
+  const avgByTime = useRef(new Map<string, number>())
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
-  const bridgeRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const [tip, setTip] = useState<{ x: number; y: number; bar: Bar } | null>(null)
+  const [tip, setTip] = useState<Tip | null>(null)
 
-  // 分时只取最新交易日的时段（多日分钟数据堆一起太乱）；日/周/月原样。
-  const viewBars = useMemo(() => (intraday ? lastSessionBars(bars) : bars), [bars, intraday])
+  // 分时只画最新交易日（服务端已过滤，这里再兜一层）；其余周期用全量多日数据。
+  const viewBars = useMemo(() => (timeshare ? lastDayBars(bars) : bars), [bars, timeshare])
 
   const colors = market === 'us' ? PALETTE.us : PALETTE.cn
 
@@ -131,27 +154,41 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       })
     }
 
-    // 分时「补全当天轴」的透明桥接线：lightweight-charts 的轴只到数据的最大时间，
-    // 用一条无色的线在 09:30→15:00 各放一个点把时间轴撑满，下午没数据也显示整段刻度。
-    const bridge = chart.addSeries(LineSeries, {
-      color: 'rgba(0,0,0,0)',
+    // 分时：白色价格线 + 黄色均价线（非分时时清空、不显示）。
+    priceRef.current = chart.addSeries(LineSeries, {
+      color: '#e6e8ee',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: false,
+    })
+    avgRef.current = chart.addSeries(LineSeries, {
+      color: '#e8a33d',
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
-    bridgeRef.current = bridge
 
     chart.subscribeCrosshairMove((param) => {
-      // param.point 只在鼠标停留在图表上时有值；离开或停在空区（下午）就没有目标 bar。
+      // param.point 只在鼠标停留在图表上时有值；离开或停在空区就没有目标 bar。
       if (!param.point) {
         setTip(null)
         hoverRef.current?.(null)
         return
       }
-      const bar = param.time ? (byTime.current.get(String(param.time)) ?? null) : null
-      if (bar) setTip({ x: param.point.x, y: param.point.y, bar })
-      else setTip(null)
+      const key = param.time ? String(param.time) : ''
+      const bar = key ? (byTime.current.get(key) ?? null) : null
+      if (bar) {
+        const avg = avgByTime.current.get(key) ?? null
+        const chgPct =
+          prevClose != null && prevClose > 0 && bar.close != null
+            ? Number((((bar.close - prevClose) / prevClose) * 100).toFixed(2))
+            : bar.changePct
+        setTip({ x: param.point.x, y: param.point.y, bar, avg, chgPct })
+      } else {
+        setTip(null)
+      }
       hoverRef.current?.(bar)
     })
 
@@ -164,10 +201,12 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       candleRef.current = null
       volumeRef.current = null
       maRefs.current = {}
-      bridgeRef.current = null
+      priceRef.current = null
+      avgRef.current = null
+      baseLineRef.current = null
     }
-    // 建图只做一次：配色变化交给下面单独的 applyOptions，周期切换在 setData 时处理
-  }, [intraday])
+    // 建图在「分钟线与否」「分时与否」变化时重建：分时的自定义轴格式化只在分时图实例上设置
+  }, [intraday, timeshare])
 
   // 配色随市场切换（A 股红涨绿跌 / 美股绿涨红跌）
   useEffect(() => {
@@ -182,56 +221,120 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
   useEffect(() => {
     const candle = candleRef.current
     const volume = volumeRef.current
-    if (!candle || !volume) return
+    const price = priceRef.current
+    const avg = avgRef.current
+    const chart = chartRef.current
+    if (!candle || !volume || !price || !avg || !chart) return
 
-    byTime.current = new Map(viewBars.map((b) => [String(toTime(b.time, intraday)), b]))
-    candle.setData(
-      viewBars.map((b) => ({
-        time: toTime(b.time, intraday),
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
-    )
-    volume.setData(
-      viewBars.map((b) => ({
-        time: toTime(b.time, intraday),
-        value: b.volume ?? 0,
-        color: b.close >= b.open ? `${colors.up}66` : `${colors.down}66`,
-      })),
-    )
-    for (const key of ['ma5', 'ma10', 'ma20'] as const) {
-      const series = maRefs.current[key]
-      if (!series) continue
-      series.setData(
-        viewBars
-          .filter((b) => b[key] != null)
-          .map((b) => ({ time: toTime(b.time, intraday), value: b[key] as number })),
-      )
+    // 清掉上一轮的分时基线（换票 / 换周期都要重建）
+    if (baseLineRef.current) {
+      price.removePriceLine(baseLineRef.current)
+      baseLineRef.current = null
     }
+    byTime.current = new Map()
+    avgByTime.current = new Map()
 
-    // 分时：桥接线撑满当天 09:30→15:00（收盘后 15:00 那根本就在数据里，设了也不改变范围）。
-    const bridge = bridgeRef.current
-    if (bridge) {
-      const last = viewBars[viewBars.length - 1]
-      if (intraday && last?.close != null) {
-        const day = last.time.slice(0, 10)
-        const t = (v: string) => Math.round(Date.parse(`${v}Z`) / 1000) as Time
-        bridge.setData([
-          { time: t(`${day}T09:30:00`), value: last.close },
-          { time: t(`${day}T15:00:00`), value: last.close },
-        ])
+    if (timeshare) {
+      const day = viewBars.length ? barDay(viewBars[viewBars.length - 1].time) : ''
+      // 分时图：蜡烛与 MA 清空；价格/均价按「槽位伪时间」铺开，两端补点撑满 09:30→15:00。
+      candle.setData([])
+      for (const key of ['ma5', 'ma10', 'ma20'] as const) maRefs.current[key]?.setData([])
+      if (day && viewBars.length) {
+        const first = viewBars[0]
+        const priceMap = new Map<number, number>()
+        priceMap.set(slotTs(day, 0), first.open ?? first.close ?? 0)
+        const avgs = avgPrices(viewBars)
+        // lightweight-charts 是**等距（序数）轴**：每个数据点占等宽，不看真实时间间隔。
+        // 所以要把全天 0..240 每一分钟都补一个点（空槽 value=0 不可见），轴才会按分钟等宽、
+        // 铺满 09:30–15:00；真实价线只落在有数据的槽位，右侧自然留白。
+        const volMap = new Map<number, { value: number; up: boolean }>()
+        for (let slot = 0; slot < SESSION_SLOTS; slot += 1) volMap.set(slotTs(day, slot), { value: 0, up: false })
+        viewBars.forEach((b, i) => {
+          const slot = sessionSlot(b.time)
+          if (slot == null) return
+          const ts = slotTs(day, slot)
+          if (b.close != null) {
+            priceMap.set(ts, b.close)
+            byTime.current.set(String(ts), b)
+          }
+          if (avgs[i] != null) {
+            avgByTime.current.set(String(ts), avgs[i] as number)
+          }
+          volMap.set(ts, { value: b.volume ?? 0, up: b.close >= b.open })
+        })
+        const sorted = [...priceMap].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time: time as Time, value }))
+        price.setData(sorted)
+        avg.setData(
+          [...avgByTime.current]
+            .map(([k, v]) => ({ time: Number(k) as Time, value: v }))
+            .sort((a, b) => Number(a.time) - Number(b.time)),
+        )
+        volume.setData(
+          [...volMap]
+            .sort((a, b) => a[0] - b[0])
+            .map(([time, v]) => ({
+              time: time as Time,
+              value: v.value,
+              color: v.up ? `${colors.up}66` : `${colors.down}66`,
+            })),
+        )
+        // 轴刻度：把槽位伪时间反算成压缩午休后的真实墙钟（09:30 / 11:30 / 13:00 / 15:00）。
+        // 轴刻度用 timeScale.tickMarkFormatter，十字光标标签用 localization.timeFormatter。
+        const label = (time: Time) => slotLabel(tsToSlot(day, Number(time)))
+        chart.applyOptions({ timeScale: { tickMarkFormatter: label }, localization: { timeFormatter: label } })
+        // 昨收基线（0% 参照）
+        if (prevClose != null && prevClose > 0) {
+          baseLineRef.current = price.createPriceLine({
+            price: prevClose,
+            color: '#8a94a6',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: '',
+          })
+        }
       } else {
-        bridge.setData([])
+        price.setData([])
+        avg.setData([])
+        volume.setData([])
+      }
+    } else {
+      // 蜡烛（多日全量）：分时线清空。
+      price.setData([])
+      avg.setData([])
+      byTime.current = new Map(viewBars.map((b) => [String(toTime(b.time, intraday)), b]))
+      candle.setData(
+        viewBars.map((b) => ({
+          time: toTime(b.time, intraday),
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+        })),
+      )
+      volume.setData(
+        viewBars.map((b) => ({
+          time: toTime(b.time, intraday),
+          value: b.volume ?? 0,
+          color: b.close >= b.open ? `${colors.up}66` : `${colors.down}66`,
+        })),
+      )
+      for (const key of ['ma5', 'ma10', 'ma20'] as const) {
+        const series = maRefs.current[key]
+        if (!series) continue
+        series.setData(
+          viewBars
+            .filter((b) => b[key] != null)
+            .map((b) => ({ time: toTime(b.time, intraday), value: b[key] as number })),
+        )
       }
     }
-    chartRef.current?.timeScale().fitContent()
-  }, [viewBars, intraday, colors.up, colors.down])
+    chart.timeScale().fitContent()
+  }, [viewBars, intraday, timeshare, colors.up, colors.down, prevClose])
 
   const boxW = boxRef.current?.clientWidth ?? 0
   const boxH = boxRef.current?.clientHeight ?? height
-  const tipW = 158
+  const tipW = 168
 
   return (
     <div className="kline">
@@ -240,41 +343,66 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
           className="kline-tip"
           style={{
             left: tip.x + 14 + tipW > boxW ? Math.max(6, tip.x - tipW - 8) : tip.x + 14,
-            top: Math.max(6, Math.min(tip.y - 6, boxH - 216)),
+            top: Math.max(6, Math.min(tip.y - 6, boxH - (timeshare ? 168 : 216))),
           }}
         >
           <div className="kline-tip-time">{tip.bar.time}</div>
-          {(
-            [
-              ['开', tip.bar.open, null],
-              ['高', tip.bar.high, null],
-              ['低', tip.bar.low, null],
-              ['收', tip.bar.close, tip.bar.changePct],
-              ['涨跌', null, tip.bar.changePct],
-              ['量', tip.bar.volume, null],
-            ] as [string, number | null, number | null][]
-          ).map(([label, value, tone]) => (
-            <div className="kline-tip-row" key={label}>
-              <span>{label}</span>
-              <b className={tone == null ? '' : pctClass(tone)}>
-                {tone != null
-                  ? tone >= 0
-                    ? `+${tone.toFixed(2)}%`
-                    : `${tone.toFixed(2)}%`
-                  : value != null
-                    ? value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-                    : '—'}
-              </b>
-            </div>
-          ))}
-          <div className="kline-tip-row kline-tip-ma">
-            <span>MA5</span>
-            <b>{tip.bar.ma5 != null ? tip.bar.ma5.toFixed(2) : '—'}</b>
-            <span>MA10</span>
-            <b>{tip.bar.ma10 != null ? tip.bar.ma10.toFixed(2) : '—'}</b>
-            <span>MA20</span>
-            <b>{tip.bar.ma20 != null ? tip.bar.ma20.toFixed(2) : '—'}</b>
-          </div>
+          {timeshare ? (
+            <>
+              <div className="kline-tip-row">
+                <span>价格</span>
+                <b>{tip.bar.close != null ? tip.bar.close.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—'}</b>
+              </div>
+              <div className="kline-tip-row">
+                <span>涨跌</span>
+                <b className={pctClass(tip.chgPct)}>
+                  {tip.chgPct != null ? `${tip.chgPct >= 0 ? '+' : ''}${tip.chgPct.toFixed(2)}%` : '—'}
+                </b>
+              </div>
+              <div className="kline-tip-row">
+                <span>均价</span>
+                <b>{tip.avg != null ? tip.avg.toFixed(2) : '—'}</b>
+              </div>
+              <div className="kline-tip-row">
+                <span>量</span>
+                <b>{tip.bar.volume != null ? tip.bar.volume.toLocaleString('zh-CN') : '—'}</b>
+              </div>
+            </>
+          ) : (
+            <>
+              {(
+                [
+                  ['开', tip.bar.open, null],
+                  ['高', tip.bar.high, null],
+                  ['低', tip.bar.low, null],
+                  ['收', tip.bar.close, tip.bar.changePct],
+                  ['涨跌', null, tip.bar.changePct],
+                  ['量', tip.bar.volume, null],
+                ] as [string, number | null, number | null][]
+              ).map(([label, value, tone]) => (
+                <div className="kline-tip-row" key={label}>
+                  <span>{label}</span>
+                  <b className={tone == null ? '' : pctClass(tone)}>
+                    {tone != null
+                      ? tone >= 0
+                        ? `+${tone.toFixed(2)}%`
+                        : `${tone.toFixed(2)}%`
+                      : value != null
+                        ? value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+                        : '—'}
+                  </b>
+                </div>
+              ))}
+              <div className="kline-tip-row kline-tip-ma">
+                <span>MA5</span>
+                <b>{tip.bar.ma5 != null ? tip.bar.ma5.toFixed(2) : '—'}</b>
+                <span>MA10</span>
+                <b>{tip.bar.ma10 != null ? tip.bar.ma10.toFixed(2) : '—'}</b>
+                <span>MA20</span>
+                <b>{tip.bar.ma20 != null ? tip.bar.ma20.toFixed(2) : '—'}</b>
+              </div>
+            </>
+          )}
         </div>
       )}
       <div ref={boxRef} className="kline-box" style={{ height }} />

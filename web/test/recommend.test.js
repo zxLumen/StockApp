@@ -17,6 +17,7 @@ import {
   resolveChainPayload,
   forwardArchive,
   archiveForwardChains,
+  benchReturns,
   FORWARD_A_DIR,
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
@@ -186,3 +187,34 @@ test('normalizeHoldDays：越界钳到 [1,60]，非法/缺失回落兜底 5', ()
   assert.equal(normalizeHoldDays(999), 60, '上限 60')
   for (const v of [null, undefined, 'abc', NaN]) assert.equal(normalizeHoldDays(v), 5)
 })
+
+// ── benchReturns：基准指数同期涨跌（接实时点位，盘中不再恒为 0）─────────────
+const BENCH = [
+  { time: '2020-01-02', close: 4000 },
+  { time: '2020-01-03', close: 4050 },
+  { time: '2020-01-06', close: 4100 },
+]
+
+test('benchReturns：无实时点位时退回日K最后一根', () => {
+  // basisDate 是周末（01-05）→ 取 ≤ 它的最后一根 01-03；至今 = 最后一根 01-06。
+  const r = benchReturns(BENCH, '2020-01-05', '2020-01-06', null)
+  assert.equal(r.sinceIdxPct, Number(((4100 / 4050 - 1) * 100).toFixed(2)))
+  assert.equal(r.holdIdxPct, Number(((4100 / 4050 - 1) * 100).toFixed(2)))
+})
+
+test('benchReturns：盘中无当日日K时用实时点位（否则会算成 0.00%）', () => {
+  // 模拟盘中：日K最后一根停在基准 01-03，实时点位 4090.5；持有结束日在未来 → 用实时。
+  const intradayBars = BENCH.slice(0, 2)
+  const r = benchReturns(intradayBars, '2020-01-03', '2099-12-31', 4090.5)
+  assert.equal(r.sinceIdxPct, Number(((4090.5 / 4050 - 1) * 100).toFixed(2)))
+  assert.equal(r.holdIdxPct, Number(((4090.5 / 4050 - 1) * 100).toFixed(2)))
+})
+
+test('benchReturns：持有窗口已走完则按结束日收盘，不跟到实时', () => {
+  // 结束日 01-06 已是过去交易日 → 用 01-06 收盘 4100，而不是实时点位 9999。
+  const r = benchReturns(BENCH, '2020-01-03', '2020-01-06', 9999)
+  assert.equal(r.holdIdxPct, Number(((4100 / 4050 - 1) * 100).toFixed(2)))
+  // 至今窗口仍取实时
+  assert.equal(r.sinceIdxPct, Number(((9999 / 4050 - 1) * 100).toFixed(2)))
+})
+

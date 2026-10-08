@@ -984,11 +984,14 @@ export const BENCH_NAME = '沪深300'
 /**
  * 基准指数在两个窗口的涨跌（%），与个股用**同一批交易日**对齐：
  *   - 持有窗口：basisDate 收盘 → holdEndDate（个股各自 AI 持有周期走完那天）收盘
- *   - 至今窗口：basisDate 收盘 → 指数最新一根日K收盘
+ *   - 至今窗口：basisDate 收盘 → 指数最新（盘中为实时点位）
  * 这样前端等权平均后，就是「同一持有窗口下，大盘涨了多少」的可比数。
- * 指数走日K缓存（收盘后即当日收盘价），与个股现价（实时行情）在盘中会略有时间差。
+ *
+ * 指数日K在盘中**不含当日那根**，若只按日K口径，最后一根恰好停在基准那根，
+ * 两个窗口都会算成 0.00%（看起来像没数据）。所以这里额外接实时点位 liveIndex
+ * （与个股 q.price 同一口径）：盘中拿实时，收盘后实时≈当日收盘，无缝衔接。
  */
-function benchReturns(bars, basisDate, holdEndDate) {
+export function benchReturns(bars, basisDate, holdEndDate, liveIndex = null) {
   // 取「≤ basisDate 的最后一根」而不是严格等于：basisDate 可能是节假日（如国庆），
   // 严格相等会查不到、整列变 null。个股那份基准价同样是「≤ basisDate 的最后一根收盘」，
   // 两边口径一致才能相减出超额。
@@ -1002,18 +1005,31 @@ function benchReturns(bars, basisDate, holdEndDate) {
   if (i < 0) return { holdIdxPct: null, sinceIdxPct: null }
   const base = bars[i].close
   const last = bars[bars.length - 1]
-  // 最后一根就是基准那根（basisDate 之后还没出新的交易日K线）→ 指数区间收益恰为 0，
-  // 不是「取不到」。返回 0 才能与个股那列（休市时现价=基准价，收益 0）对齐。
-  const sinceIdxPct = last?.close ? Number(((last.close / base - 1) * 100).toFixed(2)) : null
+  // 至今窗口：优先实时点位（盘中即时、收盘后即当日收盘）；拿不到才退回日K最后一根。
+  // 最后一根就是基准那根时旧口径会返回 0（「取不到」与「恰好为 0」分不开），实时点位能直接破掉这点。
+  const live = Number(liveIndex)
+  const liveOk = Number.isFinite(live) && live > 0
+  const sinceIdxPct = liveOk
+    ? Number(((live / base - 1) * 100).toFixed(2))
+    : last?.close
+      ? Number(((last.close / base - 1) * 100).toFixed(2))
+      : null
   let holdIdxPct = null
   if (holdEndDate) {
     // 与 base/sinceIdxPct 同口径：取「≤ holdEndDate 的最后一根」，个股/指数停牌日差一天也能对上。
+    let end = null
     for (let k = bars.length - 1; k >= 0; k -= 1) {
       if (bars[k].time <= holdEndDate && bars[k].close) {
-        holdIdxPct = Number(((bars[k].close / base - 1) * 100).toFixed(2))
+        end = bars[k]
         break
       }
     }
+    // 窗口已走完（结束日本身已是过去的交易日）→ 按结束日收盘，保持「同一持有窗口」语义；
+    // 未走完 / 结束日就是今天（日K尚未出当日根）→ 用实时点位，与个股 holdReturn 实时折算对齐。
+    const closed = !!end && !!holdEndDate && holdEndDate < bjDate()
+    if (closed) holdIdxPct = Number(((end.close / base - 1) * 100).toFixed(2))
+    else if (liveOk) holdIdxPct = Number(((live / base - 1) * 100).toFixed(2))
+    else if (end) holdIdxPct = Number(((end.close / base - 1) * 100).toFixed(2))
   }
   return { holdIdxPct, sinceIdxPct }
 }
@@ -1027,20 +1043,24 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
     // 另一条链路的个股行情顶掉（sincePickPct 全变 null）。同链路内多次刷新仍命中。
     const key = `recperf:${payload.date}:${[...secids].sort().join('+')}`
     const { items } = await cached(key, ttlMs, async () => {
-      const q = await quoteFn(secids)
+      // 基准指数与个股同批取：一次请求（≤11 个）就够，盘中能拿到沪深300实时点位。
+      const q = await quoteFn([...secids, BENCH_SECID])
       return { items: q.items || [] }
     })
     quotes = new Map(items.map((q) => [q.secid, q]))
   } catch {
     /* 上游挂了就整段 null，不阻断展示 */
   }
-  // 基准指数日K只取一次；拿不到就整列 null（前端显示 —），不阻断个股盈亏。
+  // 基准指数日K只取一次（算基准价与已走完窗口的收盘）；拿不到就整列 null（前端显示 —），不阻断个股盈亏。
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
+  const indexLive = quotes.get(BENCH_SECID)?.price ?? null
   const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
     const holdDays = s.ai?.holdDays ?? null
     const hr = await holdReturn(s.secid, payload.basisDate, holdDays, q?.price)
-    const bench = benchBars.length ? benchReturns(benchBars, payload.basisDate, hr.holdEndDate) : {}
+    const bench = benchBars.length
+      ? benchReturns(benchBars, payload.basisDate, hr.holdEndDate, indexLive)
+      : {}
     return {
       ...s,
       latestPrice: q?.price ?? null,

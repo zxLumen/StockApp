@@ -40,7 +40,7 @@ test('INDEX_GROUPS 覆盖沪 / 深 / 港，且 secid 形态合法', () => {
 
 test('KLINE_PERIODS 覆盖日/周/月与分钟线', () => {
   const keys = KLINE_PERIODS.map((p) => p.key)
-  for (const k of ['d', 'w', 'm', 'm60', 'm30', 'm15', 'm5']) assert.ok(keys.includes(k), `缺少 ${k}`)
+  for (const k of ['m1', 'd', 'w', 'm', 'm60', 'm30', 'm15', 'm5']) assert.ok(keys.includes(k), `缺少 ${k}`)
 })
 
 test('withMa: 窗口不足为 null，之后是收盘价均值', () => {

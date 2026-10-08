@@ -117,6 +117,14 @@ async function getBoardKline(secid, opts) {
 /** K 线。返回 `{ secid, market, name, bars, source }`。 */
 export async function getKline(secid, opts = {}) {
   if (marketOf(secid) === 'board') return getBoardKline(secid, opts)
+  // 分时（m1）只有东财提供分钟级；腾讯/新浪没有 m1，会静默退化成日线，故只试东财。
+  if (opts.period === 'm1') {
+    try {
+      return { ...(await emKline(secid, opts)), source: 'eastmoney' }
+    } catch (err) {
+      throw new Error(`分时暂不可用（${err instanceof Error ? err.message : String(err)}）`)
+    }
+  }
   const attempts = [
     { id: 'eastmoney', run: () => emKline(secid, opts) },
     { id: 'tencent', run: () => tencentKline(secid, opts) },

@@ -8,6 +8,7 @@ import SourceBadge from './SourceBadge'
 import type { Bar, Kline, NewsItem, Quote, Selection } from '../types'
 
 const PERIODS = [
+  { key: 'm1', label: '分时' },
   { key: 'd', label: '日K' },
   { key: 'w', label: '周K' },
   { key: 'm', label: '月K' },
@@ -29,7 +30,7 @@ interface Props {
 
 export default function DetailView({
   selection,
-  period,
+  period: periodProp,
   onPeriod,
   aiEnabled,
   watched,
@@ -40,7 +41,15 @@ export default function DetailView({
   const [quote, setQuote] = useState<Quote | null>(null)
   const [news, setNews] = useState<NewsItem[]>([])
   const [err, setErr] = useState('')
+  // 分时（m1）仅 A 股：港/美股若带着 m1 进来（会话状态残留），就地退回日K。
+  const period = selection.market === 'cn' || periodProp !== 'm1' ? periodProp : 'd'
   const intraday = period.startsWith('m') && period !== 'm'
+  const timeshare = period === 'm1'
+  const periods = selection.market === 'cn' ? PERIODS : PERIODS.filter((p) => p.key !== 'm1')
+
+  useEffect(() => {
+    if (periodProp === 'm1' && selection.market !== 'cn') onPeriod('d')
+  }, [periodProp, selection.market, onPeriod])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -110,7 +119,7 @@ export default function DetailView({
       )}
 
       <div className="periods">
-        {PERIODS.map((p) => (
+        {periods.map((p) => (
           <button
             key={p.key}
             className={`chip${period === p.key ? ' on' : ''}`}
@@ -123,7 +132,13 @@ export default function DetailView({
 
       {err && <div className="note err">{err}</div>}
       {kline ? (
-        <KLineChart bars={kline.bars} market={selection.market} intraday={intraday} />
+        <KLineChart
+          bars={kline.bars}
+          market={selection.market}
+          intraday={intraday}
+          timeshare={timeshare}
+          prevClose={quote?.prevClose ?? null}
+        />
       ) : (
         !err && <div className="kline-box skeleton" style={{ height: 380 }} aria-hidden />
       )}
