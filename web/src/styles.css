@@ -468,6 +468,10 @@ h3 {
 }
 
 /* ---------- K 线 ---------- */
+.kline {
+  position: relative;
+}
+
 .kline-box {
   background: var(--zx-panel);
   border: 1px solid var(--zx-border);
@@ -475,14 +479,53 @@ h3 {
   padding: 8px;
 }
 
-.kline-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 2px 6px 8px;
-  font-size: 12px;
-  color: var(--zx-dim);
+.kline-tip {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  min-width: 140px;
+  padding: 6px 9px;
+  background: rgba(16, 20, 30, 0.97);
+  border: 1px solid var(--zx-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--zx-fg);
   font-variant-numeric: tabular-nums;
+}
+
+.kline-tip-time {
+  margin-bottom: 3px;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--zx-border);
+  color: var(--zx-dim);
+}
+
+.kline-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.kline-tip-row span {
+  color: var(--zx-dim);
+}
+
+.kline-tip-row b {
+  font-weight: 600;
+}
+
+.kline-tip-ma b {
+  margin-right: 4px;
+}
+
+.kline-tip-up {
+  color: var(--zx-up);
+}
+
+.kline-tip-down {
+  color: var(--zx-down);
 }
 
 /* ---------- AI ---------- */

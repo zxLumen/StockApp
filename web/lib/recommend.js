@@ -937,7 +937,7 @@ export async function loadRecommend(dataDir, date, chain = 'dual') {
  * 交易日收盘。周期未走完（还没有那根 K 线）→ holdPct=null、holdDone=false。
  * 只读日K的历史切片，无未来数据。
  */
-async function holdReturn(secid, basisDate, holdDays) {
+async function holdReturn(secid, basisDate, holdDays, livePrice = null) {
   if (!secid || !basisDate || !holdDays) return { holdPct: null, holdEndDate: null, holdDone: false }
   try {
     const bars = (await cachedKline(secid))?.bars || []
@@ -952,8 +952,21 @@ async function holdReturn(secid, basisDate, holdDays) {
     }
     if (idx < 0) return { holdPct: null, holdEndDate: null, holdDone: false }
     const base = bars[idx].close
+    if (!base) return { holdPct: null, holdEndDate: null, holdDone: false }
     const sell = bars[idx + holdDays]
-    if (!base || !sell?.close) return { holdPct: null, holdEndDate: null, holdDone: false }
+    // 周期没走完（还没有「basis 往后第 holdDays 个交易日」那根 K 线）→ 按现价折算到当日：
+    // 优先拿实时价（盘中就有数），没有才退到最新一根日K。holdDone 仍为 false（前端标
+    // 「未走完」），但持有收益与基准同期都能实时给出，不会一直「暂无数据」。
+    if (!sell?.close) {
+      const lastBar = bars[bars.length - 1]
+      const eff = livePrice != null ? Number(livePrice) : lastBar?.close
+      if (!eff) return { holdPct: null, holdEndDate: null, holdDone: false }
+      return {
+        holdPct: Number(((eff / base - 1) * 100).toFixed(2)),
+        holdEndDate: livePrice != null ? bjDate() : lastBar.time,
+        holdDone: false,
+      }
+    }
     return {
       holdPct: Number(((sell.close / base - 1) * 100).toFixed(2)),
       holdEndDate: sell.time,
@@ -994,8 +1007,13 @@ function benchReturns(bars, basisDate, holdEndDate) {
   const sinceIdxPct = last?.close ? Number(((last.close / base - 1) * 100).toFixed(2)) : null
   let holdIdxPct = null
   if (holdEndDate) {
-    const j = bars.findIndex((b) => b.time === holdEndDate)
-    if (j >= 0 && bars[j].close) holdIdxPct = Number(((bars[j].close / base - 1) * 100).toFixed(2))
+    // 与 base/sinceIdxPct 同口径：取「≤ holdEndDate 的最后一根」，个股/指数停牌日差一天也能对上。
+    for (let k = bars.length - 1; k >= 0; k -= 1) {
+      if (bars[k].time <= holdEndDate && bars[k].close) {
+        holdIdxPct = Number(((bars[k].close / base - 1) * 100).toFixed(2))
+        break
+      }
+    }
   }
   return { holdIdxPct, sinceIdxPct }
 }
@@ -1021,7 +1039,7 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
   const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
     const holdDays = s.ai?.holdDays ?? null
-    const hr = await holdReturn(s.secid, payload.basisDate, holdDays)
+    const hr = await holdReturn(s.secid, payload.basisDate, holdDays, q?.price)
     const bench = benchBars.length ? benchReturns(benchBars, payload.basisDate, hr.holdEndDate) : {}
     return {
       ...s,

@@ -50,6 +50,14 @@ export const PALETTE = {
   us: { up: '#12a05c', down: '#e0454b' },
 }
 
+/** 涨幅红涨绿跌 → tooltip 颜色类。 */
+function pctClass(v: number | null): string {
+  if (v == null) return ''
+  if (v > 0) return 'kline-tip-up'
+  if (v < 0) return 'kline-tip-down'
+  return ''
+}
+
 export default function KLineChart({ bars, market, intraday, height = 380, onHover }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -59,7 +67,8 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
   const byTime = useRef(new Map<string, Bar>())
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
-  const [hover, setHover] = useState<Bar | null>(null)
+  const bridgeRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const [tip, setTip] = useState<{ x: number; y: number; bar: Bar } | null>(null)
 
   // 分时只取最新交易日的时段（多日分钟数据堆一起太乱）；日/周/月原样。
   const viewBars = useMemo(() => (intraday ? lastSessionBars(bars) : bars), [bars, intraday])
@@ -87,7 +96,8 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
         vertLine: { color: '#8a94a6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b4252' },
         horzLine: { color: '#8a94a6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b4252' },
       },
-      localization: { locale: 'zh-CN' },
+      // 轴上的日期标成「2026-10-08」，不要默认的「08 10月'26」（zh-CN 下太费解）。
+      localization: { locale: 'zh-CN', dateFormat: 'yyyy-MM-dd' },
     })
     const candle = chart.addSeries(CandlestickSeries, {
       upColor: colors.up,
@@ -121,9 +131,27 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       })
     }
 
+    // 分时「补全当天轴」的透明桥接线：lightweight-charts 的轴只到数据的最大时间，
+    // 用一条无色的线在 09:30→15:00 各放一个点把时间轴撑满，下午没数据也显示整段刻度。
+    const bridge = chart.addSeries(LineSeries, {
+      color: 'rgba(0,0,0,0)',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    })
+    bridgeRef.current = bridge
+
     chart.subscribeCrosshairMove((param) => {
+      // param.point 只在鼠标停留在图表上时有值；离开或停在空区（下午）就没有目标 bar。
+      if (!param.point) {
+        setTip(null)
+        hoverRef.current?.(null)
+        return
+      }
       const bar = param.time ? (byTime.current.get(String(param.time)) ?? null) : null
-      setHover(bar)
+      if (bar) setTip({ x: param.point.x, y: param.point.y, bar })
+      else setTip(null)
       hoverRef.current?.(bar)
     })
 
@@ -136,6 +164,7 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       candleRef.current = null
       volumeRef.current = null
       maRefs.current = {}
+      bridgeRef.current = null
     }
     // 建图只做一次：配色变化交给下面单独的 applyOptions，周期切换在 setData 时处理
   }, [intraday])
@@ -181,22 +210,71 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
           .map((b) => ({ time: toTime(b.time, intraday), value: b[key] as number })),
       )
     }
+
+    // 分时：桥接线撑满当天 09:30→15:00（收盘后 15:00 那根本就在数据里，设了也不改变范围）。
+    const bridge = bridgeRef.current
+    if (bridge) {
+      const last = viewBars[viewBars.length - 1]
+      if (intraday && last?.close != null) {
+        const day = last.time.slice(0, 10)
+        const t = (v: string) => Math.round(Date.parse(`${v}Z`) / 1000) as Time
+        bridge.setData([
+          { time: t(`${day}T09:30:00`), value: last.close },
+          { time: t(`${day}T15:00:00`), value: last.close },
+        ])
+      } else {
+        bridge.setData([])
+      }
+    }
     chartRef.current?.timeScale().fitContent()
   }, [viewBars, intraday, colors.up, colors.down])
 
-  const legend = hover ?? viewBars[viewBars.length - 1] ?? null
+  const boxW = boxRef.current?.clientWidth ?? 0
+  const boxH = boxRef.current?.clientHeight ?? height
+  const tipW = 158
 
   return (
     <div className="kline">
-      {legend && (
-        <div className="kline-legend">
-          <span>开 {legend.open.toFixed(2)}</span>
-          <span>高 {legend.high.toFixed(2)}</span>
-          <span>低 {legend.low.toFixed(2)}</span>
-          <span>收 {legend.close.toFixed(2)}</span>
-          <span className="dim">MA5 {legend.ma5 != null ? legend.ma5.toFixed(2) : '—'}</span>
-          <span className="dim">MA10 {legend.ma10 != null ? legend.ma10.toFixed(2) : '—'}</span>
-          <span className="dim">MA20 {legend.ma20 != null ? legend.ma20.toFixed(2) : '—'}</span>
+      {tip && (
+        <div
+          className="kline-tip"
+          style={{
+            left: tip.x + 14 + tipW > boxW ? Math.max(6, tip.x - tipW - 8) : tip.x + 14,
+            top: Math.max(6, Math.min(tip.y - 6, boxH - 216)),
+          }}
+        >
+          <div className="kline-tip-time">{tip.bar.time}</div>
+          {(
+            [
+              ['开', tip.bar.open, null],
+              ['高', tip.bar.high, null],
+              ['低', tip.bar.low, null],
+              ['收', tip.bar.close, tip.bar.changePct],
+              ['涨跌', null, tip.bar.changePct],
+              ['量', tip.bar.volume, null],
+            ] as [string, number | null, number | null][]
+          ).map(([label, value, tone]) => (
+            <div className="kline-tip-row" key={label}>
+              <span>{label}</span>
+              <b className={tone == null ? '' : pctClass(tone)}>
+                {tone != null
+                  ? tone >= 0
+                    ? `+${tone.toFixed(2)}%`
+                    : `${tone.toFixed(2)}%`
+                  : value != null
+                    ? value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+                    : '—'}
+              </b>
+            </div>
+          ))}
+          <div className="kline-tip-row kline-tip-ma">
+            <span>MA5</span>
+            <b>{tip.bar.ma5 != null ? tip.bar.ma5.toFixed(2) : '—'}</b>
+            <span>MA10</span>
+            <b>{tip.bar.ma10 != null ? tip.bar.ma10.toFixed(2) : '—'}</b>
+            <span>MA20</span>
+            <b>{tip.bar.ma20 != null ? tip.bar.ma20.toFixed(2) : '—'}</b>
+          </div>
         </div>
       )}
       <div ref={boxRef} className="kline-box" style={{ height }} />
