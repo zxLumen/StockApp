@@ -79,7 +79,7 @@ function emptyMode() {
   return { summary: emptySummary(), open: [], closed: [], trades: [] }
 }
 function emptySummary() {
-  return { count: 0, openCount: 0, closedCount: 0, invested: 0, realized: 0, unrealized: 0, total: 0, returnPct: null, winPct: null }
+  return { count: 0, openCount: 0, closedCount: 0, invested: 0, openCost: 0, realized: 0, unrealized: 0, total: 0, returnPct: null, winPct: null }
 }
 
 async function computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate) {
@@ -218,6 +218,7 @@ function summarize(positions) {
   const invested = Number(positions.reduce((a, p) => a + p.cost, 0).toFixed(2))
   const realized = Number(positions.filter((p) => !p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0).toFixed(2))
   const unrealized = Number(positions.filter((p) => p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0).toFixed(2))
+  const openCost = Number(positions.filter((p) => p.open).reduce((a, p) => a + p.cost, 0).toFixed(2))
   const closed = positions.filter((p) => !p.open && p.pnl != null)
   const total = Number((realized + unrealized).toFixed(2))
   return {
@@ -225,6 +226,7 @@ function summarize(positions) {
     openCount: positions.filter((p) => p.open).length,
     closedCount: closed.length,
     invested,
+    openCost,
     realized,
     unrealized,
     total,

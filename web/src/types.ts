@@ -366,7 +366,10 @@ export interface PositionSummary {
   count: number
   openCount: number
   closedCount: number
+  /** 累计投入（名义累计买入额；收益率的分母） */
   invested: number
+  /** 当前持仓成本（未了结持仓的成本合计，有界） */
+  openCost: number
   realized: number
   unrealized: number
   total: number

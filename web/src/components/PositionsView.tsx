@@ -127,10 +127,10 @@ export default function PositionsView({
         <>
           <div className="pos-summary">
             <div className="pos-cell">
-              <span className="pos-k">累计投入</span>
-              <b>{money(m.summary.invested)}</b>
+              <span className="pos-k">持仓成本</span>
+              <b>{money(m.summary.openCost)}</b>
               <span className="dim small">
-                {m.summary.count} 只 · 持仓 {m.summary.openCount} · 已了结 {m.summary.closedCount}
+                持仓 {m.summary.openCount} 只 · 已了结 {m.summary.closedCount} 只
               </span>
             </div>
             <div className="pos-cell">
