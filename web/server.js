@@ -23,7 +23,7 @@ import {
 } from './lib/market.js'
 import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js'
 import { marketNews, stockNews, newsScope } from './lib/news.js'
-import { loadRecommend, listRecommendDates, attachPerformance, dueOn, pctFromPick } from './lib/recommend.js'
+import { loadRecommend, listRecommendDates, enrichRecommend, recommendTtlMs, isAshareSession } from './lib/recommend.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -251,25 +251,8 @@ route('GET', /^\/api\/recommend$/, async (ctx) => {
   const chain = ctx.url.searchParams.get('chain') || 'dual'
   const data = await loadRecommend(DATA_DIR, date, chain)
   if (!data) return null
-  // 补上「自推荐日到最新」的涨跌（公开数据，任何人可见）
-  const withPerf = await attachPerformance(data)
-  // 按历史推荐的 AI 持有周期，列出「到期日 = 本页推荐生效日」的股票（随 chain 切换）。
-  const due = await dueOn(DATA_DIR, withPerf.date, { chain })
-  let dueOnItems = due
-  if (due.length) {
-    try {
-      const secids = [...new Set(due.map((d) => d.secid))]
-      const { items } = await getQuotes(secids)
-      const qm = new Map(items.map((q) => [q.secid, q]))
-      dueOnItems = due.map((d) => {
-        const price = qm.get(d.secid)?.price ?? null
-        return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
-      })
-    } catch {
-      /* 行情挂了就只给周期信息，不阻断 */
-    }
-  }
-  return { ...withPerf, dueOn: dueOnItems }
+  // 静态榜单 + 实时盈亏列 + 今日应卖出（行情合并成一次，见 enrichRecommend）。
+  return enrichRecommend(DATA_DIR, data, { chain, ttlMs: recommendTtlMs() })
 })
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))
@@ -678,6 +661,24 @@ function parseSentCid(req) {
   const raw = req.headers.cookie || ''
   return raw.split(';').some((p) => p.trim().startsWith('stock_cid='))
 }
+
+// 后台预热：盘中每 5min 把三条链路最新一天的「静态榜单 + 实时行情」组装一次写进缓存，
+// 让访客读热缓存（不再由访客触发上游）。盘后/休市不拉（价格不再变，读路径用长 TTL）。
+const WARM_CHAINS = ['dual', 'A', 'B']
+const WARM_INTERVAL_MS = 5 * 60_000
+async function warmRecommend() {
+  if (!isAshareSession()) return
+  for (const chain of WARM_CHAINS) {
+    try {
+      const data = await loadRecommend(DATA_DIR, undefined, chain)
+      if (data) await enrichRecommend(DATA_DIR, data, { chain, ttlMs: recommendTtlMs() })
+    } catch {
+      /* 预热失败不影响服务；访客路径会自行兜底 */
+    }
+  }
+}
+setInterval(() => void warmRecommend(), WARM_INTERVAL_MS).unref()
+void warmRecommend()
 
 server.listen(PORT, HOST, () => {
   const token = process.env.STOCK_OWNER_TOKEN ? '' : '（见数据目录 owner.token）'

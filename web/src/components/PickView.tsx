@@ -1,6 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRecommend, fetchRecommendDates, type RecommendChain } from '../api'
+import { useSessionState } from '../sessionState'
 import type { RecommendPayload, RecommendStock } from '../types'
+
+// 每日推荐响应按 `chain:key` 缓存（内存 + sessionStorage），挂载先秒渲染再后台刷新。
+const recMem = new Map<string, RecommendPayload>()
+const recKey = (chain: string, d: string | undefined) => `${chain}:${d || 'latest'}`
+function recCacheGet(key: string): RecommendPayload | null {
+  if (recMem.has(key)) return recMem.get(key) as RecommendPayload
+  try {
+    const raw = sessionStorage.getItem(`zx-rec:${key}`)
+    if (raw) {
+      const v = JSON.parse(raw) as RecommendPayload
+      recMem.set(key, v)
+      return v
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return null
+}
+function recCacheSet(key: string, v: RecommendPayload) {
+  recMem.set(key, v)
+  try {
+    sessionStorage.setItem(`zx-rec:${key}`, JSON.stringify(v))
+  } catch {
+    /* 超限/隐私模式忽略 */
+  }
+}
 
 const fmt = (n: number | null | undefined, d = 2) =>
   n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toFixed(d)
@@ -112,12 +139,13 @@ function pickSummary(top: RecommendStock[] | undefined) {
 
 /** 每日推荐：regime 双链路（tilt ≥ 阈值走 A 成交额池+AI，否则走 B 稳健池+多因子）的 Top10，点开看详情。 */
 export default function PickView({ onPick }: { onPick: (s: { code: string; name: string; secid: string }) => void }) {
-  const [data, setData] = useState<Awaited<ReturnType<typeof fetchRecommend>>>(null)
-  const [dates, setDates] = useState<string[]>([])
-  const [date, setDate] = useState<string>('')
+  const [date, setDate] = useSessionState<string>('recDate', '')
   /** 展示哪条链路：dual=每日按 regime 选中的那份（默认）；B=稳健池多因子链路；A=成交额池 AI 链路。 */
   const [chain, setChain] = useState<RecommendChain>('dual')
-  const [loading, setLoading] = useState(true)
+  // 首屏直接用上次缓存（同页重挂/切页签回来），避免又空一下。
+  const [data, setData] = useState<RecommendPayload | null>(() => recCacheGet(recKey('dual', date || undefined)))
+  const [dates, setDates] = useState<string[]>([])
+  const [loading, setLoading] = useState(() => !recCacheGet(recKey('dual', date || undefined)))
   const [error, setError] = useState('')
   const [openCode, setOpenCode] = useState<string | null>(null)
   /** 「应卖出」卡片默认折叠，需要时展开。 */
@@ -142,28 +170,45 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   }, [dates])
 
   const load = useCallback(async (d: string | undefined, c: RecommendChain) => {
-    setLoading(true)
+    const key = recKey(c, d)
+    const hit = recCacheGet(key)
+    if (hit) {
+      // 命中缓存：立即渲染，后台再刷新（stale-while-revalidate）。
+      setData(hit)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setError('')
     try {
       const payload = await fetchRecommend(d, c)
       setData(payload)
+      if (payload) recCacheSet(key, payload)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '加载失败')
-      setData(null)
+      if (!hit) {
+        setError(e instanceof Error ? e.message : '加载失败')
+        setData(null)
+      }
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    // 已有日期（含全局记忆的）→ 原样加载，**不重置**；只有首次为空才取该链路最新。
+    const cur = dateRef.current
+    if (cur) void load(cur, chain)
     fetchRecommendDates(chain)
       .then((r) => {
         setDates(r.dates)
-        setDate(r.dates[0] || '')
+        if (!cur) {
+          const latest = r.dates[0] || ''
+          if (latest) setDate(latest)
+          void load(latest || undefined, chain)
+        }
       })
       .catch(() => setDates([]))
-    void load(undefined, chain)
-  }, [chain, load])
+  }, [chain, load, setDate])
 
   // 实时：轮询榜单日期。跑批过程中新生成的一天会自动出现；当前停在最新/未选时自动切过去。
   useEffect(() => {
@@ -229,6 +274,19 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
         <div className="rec-head">
           <h2>每日推荐</h2>
           {chainSwitch}
+          {dates.length > 0 && (
+            <label className="rec-dates-select">
+              日期
+              <select value={dateSet.has(date) ? date : ''} onChange={(e) => pickDate(e.target.value)}>
+                {!dateSet.has(date) && <option value="">{date || '请选择'}（无榜单）</option>}
+                {dates.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="note">
           该链路今日推荐尚未生成。服务器会在收盘后自动跑双链路：当日动量倾斜 ≥ 阈值走「成交额池 +

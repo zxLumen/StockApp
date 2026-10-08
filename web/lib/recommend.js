@@ -13,7 +13,7 @@ import { computeFactors, compositeScores, regimeTilt } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
 import { tiltThreshold, selectConfig } from './model-config.js'
-import { nextTradingDay, addTradingDays } from './trading-days.js'
+import { nextTradingDay, addTradingDays, isTradingDay } from './trading-days.js'
 
 export { nextTradingDay }
 
@@ -1093,22 +1093,29 @@ export function benchReturns(bars, basisDate, holdEndDate, liveIndex = null) {
   return { holdIdxPct, sinceIdxPct }
 }
 
-export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 5 * 60_000 } = {}) {
+export async function attachPerformance(
+  payload,
+  { quoteFn = getQuotes, ttlMs = 5 * 60_000, extraSecids = [], quotes: injected = null } = {},
+) {
   if (!payload || !Array.isArray(payload.top) || !payload.top.length) return payload
-  const secids = [...new Set(payload.top.map((s) => s.secid).filter(Boolean))]
-  let quotes = new Map()
-  try {
-    // 缓存键带 secid 集合：A/B 链路标的集不同，共用一个键会让先加载的链路把
-    // 另一条链路的个股行情顶掉（sincePickPct 全变 null）。同链路内多次刷新仍命中。
-    const key = `recperf:${payload.date}:${[...secids].sort().join('+')}`
-    const { items } = await cached(key, ttlMs, async () => {
-      // 基准指数与个股同批取：一次请求（≤11 个）就够，盘中能拿到沪深300实时点位。
-      const q = await quoteFn([...secids, BENCH_SECID])
-      return { items: q.items || [] }
-    })
-    quotes = new Map(items.map((q) => [q.secid, q]))
-  } catch {
-    /* 上游挂了就整段 null，不阻断展示 */
+  // 除 top 外还要给「今日应卖出」的票取行情 → 并进同一批，避免再一次上游请求。
+  const secids = [...new Set([...payload.top.map((s) => s.secid), ...extraSecids].filter(Boolean))]
+  let quotes = injected
+  if (!quotes) {
+    quotes = new Map()
+    try {
+      // 缓存键带 secid 集合：A/B 链路标的集不同，共用一个键会让先加载的链路把
+      // 另一条链路的个股行情顶掉（sincePickPct 全变 null）。同链路内多次刷新仍命中。
+      const key = `recperf:${payload.date}:${[...secids].sort().join('+')}`
+      const { items } = await cached(key, ttlMs, async () => {
+        // 基准指数与个股同批取：一次请求就够，盘中能拿到沪深300实时点位。
+        const q = await quoteFn([...secids, BENCH_SECID])
+        return { items: q.items || [] }
+      })
+      quotes = new Map(items.map((q) => [q.secid, q]))
+    } catch {
+      /* 上游挂了就整段 null，不阻断展示 */
+    }
   }
   // 基准指数日K只取一次（算基准价与已走完窗口的收盘）；拿不到就整列 null（前端显示 —），不阻断个股盈亏。
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
@@ -1136,4 +1143,52 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
     }
   })
   return { ...payload, top: withPerf, benchName: BENCH_NAME }
+}
+
+/** 北京时间的小时:分（用 UTC+8 偏移算，避免服务器时区差异）。 */
+function bjMinutes(d = new Date()) {
+  const bj = new Date(d.getTime() + 8 * 3600_000)
+  return bj.getUTCHours() * 60 + bj.getUTCMinutes()
+}
+
+/** A 股盘中窗口（09:15 集合竞价 ~ 15:15 收盘后）。 */
+export function isAshareSession(d = new Date()) {
+  const m = bjMinutes(d)
+  return isTradingDay(bjDate(d)) && m >= 9 * 60 + 15 && m <= 15 * 60 + 15
+}
+
+/**
+ * 读路径的行情缓存 TTL：盘中 6 分钟（配合后台每 5min 预热，永不冷）；盘后 30 分钟
+ * （价格不再变，拉长 TTL 让访客别再触发上游）。
+ */
+export function recommendTtlMs(d = new Date()) {
+  return isAshareSession(d) ? 6 * 60_000 : 30 * 60_000
+}
+
+/**
+ * 组装读路径的完整推荐：静态榜单 + 实时盈亏列 + 「今日应卖出」名单与现价。
+ *
+ * 关键：`top` 与 `dueOn` 的行情**合并成一次** getQuotes（同一 5~6min 缓存），
+ * 不再分两次打上游；`dueOn` 名单本身也缓存，避免每次重扫文件。
+ */
+export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs = recommendTtlMs() } = {}) {
+  if (!payload || !Array.isArray(payload.top) || !payload.top.length) return payload
+  const due = await cached(`recDue:${chain}:${payload.date}`, ttlMs, () => dueOn(dataDir, payload.date, { chain }))
+  const dueSecids = [...new Set((due || []).map((d) => d.secid).filter(Boolean))]
+  const all = [...new Set([...payload.top.map((s) => s.secid), ...dueSecids, BENCH_SECID].filter(Boolean))]
+  let quotes = new Map()
+  try {
+    quotes = await cached(`recQuotes:${chain}:${payload.date}:${[...all].sort().join('+')}`, ttlMs, async () => {
+      const q = await getQuotes(all)
+      return new Map((q.items || []).map((x) => [x.secid, x]))
+    })
+  } catch {
+    /* 上游挂了：盈亏列与 dueOn 现价留空，不阻断静态内容 */
+  }
+  const withPerf = await attachPerformance(payload, { quotes, ttlMs })
+  const dueOnItems = (due || []).map((d) => {
+    const price = quotes.get(d.secid)?.price ?? null
+    return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
+  })
+  return { ...withPerf, dueOn: dueOnItems }
 }

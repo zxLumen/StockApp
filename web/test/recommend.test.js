@@ -18,6 +18,8 @@ import {
   forwardArchive,
   archiveForwardChains,
   benchReturns,
+  isAshareSession,
+  recommendTtlMs,
   FORWARD_A_DIR,
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
@@ -218,3 +220,15 @@ test('benchReturns：持有窗口已走完则按结束日收盘，不跟到实�
   assert.equal(r.sinceIdxPct, Number(((9999 / 4050 - 1) * 100).toFixed(2)))
 })
 
+
+// ── 盘中窗口 & 读路径缓存 TTL ──────────────────────────────────────────────
+test('isAshareSession / recommendTtlMs：盘中 6min、盘后 30min、非交易日不拉', () => {
+  // 2026-10-08 是交易日；用 UTC+8 换算构造北京时间。
+  const bj = (h, m, day = 8) => new Date(Date.UTC(2026, 9, day, h - 8, m))
+  assert.equal(isAshareSession(bj(10, 0)), true)
+  assert.equal(isAshareSession(bj(9, 5)), false, '9:15 前不算盘中')
+  assert.equal(isAshareSession(bj(16, 0)), false, '收盘后停拉')
+  assert.equal(isAshareSession(bj(10, 0, 10)), false, '周六')
+  assert.equal(recommendTtlMs(bj(10, 0)), 6 * 60_000)
+  assert.equal(recommendTtlMs(bj(20, 0)), 30 * 60_000)
+})

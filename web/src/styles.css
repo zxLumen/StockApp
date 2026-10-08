@@ -1909,6 +1909,23 @@ button.member-row:hover {
   font-size: 12px;
   color: var(--dim, #8b949e);
 }
+.rec-dates-select {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim, #8b949e);
+}
+.rec-dates-select select {
+  background: var(--zx-panel);
+  color: var(--zx-fg);
+  border: 1px solid var(--zx-border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+}
 .rec-score {
   font-size: 12px;
   padding: 1px 8px;
