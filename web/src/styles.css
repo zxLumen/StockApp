@@ -2243,3 +2243,48 @@ button.member-row:hover {
 .trade-sell {
   color: var(--zx-down);
 }
+
+/* 模拟持仓：可折叠小节 + 分页 */
+.pos-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.pos-sec-head .sec-title {
+  margin: 0;
+}
+.pos-caret {
+  color: var(--zx-dim);
+}
+.pos-sec-body {
+  margin-top: 6px;
+}
+.pos-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 0 2px;
+}
+.pos-pager-btn {
+  background: var(--zx-panel);
+  border: 1px solid var(--zx-border);
+  border-radius: 6px;
+  color: var(--zx-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.pos-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

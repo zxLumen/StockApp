@@ -49,11 +49,26 @@ async function computeAll(dataDir) {
   const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
   const actions = raw && raw.positions ? raw.positions : {}
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
+  // 全局起点 = 所有链路里最早的买入日：三条曲线共用同一 x 轴（A/B 数据晚也画得出来）。
+  let globalStart = null
+  for (const chain of ['dual', 'A', 'B']) {
+    const s = await earliestBasis(dataDir, chain).catch(() => null)
+    if (s && (!globalStart || s < globalStart)) globalStart = s
+  }
   const chains = {}
   for (const chain of ['dual', 'A', 'B']) {
-    chains[chain] = await computeChain(dataDir, chain, actions, benchBars).catch(() => emptyChain())
+    chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart).catch(() => emptyChain())
   }
   return { benchName: BENCH_NAME, asOf: bjDate(), chains }
+}
+
+/** 该链路最早一天的基准日（买入日）。 */
+async function earliestBasis(dataDir, chain) {
+  const dates = await listRecommendDates(dataDir, chain)
+  if (!dates.length) return null
+  const d = dates.slice().sort()[0]
+  const p = await readJson(path.join(dataDir, CHAIN_SUBDIR[chain] || 'recommend', `${d}.json`), null)
+  return p?.basisDate || d
 }
 
 function emptyChain() {
@@ -66,7 +81,7 @@ function emptySummary() {
   return { count: 0, openCount: 0, closedCount: 0, invested: 0, realized: 0, unrealized: 0, total: 0, returnPct: null, winPct: null }
 }
 
-async function computeChain(dataDir, chain, actions, benchBars) {
+async function computeChain(dataDir, chain, actions, benchBars, globalStart) {
   const sub = CHAIN_SUBDIR[chain] || 'recommend'
   const dates = (await listRecommendDates(dataDir, chain)).slice().sort() // 升序
   if (!dates.length) return emptyChain()
@@ -138,7 +153,7 @@ async function computeChain(dataDir, chain, actions, benchBars) {
 
   const o = buildMode(buys, 'orig', { today, closeOn, spotOf })
   const a = buildMode(buys, 'ai', { today, closeOn, spotOf })
-  const equity = buildEquity(buys, { closeMap, benchBars, today, orig: o.positions, ai: a.positions })
+  const equity = buildEquity(buys, { closeMap, benchBars, today, orig: o.positions, ai: a.positions, globalStart })
   return {
     orig: { summary: summarize(o.positions), ...split(o.positions), trades: o.trades },
     ai: { summary: summarize(a.positions), ...split(a.positions), trades: a.trades },
@@ -235,10 +250,11 @@ function summarize(positions) {
 }
 
 /** 甲·净值法：组合日收益 = 当日持仓等权涨跌，逐日链式累乘；沪深300 同起点归一。 */
-function buildEquity(buys, { closeMap, benchBars, today, orig, ai }) {
+function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }) {
   const benchByDay = new Map()
   for (const b of benchBars) if (b.close != null) benchByDay.set(b.time, b.close)
-  const start = buys.reduce((m, b) => (b.buyDate < m ? b.buyDate : m), buys[0].buyDate)
+  const chainStart = buys.reduce((m, b) => (b.buyDate < m ? b.buyDate : m), buys[0].buyDate)
+  const start = globalStart && globalStart < chainStart ? globalStart : chainStart
   const cal = benchBars.map((b) => b.time).filter((t) => t >= start && t <= today).sort()
   if (cal.length === 0) return []
 

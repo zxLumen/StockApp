@@ -5,10 +5,11 @@ import { useSessionState } from '../sessionState'
 import type { PositionChain, PositionItem, PositionMode, PositionTrade } from '../types'
 
 const pctStr = (n: number | null | undefined) => (n == null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(2)}%`)
-const money = (n: number | null | undefined) =>
-  n == null ? '—' : `¥${Math.round(n).toLocaleString('zh-CN')}`
+const money = (n: number | null | undefined) => (n == null ? '—' : `¥${Math.round(n).toLocaleString('zh-CN')}`)
 const sharesStr = (n: number) => (Number.isInteger(n) ? n.toLocaleString('zh-CN') : n.toFixed(4))
 const tone = (n: number | null | undefined) => (n == null ? 'dim' : n > 0 ? 'up' : n < 0 ? 'down' : 'dim')
+
+const PAGE_SIZE = 20
 
 const CHAINS: { key: PositionChain; label: string }[] = [
   { key: 'dual', label: '双链路' },
@@ -16,7 +17,6 @@ const CHAINS: { key: PositionChain; label: string }[] = [
   { key: 'B', label: 'B 保守' },
 ]
 
-// 客户端缓存（SWR）：整包不含日期维度，一次拿全，切链路/模式零请求。
 let posMem: PositionsPayload | null = null
 function posCacheGet(): PositionsPayload | null {
   if (posMem) return posMem
@@ -114,7 +114,9 @@ export default function PositionsView({
             </button>
           ))}
         </div>
-        <span className="dim small">每只 ¥10,000 等权 · 从有推荐数据起累积{data?.asOf ? ` · 截至 ${data.asOf}` : ''}</span>
+        <span className="dim small">
+          每只 ¥10,000 等权 · 从有推荐数据起累积{data?.asOf ? ` · 截至 ${data.asOf}` : ''}
+        </span>
       </div>
 
       {err && <div className="note err">{err}</div>}
@@ -151,7 +153,7 @@ export default function PositionsView({
             </div>
           </div>
 
-          {ch && ch.equity.length > 1 && (
+          {ch && ch.equity.length >= 1 && (
             <div className="pos-chart-wrap">
               <div className="pos-chart-title">
                 组合累计收益率 · 对照 {data?.benchName || '沪深300'}
@@ -161,14 +163,14 @@ export default function PositionsView({
             </div>
           )}
 
-          <Section title={`持仓中（${m.open.length}）`}>
-            <PositionTable rows={m.open} kind="open" onPick={onPick} />
+          <Section title="持仓中" count={m.open.length} defaultOpen>
+            <PositionTable key={`${chain}-${mode}-open`} rows={m.open} kind="open" onPick={onPick} />
           </Section>
-          <Section title={`已了结（${m.closed.length}）`}>
-            <PositionTable rows={m.closed} kind="closed" onPick={onPick} />
+          <Section title="已了结" count={m.closed.length} defaultOpen>
+            <PositionTable key={`${chain}-${mode}-closed`} rows={m.closed} kind="closed" onPick={onPick} />
           </Section>
-          <Section title={`交易流水（${m.trades.length}）`}>
-            <TradesTable trades={m.trades} />
+          <Section title="交易流水" count={m.trades.length} defaultOpen={false}>
+            <TradesTable key={`${chain}-${mode}-trades`} trades={m.trades} />
           </Section>
         </>
       )}
@@ -176,12 +178,36 @@ export default function PositionsView({
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/** 可折叠小节：标题行显示数量，默认是否展开可配。 */
+function Section({ title, count, defaultOpen = true, children }: { title: string; count: number; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
   return (
     <section className="pos-section">
-      <h3 className="sec-title">{title}</h3>
-      {children}
+      <button type="button" className="pos-sec-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="sec-title">
+          {title}（{count}）
+        </span>
+        <span className="pos-caret">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && <div className="pos-sec-body">{children}</div>}
     </section>
+  )
+}
+
+function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
+  if (pages <= 1) return null
+  return (
+    <div className="pos-pager">
+      <button type="button" className="pos-pager-btn" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+        ‹ 上一页
+      </button>
+      <span className="dim small">
+        {page} / {pages}
+      </span>
+      <button type="button" className="pos-pager-btn" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+        下一页 ›
+      </button>
+    </div>
   )
 }
 
@@ -194,79 +220,96 @@ function PositionTable({
   kind: 'open' | 'closed'
   onPick: (s: { code: string; name: string; secid: string }) => void
 }) {
+  const [page, setPage] = useState(1)
   if (!rows.length) return <div className="note small">暂无</div>
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const p = Math.min(page, pages)
+  const slice = rows.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
   return (
-    <div className="pos-list">
-      <div className="pos-row pos-row-head">
-        <span>名称</span>
-        <span>买入日</span>
-        <span>买入价</span>
-        <span>{kind === 'open' ? '现价' : '卖出价'}</span>
-        <span>股数</span>
-        <span>盈亏%</span>
-        <span>{kind === 'open' ? '预计卖出' : '卖出日'}</span>
-        <span>持有</span>
-      </div>
-      {rows.map((p) => (
-        <div
-          className="pos-row"
-          key={`${p.secid}-${p.recDate}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => onPick({ code: p.code, name: p.name, secid: p.secid })}
-        >
-          <span className="pos-name">
-            {p.name} <span className="dim small">{p.code}</span>
-            {p.terminated && <em className="pos-tag pos-tag-ai">已提前终止</em>}
-            {p.extended && <em className="pos-tag pos-tag-ext">延长 +{p.effHoldDays - p.holdDays}</em>}
-          </span>
-          <span>{p.buyDate}</span>
-          <span>{p.buyPrice?.toFixed(2)}</span>
-          <span>{p.lastPrice?.toFixed(2) ?? '—'}</span>
-          <span>{sharesStr(p.shares)}</span>
-          <span className={`pos-pct ${tone(p.retPct)}`}>{pctStr(p.retPct)}</span>
-          <span>{kind === 'open' ? p.expectedSellDate : p.sellDate}</span>
-          <span className="dim">{p.effHoldDays} 日</span>
+    <>
+      <div className="pos-list">
+        <div className="pos-row pos-row-head">
+          <span>名称</span>
+          <span>买入日</span>
+          <span>买入价</span>
+          <span>{kind === 'open' ? '现价' : '卖出价'}</span>
+          <span>股数</span>
+          <span>盈亏%</span>
+          <span>{kind === 'open' ? '预计卖出' : '卖出日'}</span>
+          <span>持有</span>
         </div>
-      ))}
-    </div>
+        {slice.map((p0) => (
+          <div
+            className="pos-row"
+            key={`${p0.secid}-${p0.recDate}-${p0.buyDate}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onPick({ code: p0.code, name: p0.name, secid: p0.secid })}
+          >
+            <span className="pos-name">
+              {p0.name} <span className="dim small">{p0.code}</span>
+              {p0.terminated && <em className="pos-tag pos-tag-ai">已提前终止</em>}
+              {p0.extended && <em className="pos-tag pos-tag-ext">延长 +{p0.effHoldDays - p0.holdDays}</em>}
+            </span>
+            <span>{p0.buyDate}</span>
+            <span>{p0.buyPrice?.toFixed(2)}</span>
+            <span>{p0.lastPrice?.toFixed(2) ?? '—'}</span>
+            <span>{sharesStr(p0.shares)}</span>
+            <span className={`pos-pct ${tone(p0.retPct)}`}>{pctStr(p0.retPct)}</span>
+            <span>{kind === 'open' ? p0.expectedSellDate : p0.sellDate}</span>
+            <span className="dim">{p0.effHoldDays} 日</span>
+          </div>
+        ))}
+      </div>
+      <Pager page={p} pages={pages} onPage={setPage} />
+    </>
   )
 }
 
 function TradesTable({ trades }: { trades: PositionTrade[] }) {
+  const [page, setPage] = useState(1)
   if (!trades.length) return <div className="note small">暂无</div>
+  const pages = Math.max(1, Math.ceil(trades.length / PAGE_SIZE))
+  const p = Math.min(page, pages)
+  const slice = trades.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE)
   return (
-    <div className="pos-list">
-      <div className="pos-row pos-row-head trade">
-        <span>日期</span>
-        <span>方向</span>
-        <span>名称</span>
-        <span>股数</span>
-        <span>价格</span>
-        <span>金额</span>
-        <span>盈亏</span>
-      </div>
-      {trades.map((t, i) => (
-        <div className="pos-row trade" key={`${t.date}-${t.secid}-${t.dir}-${i}`}>
-          <span>{t.date}</span>
-          <span className={t.dir === 'buy' ? 'trade-buy' : 'trade-sell'}>{t.dir === 'buy' ? '买入' : '卖出'}</span>
-          <span className="pos-name">
-            {t.name} <span className="dim small">{t.code}</span>
-          </span>
-          <span>{sharesStr(t.shares)}</span>
-          <span>{t.price?.toFixed(2)}</span>
-          <span>{money(t.amount)}</span>
-          <span className={t.pnl != null ? tone(t.pnl) : 'dim'}>{t.pnl != null ? money(t.pnl) : '—'}</span>
+    <>
+      <div className="pos-list">
+        <div className="pos-row pos-row-head trade">
+          <span>日期</span>
+          <span>方向</span>
+          <span>名称</span>
+          <span>股数</span>
+          <span>价格</span>
+          <span>金额</span>
+          <span>盈亏</span>
         </div>
-      ))}
-    </div>
+        {slice.map((t, i) => (
+          <div className="pos-row trade" key={`${t.date}-${t.secid}-${t.dir}-${i}`}>
+            <span>{t.date}</span>
+            <span className={t.dir === 'buy' ? 'trade-buy' : 'trade-sell'}>{t.dir === 'buy' ? '买入' : '卖出'}</span>
+            <span className="pos-name">
+              {t.name} <span className="dim small">{t.code}</span>
+            </span>
+            <span>{sharesStr(t.shares)}</span>
+            <span>{t.price?.toFixed(2)}</span>
+            <span>{money(t.amount)}</span>
+            <span className={t.pnl != null ? tone(t.pnl) : 'dim'}>{t.pnl != null ? money(t.pnl) : '—'}</span>
+          </div>
+        ))}
+      </div>
+      <Pager page={p} pages={pages} onPage={setPage} />
+    </>
   )
 }
 
-/** 三条线：原始组合 / AI动态组合 / 沪深300（累计收益率%，同起点）。 */
+/** 三条线：原始组合 / AI动态组合 / 沪深300（累计收益率%，同起点）+ 悬浮浮窗（复用 K 线浮窗风格）。 */
 function EquityChart({ equity }: { equity: { date: string; orig: number | null; ai: number | null; bench: number | null }[] }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const [tip, setTip] = useState<{ x: number; y: number; row: (typeof equity)[number] } | null>(null)
+
   useEffect(() => {
     const el = boxRef.current
     if (!el) return
@@ -276,6 +319,10 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
       grid: { vertLines: { color: '#1e2532' }, horzLines: { color: '#1e2532' } },
       rightPriceScale: { borderColor: '#262e3d' },
       timeScale: { borderColor: '#262e3d' },
+      crosshair: {
+        vertLine: { color: '#8a94a6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b4252' },
+        horzLine: { color: '#8a94a6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b4252' },
+      },
       localization: { locale: 'zh-CN', dateFormat: 'yyyy-MM-dd' },
     })
     const mk = (color: string, width: 1 | 2, dashed = false) =>
@@ -284,6 +331,7 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
         lineWidth: width,
         priceLineVisible: false,
         lastValueVisible: true,
+        crosshairMarkerVisible: true,
         lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
       })
     const sOrig = mk('#4a8ef0', 2)
@@ -292,6 +340,16 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
     sOrig.setData(equity.filter((p) => p.orig != null).map((p) => ({ time: p.date as Time, value: p.orig as number })))
     sAi.setData(equity.filter((p) => p.ai != null).map((p) => ({ time: p.date as Time, value: p.ai as number })))
     sBench.setData(equity.filter((p) => p.bench != null).map((p) => ({ time: p.date as Time, value: p.bench as number })))
+    const byDate = new Map(equity.map((p) => [p.date, p]))
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time) {
+        setTip(null)
+        return
+      }
+      const row = byDate.get(String(param.time))
+      if (row) setTip({ x: param.point.x, y: param.point.y, row })
+      else setTip(null)
+    })
     chart.timeScale().fitContent()
     chartRef.current = chart
     return () => {
@@ -299,14 +357,46 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
       chartRef.current = null
     }
   }, [equity])
+
+  const boxW = wrapRef.current?.clientWidth ?? 0
+  const tipW = 150
   return (
-    <>
+    <div className="kline" ref={wrapRef}>
+      {tip && (
+        <div
+          className="kline-tip"
+          style={{
+            left: tip.x + 14 + tipW > boxW ? Math.max(6, tip.x - tipW - 8) : tip.x + 14,
+            top: Math.max(6, tip.y - 6),
+          }}
+        >
+          <div className="kline-tip-time">{tip.row.date}</div>
+          <div className="kline-tip-row">
+            <span>原始周期</span>
+            <b className={`pos-pct ${tone(tip.row.orig)}`}>{pctStr(tip.row.orig)}</b>
+          </div>
+          <div className="kline-tip-row">
+            <span>AI动态</span>
+            <b className={`pos-pct ${tone(tip.row.ai)}`}>{pctStr(tip.row.ai)}</b>
+          </div>
+          <div className="kline-tip-row">
+            <span>沪深300</span>
+            <b className={`pos-pct ${tone(tip.row.bench)}`}>{pctStr(tip.row.bench)}</b>
+          </div>
+        </div>
+      )}
       <div ref={boxRef} className="kline-box" style={{ height: 300 }} />
       <div className="pos-legend">
-        <span className="pos-legend-i" style={{ color: '#4a8ef0' }}>● 原始周期</span>
-        <span className="pos-legend-i" style={{ color: '#e8a33d' }}>● AI动态调整</span>
-        <span className="pos-legend-i" style={{ color: '#8a94a6' }}>● 沪深300</span>
+        <span className="pos-legend-i" style={{ color: '#4a8ef0' }}>
+          ● 原始周期
+        </span>
+        <span className="pos-legend-i" style={{ color: '#e8a33d' }}>
+          ● AI动态调整
+        </span>
+        <span className="pos-legend-i" style={{ color: '#8a94a6' }}>
+          ● 沪深300
+        </span>
       </div>
-    </>
+    </div>
   )
 }
