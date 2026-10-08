@@ -10,7 +10,7 @@
 // 产物：DATA_DIR/recommend/<YYYY-MM-DD>.json（前端「推荐」页签读它）。
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { runRecommendDaily, runRecommendRegime, bjDate } from '../lib/recommend.js'
+import { runRecommendDaily, runRecommendRegime, decideActions, bjDate } from '../lib/recommend.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
 
@@ -86,6 +86,17 @@ try {
         2,
       ),
     )
+  }
+  // AI 动态调整：对三条链路的**活跃持仓**（未到期、未终止）逐日决定 继续/延长/提前终止。
+  // 生成失败不阻断（上面的 try 已处理）；这里再各自兜底，任一链路失败不影响其它。
+  if (!dryRun) {
+    for (const chain of ['dual', 'A', 'B']) {
+      try {
+        await decideActions(DATA_DIR, cfg, { chain, onLog: (m) => console.log('[exit]', m) })
+      } catch (e) {
+        console.warn(`[exit] ${chain} 决策失败（忽略）：${e instanceof Error ? e.message : e}`)
+      }
+    }
   }
   process.exit(0)
 } catch (err) {

@@ -1846,6 +1846,41 @@ button.member-row:hover {
 .rec-perf-alpha em.down {
   color: var(--zx-down);
 }
+/* 「AI 动态终止盈亏」独立块（与沪深300同期块同构，左侧蓝色标识动态调整）。 */
+.rec-exits {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--zx-border);
+  border-left: 3px solid #4a8ef0;
+  border-radius: var(--zx-radius);
+  background: var(--zx-panel);
+}
+.rec-exits-lead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+/* 提醒里「AI提前终止」标记 */
+.rec-due-tag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(74, 142, 240, 0.16);
+  color: #7aa7f0;
+  white-space: nowrap;
+}
+/* 卡片行内「提前终止」徽章 */
+.rec-exit {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: rgba(74, 142, 240, 0.14);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .rec-list {
   list-style: none;
   margin: 0;

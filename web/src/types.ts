@@ -148,6 +148,16 @@ export interface RecommendStock {
   holdIdxPct?: number | null
   /** 同期沪深300涨跌（%）：推荐日→最新；与 sincePickPct 同一窗口 */
   sinceIdxPct?: number | null
+  /** AI 提前终止记录（存在=该票已被提前卖出；自推荐涨幅仍继续统计） */
+  exit?: {
+    /** 终止生效日（可操作日） */
+    date: string
+    /** 终止价（决策日收盘） */
+    price: number | null
+    /** 终止涨幅（%）：推荐基准价 → 终止价 */
+    pct: number | null
+    reason?: string
+  } | null
 }
 
 /** 「按历史推荐周期，本页生效日应卖出」的一条（服务端 dueOn 计算）。 */
@@ -169,6 +179,12 @@ export interface DueItem {
   price?: number | null
   /** 自推荐日基准价到现在的涨跌（%）（服务端补） */
   sincePct?: number | null
+  /** 是否被 AI 提前终止（当日应卖出） */
+  terminated?: boolean
+  /** 提前终止涨幅（%）（terminated 时有值） */
+  exitPct?: number | null
+  /** 提前终止价 */
+  exitPrice?: number | null
 }
 
 export interface RecommendPayload {
@@ -183,6 +199,19 @@ export interface RecommendPayload {
   pool: { size: number; filtered?: number; candidates: number }
   /** 按历史推荐周期、到期日 = 本页生效日 的应卖出股票（服务端补） */
   dueOn?: DueItem[]
+  /** 「AI 动态终止盈亏」汇总（本链路本日，服务端补） */
+  exits?: {
+    /** 提前终止只数 */
+    n: number
+    /** 终止涨幅等权平均（%） */
+    meanPct: number | null
+    /** 终止胜率（0~1） */
+    winPct: number | null
+    /** 被延长的只数 */
+    extended: number
+    /** 平均延长交易日数 */
+    avgExtendDays: number | null
+  }
   /** regime 双链路的择链判据（单链路产物无此字段） */
   regime?: {
     /** 当日沪深300 动量倾斜 tilt（0=纯反转，1=强动量） */

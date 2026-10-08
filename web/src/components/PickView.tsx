@@ -487,11 +487,21 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
                   >
                     <span className="rec-due-name">{d.name}</span>
                     <span className="dim small">{d.code}</span>
+                    {d.terminated && <span className="rec-due-tag">AI提前终止</span>}
                     <span className="rec-due-meta">
                       推荐 {d.fromDate} · 持有 {d.holdDays} 日{d.times > 1 ? ` ×${d.times}` : ''}
                     </span>
-                    <span className="rec-due-num">现价 {fmt(d.price)}</span>
-                    <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
+                    {d.terminated ? (
+                      <>
+                        <span className="rec-due-num">终止价 {fmt(d.exitPrice)}</span>
+                        <span className={`rec-due-pct ${tone(d.exitPct)}`}>终止 {signedPct(d.exitPct)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="rec-due-num">现价 {fmt(d.price)}</span>
+                        <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
+                      </>
+                    )}
                   </button>
                 </li>
               ))}
@@ -546,6 +556,31 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           </div>
         </div>
       </div>
+
+      {data.exits && (data.exits.n > 0 || data.exits.extended > 0) && (
+        <div className="rec-exits">
+          <div className="rec-exits-lead">
+            AI 动态终止盈亏
+            <span className="dim small">提前终止·等权平均 · 周期由 AI 每日动态调整</span>
+          </div>
+          <div className="rec-perf-grid">
+            <div className="rec-perf-cell">
+              <span className="rec-perf-k">提前终止</span>
+              <b className={tone(data.exits.meanPct)}>{signedPct(data.exits.meanPct)}</b>
+              <span className="dim small">
+                {data.exits.n ? `${data.exits.n} 只 · ${pctStr(data.exits.winPct)} 盈利` : '暂无终止'}
+              </span>
+            </div>
+            <div className="rec-perf-cell">
+              <span className="rec-perf-k">延长周期</span>
+              <b>{data.exits.extended ? `${data.exits.extended} 只` : '—'}</b>
+              <span className="dim small">
+                {data.exits.extended ? `平均延长 ${data.exits.avgExtendDays ?? '—'} 个交易日` : '暂无延长'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ol className="rec-list">
         {data.top.map((s, i) => (
@@ -610,10 +645,21 @@ function PickCard({
             ? stock.holdPct == null
               ? '—'
               : `${stock.holdPct > 0 ? '+' : ''}${fmt(stock.holdPct)}%`
-            : stock.holdDays == null
-              ? '—'
-              : '进行中'}
+            : stock.exit
+              ? '已提前终止'
+              : stock.holdDays == null
+                ? '—'
+                : '进行中'}
         </span>
+        {stock.exit && (
+          <span
+            className={`rec-exit ${tone(stock.exit.pct)}`}
+            title={`AI 于 ${stock.exit.date} 提前终止${stock.exit.reason ? `：${stock.exit.reason}` : ''}（自推荐涨幅仍继续统计）`}
+          >
+            提前终止{' '}
+            {stock.exit.pct == null ? '—' : `${stock.exit.pct > 0 ? '+' : ''}${fmt(stock.exit.pct)}%`}
+          </span>
+        )}
         {ai?.buyScore != null && <span className="rec-score">买入 {ai.buyScore}</span>}
         <span className="rec-toggle dim">{open ? '收起' : '展开'}</span>
       </div>
