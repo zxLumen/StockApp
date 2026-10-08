@@ -259,33 +259,37 @@ function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }
   if (cal.length === 0) return []
 
   const closeOf = (secid, day) => closeMap.get(secid)?.get(day) ?? null
-  const seriesFor = (positions) => {
-    // 用 positions 的买入/卖出构建；注意同一 secid 可能多笔
-    const holdings = positions.map((p) => ({ secid: p.secid, buyDate: p.buyDate, sellDate: p.sellDate ?? '9999-12-31' }))
+  // 金额法：某日收益率 =（当日已实现 + 当日浮动）/ 截至当日累计投入。末点用实时价，
+  // 与上方「总盈亏/累计投入」完全一致（就是对不上净值法的原因，本页统一用金额法）。
+  const seriesAccount = (positions) => {
     const out = []
-    let cum = 1
-    for (let i = 0; i < cal.length; i += 1) {
-      if (i === 0) {
-        out.push({ date: cal[0], pct: 0 })
-        continue
+    for (const t of cal) {
+      let realized = 0
+      let unrealized = 0
+      let invested = 0
+      for (const p of positions) {
+        if (p.buyDate > t) continue
+        invested += p.cost
+        if (p.sellDate && p.sellDate <= t) {
+          const sp = p.sellPrice ?? closeOf(p.secid, t)
+          if (sp != null) realized += p.shares * (sp - p.buyPrice)
+        } else {
+          const c = closeOf(p.secid, t)
+          if (c != null) unrealized += p.shares * (c - p.buyPrice)
+        }
       }
-      const t = cal[i]
-      const prev = cal[i - 1]
-      const rets = []
-      for (const h of holdings) {
-        if (h.buyDate > prev) continue // 还没买
-        if (h.sellDate < t) continue // 已卖
-        const c0 = closeOf(h.secid, prev)
-        const c1 = closeOf(h.secid, t)
-        if (c0 > 0 && c1 != null) rets.push(c1 / c0 - 1)
-      }
-      cum *= 1 + mean(rets)
-      out.push({ date: t, pct: round2((cum - 1) * 100) })
+      out.push({ date: t, pct: invested > 0 ? round2(((realized + unrealized) / invested) * 100) : 0 })
     }
+    const realizedNow = positions.filter((p) => !p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0)
+    const unrealizedNow = positions.filter((p) => p.open && p.pnl != null).reduce((a, p) => a + p.pnl, 0)
+    const investedNow = positions.reduce((a, p) => a + p.cost, 0)
+    const finalPct = investedNow > 0 ? round2(((realizedNow + unrealizedNow) / investedNow) * 100) : null
+    if (out.length && out[out.length - 1].date === today) out[out.length - 1] = { date: today, pct: finalPct }
+    else out.push({ date: today, pct: finalPct })
     return out
   }
-  const origS = seriesFor(orig)
-  const aiS = seriesFor(ai)
+  const origS = seriesAccount(orig)
+  const aiS = seriesAccount(ai)
   const benchS = (() => {
     const out = []
     let cum = 1
@@ -301,14 +305,20 @@ function buildEquity(buys, { closeMap, benchBars, today, orig, ai, globalStart }
       cum = c != null && base ? c / base : cum
       out.push({ date: t, pct: round2((cum - 1) * 100) })
     }
+    // 当日指数日K尚未出时，基准线沿用最后一根 → 与前两条同为 today 末点。
+    if (out.length && out[out.length - 1].date !== today) {
+      out.push({ date: today, pct: out[out.length - 1].pct })
+    }
     return out
   })()
+  const origMap = new Map(origS.map((x) => [x.date, x.pct]))
   const aiMap = new Map(aiS.map((x) => [x.date, x.pct]))
   const benchMap = new Map(benchS.map((x) => [x.date, x.pct]))
-  return origS.map((x) => ({
-    date: x.date,
-    orig: x.pct,
-    ai: aiMap.get(x.date) ?? null,
-    bench: benchMap.get(x.date) ?? null,
+  const dates = [...new Set([...origS, ...aiS].map((x) => x.date))].sort()
+  return dates.map((d) => ({
+    date: d,
+    orig: origMap.get(d) ?? null,
+    ai: aiMap.get(d) ?? null,
+    bench: benchMap.get(d) ?? null,
   }))
 }

@@ -157,7 +157,7 @@ export default function PositionsView({
             <div className="pos-chart-wrap">
               <div className="pos-chart-title">
                 组合累计收益率 · 对照 {data?.benchName || '沪深300'}
-                <span className="dim small">（原始 vs AI动态 vs 基准，同起点）</span>
+                <span className="dim small">（金额法：总盈亏/累计投入，与上方一致 · 同起点）</span>
               </div>
               <EquityChart equity={ch.equity} />
             </div>
