@@ -134,23 +134,18 @@ export default function PositionsView({
               </span>
             </div>
             <div className="pos-cell">
-              <span className="pos-k">已实现盈亏</span>
-              <b className={tone(m.summary.realized)}>{money(m.summary.realized)}</b>
+              <span className="pos-k">累计盈亏</span>
+              <b className={tone(m.summary.total)}>{money(m.summary.total)}</b>
               <span className="dim small">
-                {m.summary.winPct != null ? `${Math.round(m.summary.winPct * 100)}% 胜率` : '—'}
+                已实现 <em className={tone(m.summary.realized)}>{money(m.summary.realized)}</em>
+                {m.summary.winPct != null ? ` · 胜率 ${Math.round(m.summary.winPct * 100)}%` : ''}
+                {m.summary.returnPct != null ? ` · 收益率 ${pctStr(m.summary.returnPct)}` : ''}
               </span>
             </div>
             <div className="pos-cell">
               <span className="pos-k">浮动盈亏</span>
               <b className={tone(m.summary.unrealized)}>{money(m.summary.unrealized)}</b>
               <span className="dim small">持仓中 {m.summary.openCount} 只</span>
-            </div>
-            <div className="pos-cell">
-              <span className="pos-k">总盈亏</span>
-              <b className={tone(m.summary.total)}>{money(m.summary.total)}</b>
-              <span className="dim small">
-                收益率 <em className={tone(m.summary.returnPct)}>{pctStr(m.summary.returnPct)}</em>
-              </span>
             </div>
           </div>
 
