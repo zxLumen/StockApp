@@ -1714,7 +1714,21 @@ button.member-row:hover {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 8px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rec-due-caret {
+  margin-left: auto;
+  color: var(--zx-dim);
+}
+.rec-due-head:hover .rec-due-caret {
+  color: var(--zx-fg);
 }
 .rec-due-title {
   font-size: 13px;
@@ -1722,7 +1736,7 @@ button.member-row:hover {
 }
 .rec-due-list {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;

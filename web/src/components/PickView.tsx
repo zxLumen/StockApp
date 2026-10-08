@@ -120,6 +120,8 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openCode, setOpenCode] = useState<string | null>(null)
+  /** 「应卖出」卡片默认折叠，需要时展开。 */
+  const [dueOpen, setDueOpen] = useState(false)
   const [calOpen, setCalOpen] = useState(false)
   const [calMonth, setCalMonth] = useState('')
   /** 日历头部弹出的是「年 / 月」选择面板（'' = 未开、'year' | 'month'） */
@@ -131,6 +133,10 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   useEffect(() => {
     dateRef.current = date
   }, [date])
+  // 切日期/链路后，「应卖出」回到默认折叠态。
+  useEffect(() => {
+    setDueOpen(false)
+  }, [date, chain])
   useEffect(() => {
     latestRef.current = dates[0] || ''
   }, [dates])
@@ -400,31 +406,39 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
 
       {data.dueOn && data.dueOn.length > 0 && (
         <div className="rec-due">
-          <div className="rec-due-head">
+          <button
+            type="button"
+            className="rec-due-head"
+            onClick={() => setDueOpen((o) => !o)}
+            aria-expanded={dueOpen}
+          >
             <span className="rec-due-title">⏰ {data.date} 应卖出</span>
             <span className="dim small">
-              按历史推荐的 AI 持有周期到期（{data.date}）· 共 {data.dueOn.length} 只
+              按历史推荐的 AI 持有周期到期 · 共 {data.dueOn.length} 只
             </span>
-          </div>
-          <ul className="rec-due-list">
-            {data.dueOn.map((d) => (
-              <li key={d.secid}>
-                <button
-                  type="button"
-                  className="rec-due-item"
-                  onClick={() => onPick({ code: d.code, name: d.name, secid: d.secid })}
-                >
-                  <span className="rec-due-name">{d.name}</span>
-                  <span className="dim small">{d.code}</span>
-                  <span className="rec-due-meta">
-                    推荐 {d.fromDate} · 持有 {d.holdDays} 日{d.times > 1 ? ` ×${d.times}` : ''}
-                  </span>
-                  <span className="rec-due-num">现价 {fmt(d.price)}</span>
-                  <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+            <span className="rec-due-caret">{dueOpen ? '▴' : '▾'}</span>
+          </button>
+          {dueOpen && (
+            <ul className="rec-due-list">
+              {data.dueOn.map((d) => (
+                <li key={d.secid}>
+                  <button
+                    type="button"
+                    className="rec-due-item"
+                    onClick={() => onPick({ code: d.code, name: d.name, secid: d.secid })}
+                  >
+                    <span className="rec-due-name">{d.name}</span>
+                    <span className="dim small">{d.code}</span>
+                    <span className="rec-due-meta">
+                      推荐 {d.fromDate} · 持有 {d.holdDays} 日{d.times > 1 ? ` ×${d.times}` : ''}
+                    </span>
+                    <span className="rec-due-num">现价 {fmt(d.price)}</span>
+                    <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
