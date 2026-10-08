@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -21,12 +21,27 @@ interface Props {
   onHover?: (bar: Bar | null) => void
 }
 
-/** 日/周/月线是 'YYYY-MM-DD'（图表按 BusinessDay 解析）；分钟线是 'YYYY-MM-DD HH:mm'，按北京时间转秒。 */
+/** 日/周/月线是 'YYYY-MM-DD'（图表按 BusinessDay 解析）；分钟线是 'YYYY-MM-DD HH:mm(:ss)'。 */
 function toTime(raw: string, intraday: boolean): Time {
   if (!intraday) return raw as Time
-  const ms = Date.parse(`${raw.replace(' ', 'T')}:00+08:00`)
+  // 容错秒级（sina 偶发 '…:ss'）：统一截前 16 个字符。
+  const compact = raw.slice(0, 16)
+  // lightweight-charts 的分钟线刻度按 **UTC 墙钟** 渲染（无时区配置），
+  // 直接把北京墙钟当 UTC 解析，轴标签才等于北京时间（按 +08:00 解析会整列少 8h）。
+  const ms = Date.parse(`${compact.replace(' ', 'T')}:00Z`)
   if (Number.isFinite(ms)) return (ms / 1000) as Time
   return raw as Time
+}
+
+/** 分钟线只画「最新交易日」开盘后的那一段（专业软件「分时」口径）；日/周/月不动。 */
+function lastSessionBars(bars: Bar[]): Bar[] {
+  let last = ''
+  for (const b of bars) {
+    const d = b.time.slice(0, 10)
+    if (d > last) last = d
+  }
+  if (!last) return bars
+  return bars.filter((b) => b.time.slice(0, 10) === last)
 }
 
 /** 蜡烛配色：A股红涨绿跌，美股绿涨红跌（与 format.ts 的 trendClass 同一口径）。 */
@@ -45,6 +60,9 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
   const [hover, setHover] = useState<Bar | null>(null)
+
+  // 分时只取最新交易日的时段（多日分钟数据堆一起太乱）；日/周/月原样。
+  const viewBars = useMemo(() => (intraday ? lastSessionBars(bars) : bars), [bars, intraday])
 
   const colors = market === 'us' ? PALETTE.us : PALETTE.cn
 
@@ -137,9 +155,9 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
     const volume = volumeRef.current
     if (!candle || !volume) return
 
-    byTime.current = new Map(bars.map((b) => [String(toTime(b.time, intraday)), b]))
+    byTime.current = new Map(viewBars.map((b) => [String(toTime(b.time, intraday)), b]))
     candle.setData(
-      bars.map((b) => ({
+      viewBars.map((b) => ({
         time: toTime(b.time, intraday),
         open: b.open,
         high: b.high,
@@ -148,7 +166,7 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       })),
     )
     volume.setData(
-      bars.map((b) => ({
+      viewBars.map((b) => ({
         time: toTime(b.time, intraday),
         value: b.volume ?? 0,
         color: b.close >= b.open ? `${colors.up}66` : `${colors.down}66`,
@@ -158,15 +176,15 @@ export default function KLineChart({ bars, market, intraday, height = 380, onHov
       const series = maRefs.current[key]
       if (!series) continue
       series.setData(
-        bars
+        viewBars
           .filter((b) => b[key] != null)
           .map((b) => ({ time: toTime(b.time, intraday), value: b[key] as number })),
       )
     }
     chartRef.current?.timeScale().fitContent()
-  }, [bars, intraday, colors.up, colors.down])
+  }, [viewBars, intraday, colors.up, colors.down])
 
-  const legend = hover ?? bars[bars.length - 1] ?? null
+  const legend = hover ?? viewBars[viewBars.length - 1] ?? null
 
   return (
     <div className="kline">

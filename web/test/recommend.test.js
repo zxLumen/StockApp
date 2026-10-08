@@ -126,10 +126,13 @@ test('bjDate：返回 YYYY-MM-DD', () => {
   assert.match(bjDate(new Date('2026-10-04T06:00:00Z')), /^\d{4}-\d{2}-\d{2}$/)
 })
 
-test('nextTradingDay：周中 → 次日；周五 → 下周一；周六 → 周一', () => {
-  assert.equal(nextTradingDay('2026-10-06'), '2026-10-07', '周二 → 周三')
+test('nextTradingDay：周中 → 次日；周五 → 下周一；周六 → 周一；节假日跳过', () => {
+  assert.equal(nextTradingDay('2026-10-08'), '2026-10-09', '周三 → 周四')
   assert.equal(nextTradingDay('2026-10-09'), '2026-10-12', '周五 → 下周一')
   assert.equal(nextTradingDay('2026-10-10'), '2026-10-12', '周六 → 周一')
+  assert.equal(nextTradingDay('2026-10-06'), '2026-10-08', '国庆(10-01~10-07)后首日')
+  assert.equal(nextTradingDay('2026-10-01'), '2026-10-08', '节假日当天 → 节后首日')
+  assert.equal(nextTradingDay('2026-02-13'), '2026-02-24', '春节前最后交易日 → 节后首日')
 })
 
 test('pctFromPick：正常计算、除零/缺值返回 null', () => {

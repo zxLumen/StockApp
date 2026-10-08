@@ -13,6 +13,9 @@ import { computeFactors, compositeScores, regimeTilt } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
 import { tiltThreshold, selectConfig } from './model-config.js'
+import { nextTradingDay } from './trading-days.js'
+
+export { nextTradingDay }
 
 // 策略参数来自可训练配置（web/config/model.json）；代码不写死。
 const SEL = selectConfig()
@@ -42,25 +45,6 @@ const yi = (n) => (n == null || Number.isNaN(Number(n)) ? 'NA' : `${(Number(n) /
 /** 北京时间当天 YYYY-MM-DD。 */
 export function bjDate(d = new Date()) {
   return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
-}
-
-/** 周末判定（用 UTC 的星期分量，避免本地时区把日期挪一天）。 */
-function isWeekend(iso) {
-  const day = new Date(`${iso}T00:00:00Z`).getUTCDay()
-  return day === 0 || day === 6
-}
-
-/**
- * 下一交易日（只跳周末；不含法定节假日 —— 那是要维护一张表的，暂不做）。
- * 推荐脚本在「生成日」收盘后跑，文件名用**推荐生效日**（下一交易日），
- * 这样标题里的日期 = 用户实际参考 / 买入的交易日，而不是分析发生的那天。
- */
-export function nextTradingDay(iso) {
-  let d = new Date(`${iso}T00:00:00Z`)
-  do {
-    d = new Date(d.getTime() + 86_400_000)
-  } while (isWeekend(d.toISOString().slice(0, 10)))
-  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -957,7 +941,15 @@ async function holdReturn(secid, basisDate, holdDays) {
   if (!secid || !basisDate || !holdDays) return { holdPct: null, holdEndDate: null, holdDone: false }
   try {
     const bars = (await cachedKline(secid))?.bars || []
-    const idx = bars.findIndex((b) => b.time === basisDate)
+    // 取「≤ basisDate 的最后一根」而不是严格等于：basisDate 可能是节假日（如国庆），
+    // 严格相等会查不到、整列变 null。与 benchReturns 同口径，两边才可相减出超额。
+    let idx = -1
+    for (let k = bars.length - 1; k >= 0; k -= 1) {
+      if (bars[k].time <= basisDate && bars[k].close) {
+        idx = k
+        break
+      }
+    }
     if (idx < 0) return { holdPct: null, holdEndDate: null, holdDone: false }
     const base = bars[idx].close
     const sell = bars[idx + holdDays]
@@ -1013,7 +1005,10 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
   const secids = [...new Set(payload.top.map((s) => s.secid).filter(Boolean))]
   let quotes = new Map()
   try {
-    const { items } = await cached(`recperf:${payload.date}`, ttlMs, async () => {
+    // 缓存键带 secid 集合：A/B 链路标的集不同，共用一个键会让先加载的链路把
+    // 另一条链路的个股行情顶掉（sincePickPct 全变 null）。同链路内多次刷新仍命中。
+    const key = `recperf:${payload.date}:${[...secids].sort().join('+')}`
+    const { items } = await cached(key, ttlMs, async () => {
       const q = await quoteFn(secids)
       return { items: q.items || [] }
     })
@@ -1031,6 +1026,9 @@ export async function attachPerformance(payload, { quoteFn = getQuotes, ttlMs = 
     return {
       ...s,
       latestPrice: q?.price ?? null,
+      // 「今日涨幅」列：优先实时行情（有效日之后 = 自推荐日的真实涨跌），
+      // 别用生成时写入的快照 changePct（那是上一个交易日的涨幅）。基准价 price 不动。
+      changePct: q?.changePct ?? s.changePct ?? null,
       sincePickPct: pctFromPick(s.price, q?.price),
       holdDays,
       holdPct: hr.holdPct,
