@@ -662,18 +662,40 @@ function parseSentCid(req) {
   return raw.split(';').some((p) => p.trim().startsWith('stock_cid='))
 }
 
-// 后台预热：盘中每 5min 把三条链路最新一天的「静态榜单 + 实时行情」组装一次写进缓存，
-// 让访客读热缓存（不再由访客触发上游）。盘后/休市不拉（价格不再变，读路径用长 TTL）。
+// 后台预热：把三条链路近期日期的「静态榜单 + 实时行情」组装一次写进缓存，让访客读热缓存
+// （不由访客触发）。盘中每 5min 预热最近 WARM_DAYS 天；盘后不周期拉，只在出现**新的最新
+// 日期**（当天跑批产物）时预热一次。enrichRecommend 会顺带把 top 票的日K写进磁盘缓存（B）。
 const WARM_CHAINS = ['dual', 'A', 'B']
+const WARM_DAYS = 5
 const WARM_INTERVAL_MS = 5 * 60_000
-async function warmRecommend() {
-  if (!isAshareSession()) return
-  for (const chain of WARM_CHAINS) {
+const warmedLatest = new Map()
+async function warmChain(chain, dates) {
+  for (const d of dates) {
     try {
-      const data = await loadRecommend(DATA_DIR, undefined, chain)
+      const data = await loadRecommend(DATA_DIR, d, chain)
       if (data) await enrichRecommend(DATA_DIR, data, { chain, ttlMs: recommendTtlMs() })
     } catch {
-      /* 预热失败不影响服务；访客路径会自行兜底 */
+      /* 单个失败不影响其它；访客路径会自行兜底 */
+    }
+  }
+}
+async function warmRecommend() {
+  const session = isAshareSession()
+  for (const chain of WARM_CHAINS) {
+    let dates = []
+    try {
+      dates = await listRecommendDates(DATA_DIR, chain)
+    } catch {
+      /* 目录缺失等忽略 */
+    }
+    if (!dates.length) continue
+    if (session) {
+      await warmChain(chain, dates.slice(0, WARM_DAYS))
+      warmedLatest.set(chain, dates[0])
+    } else if (warmedLatest.get(chain) !== dates[0]) {
+      // 盘后：出现新的最新日期 → 预热一次；之后不再周期拉。
+      await warmChain(chain, dates.slice(0, 1))
+      warmedLatest.set(chain, dates[0])
     }
   }
 }

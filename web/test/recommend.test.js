@@ -230,5 +230,5 @@ test('isAshareSession / recommendTtlMs：盘中 6min、盘后 30min、非交易�
   assert.equal(isAshareSession(bj(16, 0)), false, '收盘后停拉')
   assert.equal(isAshareSession(bj(10, 0, 10)), false, '周六')
   assert.equal(recommendTtlMs(bj(10, 0)), 6 * 60_000)
-  assert.equal(recommendTtlMs(bj(20, 0)), 30 * 60_000)
+  assert.equal(recommendTtlMs(bj(20, 0)), 12 * 60 * 60_000)
 })

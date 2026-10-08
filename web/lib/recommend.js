@@ -1158,11 +1158,11 @@ export function isAshareSession(d = new Date()) {
 }
 
 /**
- * 读路径的行情缓存 TTL：盘中 6 分钟（配合后台每 5min 预热，永不冷）；盘后 30 分钟
- * （价格不再变，拉长 TTL 让访客别再触发上游）。
+ * 读路径的行情/组装缓存 TTL：盘中 6 分钟（配合后台每 5min 预热，永不冷）；盘后 12 小时
+ * （收盘后价格不再变，拉长 TTL 让访客切日期/链路都不再触发上游）。
  */
 export function recommendTtlMs(d = new Date()) {
-  return isAshareSession(d) ? 6 * 60_000 : 30 * 60_000
+  return isAshareSession(d) ? 6 * 60_000 : 12 * 60 * 60_000
 }
 
 /**
