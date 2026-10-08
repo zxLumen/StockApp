@@ -23,7 +23,7 @@ import {
   BENCH_NAME,
   CHAIN_SUBDIR,
 } from './recommend.js'
-import { addTradingDays } from './trading-days.js'
+import { addTradingDays, prevTradingDay } from './trading-days.js'
 
 const ACTIONS_FILE = 'recommend-actions.json'
 const PER_STOCK = 10000
@@ -63,13 +63,13 @@ async function computeAll(dataDir) {
   return { benchName: BENCH_NAME, asOf: valuationDate, chains }
 }
 
-/** 该链路最早一天的基准日（买入日）。 */
+/** 该链路最早一天的买入日（归一到交易日）。 */
 async function earliestBasis(dataDir, chain) {
   const dates = await listRecommendDates(dataDir, chain)
   if (!dates.length) return null
   const d = dates.slice().sort()[0]
   const p = await readJson(path.join(dataDir, CHAIN_SUBDIR[chain] || 'recommend', `${d}.json`), null)
-  return p?.basisDate || d
+  return prevTradingDay(p?.basisDate || d)
 }
 
 function emptyChain() {
@@ -92,7 +92,9 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
   for (const D of dates) {
     const p = await readJson(path.join(dataDir, sub, `${D}.json`), null)
     if (!p || !Array.isArray(p.top)) continue
-    const buyDate = p.basisDate || D
+    // 买入日归一到一个**交易日**：basisDate 可能是跑批当天恰好是假日（如 10-06/10-07），
+    // 而买入价本就是「≤ 该日的最后交易日收盘」，所以退到 prevTradingDay，起算/日历才对得上。
+    const buyDate = prevTradingDay(p.basisDate || D)
     for (const s of p.top) {
       const origHold = Number(s.ai?.holdDays ?? s.holdDays)
       if (!s.secid || !Number.isFinite(origHold) || !(s.price > 0)) continue
