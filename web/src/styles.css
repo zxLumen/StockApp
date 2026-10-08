@@ -1881,6 +1881,14 @@ button.member-row:hover {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* 「延长 +N」用琥珀色，与蓝色「提前终止」区分 */
+.rec-exit-ext {
+  background: rgba(232, 163, 61, 0.16);
+}
+.rec-due-tag-ext {
+  background: rgba(232, 163, 61, 0.18);
+  color: #e8b76a;
+}
 .rec-list {
   list-style: none;
   margin: 0;

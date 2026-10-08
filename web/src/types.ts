@@ -157,7 +157,11 @@ export interface RecommendStock {
     /** 终止涨幅（%）：推荐基准价 → 终止价 */
     pct: number | null
     reason?: string
+    /** 实际持有交易日数（推荐生效日 → 终止日） */
+    heldDays?: number | null
   } | null
+  /** AI 延长周期（存在=被延长）；days=延长后的交易日数，pct=延长后盈亏（推荐日→延长后结束日/至今） */
+  extend?: { days: number; pct: number | null } | null
 }
 
 /** 「按历史推荐周期，本页生效日应卖出」的一条（服务端 dueOn 计算）。 */
@@ -185,6 +189,12 @@ export interface DueItem {
   exitPct?: number | null
   /** 提前终止价 */
   exitPrice?: number | null
+  /** 实际持有交易日数（推荐生效日 → 终止日）（terminated 时有值） */
+  heldDays?: number | null
+  /** 该到期票是否因 AI 延长周期而移到本日（true=延长后到期） */
+  extended?: boolean
+  /** 延长了多个交易日（extended 时有值） */
+  extendDays?: number | null
 }
 
 export interface RecommendPayload {
@@ -199,18 +209,17 @@ export interface RecommendPayload {
   pool: { size: number; filtered?: number; candidates: number }
   /** 按历史推荐周期、到期日 = 本页生效日 的应卖出股票（服务端补） */
   dueOn?: DueItem[]
-  /** 「AI 动态终止盈亏」汇总（本链路本日，服务端补） */
+  /** 「AI 动态调整盈亏」汇总（本链路本日，服务端补）：仅总计（终止+延长+未更改） */
   exits?: {
-    /** 提前终止只数 */
-    n: number
-    /** 终止涨幅等权平均（%） */
-    meanPct: number | null
-    /** 终止胜率（0~1） */
-    winPct: number | null
-    /** 被延长的只数 */
-    extended: number
-    /** 平均延长交易日数 */
-    avgExtendDays: number | null
+    total: {
+      n: number
+      meanPct: number | null
+      winPct: number | null
+      /** 动态"已了结"只数（终止/延长后到期/自然到期） */
+      done: number
+      /** 本日推荐只数 */
+      total: number
+    }
   }
   /** regime 双链路的择链判据（单链路产物无此字段） */
   regime?: {

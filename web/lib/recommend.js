@@ -948,6 +948,7 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
   const dates = (await listRecommendDates(dataDir, chain, { includeHidden: true })).filter(
     (d) => d >= from && d <= targetDate,
   )
+  const actions = await readActions(dataDir)
   const byStock = new Map()
   const add = (item) => {
     const prev = byStock.get(item.secid)
@@ -966,31 +967,37 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
     const payload = await readJson(path.join(dataDir, chainSubdir(chain), `${d}.json`), null)
     if (!payload || !Array.isArray(payload.top)) continue
     const basis = payload.basisDate || d
+    const recDate = payload.date || d
     for (const s of payload.top) {
-      const holdDays = s.ai?.holdDays ?? s.holdDays
-      if (!s.secid || holdDays == null) continue
+      const baseHold = s.ai?.holdDays ?? s.holdDays
+      if (!s.secid || baseHold == null) continue
+      // 用**生效周期**（AI 延长后）算卖出日，否则延长后的新卖出日不会出现在提醒里。
+      const pos = actions.positions[actionKey(chain, recDate, s.code)]
+      const effHold = pos?.holdDays ?? baseHold
       let sell
       try {
-        sell = addTradingDays(basis, Number(holdDays))
+        sell = addTradingDays(basis, Number(effHold))
       } catch {
         continue
       }
       if (sell !== targetDate) continue
+      const extended = pos != null && Number(effHold) > Number(pos.baseHoldDays ?? baseHold)
       add({
         secid: s.secid,
         code: s.code,
         name: s.name,
-        holdDays: Number(holdDays),
-        fromDate: payload.date || d,
+        holdDays: Number(effHold),
+        fromDate: recDate,
         basisDate: basis,
         pickPrice: s.price ?? null,
         holdReason: s.ai?.holdReason ?? '',
         terminated: false,
+        extended,
+        extendDays: extended ? Number(effHold) - Number(pos.baseHoldDays ?? baseHold) : 0,
       })
     }
   }
   // 第二路来源：本链路当日被 AI **提前终止**的持仓（exitDate == targetDate）。
-  const actions = await readActions(dataDir)
   for (const pos of Object.values(actions.positions)) {
     if (pos.chain !== chain || !pos.exited || !pos.exit) continue
     if (pos.exit.date !== targetDate) continue
@@ -1006,6 +1013,7 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
       terminated: true,
       exitPct: pos.exit.pct ?? null,
       exitPrice: pos.exit.price ?? null,
+      heldDays: heldTradingDays(pos.recDate, pos.exit.date),
     })
   }
   return [...byStock.values()].sort((a, b) => (a.fromDate < b.fromDate ? -1 : a.fromDate > b.fromDate ? 1 : 0))
@@ -1216,24 +1224,16 @@ export function recommendTtlMs(d = new Date()) {
  */
 export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs = recommendTtlMs() } = {}) {
   if (!payload || !Array.isArray(payload.top) || !payload.top.length) return payload
-  // 动态调整：取本链路本日各票的**生效周期**与**终止记录**（延长后用生效 holdDays 重算周期）。
   const actions = await readActions(dataDir)
   const prefix = `${chain}:${payload.date}:`
   const posMap = new Map()
   for (const [k, pos] of Object.entries(actions.positions)) {
     if (k.startsWith(prefix)) posMap.set(pos.code, pos)
   }
-  const topWithActions = payload.top.map((s) => {
-    const pos = posMap.get(s.code)
-    if (!pos) return s
-    const holdDays = pos.holdDays ?? s.ai?.holdDays ?? null
-    return { ...s, ai: s.ai ? { ...s.ai, holdDays } : s.ai, exit: pos.exited && pos.exit ? pos.exit : undefined }
-  })
-  const payload2 = { ...payload, top: topWithActions }
 
   const due = await cached(`recDue:${chain}:${payload.date}`, ttlMs, () => dueOn(dataDir, payload.date, { chain }))
   const dueSecids = [...new Set((due || []).map((d) => d.secid).filter(Boolean))]
-  const all = [...new Set([...payload2.top.map((s) => s.secid), ...dueSecids, BENCH_SECID].filter(Boolean))]
+  const all = [...new Set([...payload.top.map((s) => s.secid), ...dueSecids, BENCH_SECID].filter(Boolean))]
   let quotes = new Map()
   try {
     quotes = await cached(`recQuotes:${chain}:${payload.date}:${[...all].sort().join('+')}`, ttlMs, async () => {
@@ -1243,38 +1243,62 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
   } catch {
     /* 上游挂了：盈亏列与 dueOn 现价留空，不阻断静态内容 */
   }
-  const withPerf = await attachPerformance(payload2, { quotes, ttlMs })
+  // 原始 AI 周期（不因终止/延长而变）：holdDays / holdPct 全按文件原值。
+  const withPerf = await attachPerformance(payload, { quotes, ttlMs })
+
+  // 额外信息（不影响 AI周期 与 holdPct）：终止→终止盈亏+实际持有天数；延长→延长后周期+盈亏。
+  const top = await mapLimit(withPerf.top, 8, async (s) => {
+    const pos = posMap.get(s.code)
+    if (!pos) return s
+    if (pos.exited && pos.exit) {
+      const heldDays = heldTradingDays(payload.date, pos.exit.date)
+      return { ...s, exit: { ...pos.exit, heldDays } }
+    }
+    const base = pos.baseHoldDays ?? s.ai?.holdDays ?? null
+    if (pos.holdDays != null && base != null && pos.holdDays > base) {
+      const q = quotes.get(s.secid)
+      const hr = await holdReturn(s.secid, payload.basisDate, pos.holdDays, q?.price)
+      return { ...s, extend: { days: pos.holdDays - base, pct: hr.holdPct, done: hr.holdDone } }
+    }
+    return s
+  })
+
   const dueOnItems = (due || []).map((d) => {
     const price = quotes.get(d.secid)?.price ?? null
     return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
   })
 
-  // 「AI 动态终止盈亏」汇总（本链路本日）：终止均值/只数/胜率 + 延长只数/平均延长天数。
-  const exitPcts = []
-  let extended = 0
-  let extendDaysSum = 0
-  for (const s of withPerf.top) {
+  // 「AI 动态调整盈亏」总计：每只的动态最终盈亏（终止→终止日；延长→延长后；其余→原始周期）。
+  // done = 动态"已了结"（终止 / 延长后到期 / 自然到期）；total = 本日只数。
+  const dyn = []
+  let doneCount = 0
+  for (const s of top) {
     const pos = posMap.get(s.code)
-    if (!pos) continue
-    if (pos.exited && pos.exit) {
-      const p = Number(pos.exit.pct)
-      if (Number.isFinite(p)) exitPcts.push(p)
+    let p = null
+    let done = false
+    if (pos?.exited && pos.exit) {
+      p = Number(pos.exit.pct)
+      done = true
+    } else if (s.extend) {
+      p = Number(s.extend.pct)
+      done = !!s.extend.done
+    } else {
+      p = Number(s.holdPct)
+      done = !!s.holdDone
     }
-    const base = payload.top.find((x) => x.code === s.code)?.ai?.holdDays
-    if (pos.holdDays != null && base != null && pos.holdDays > base) {
-      extended += 1
-      extendDaysSum += pos.holdDays - base
-    }
+    if (Number.isFinite(p)) dyn.push(p)
+    if (done) doneCount += 1
   }
-  const mean = exitPcts.length ? exitPcts.reduce((a, b) => a + b, 0) / exitPcts.length : null
   const exits = {
-    n: exitPcts.length,
-    meanPct: mean == null ? null : Number(mean.toFixed(2)),
-    winPct: exitPcts.length ? Number((exitPcts.filter((v) => v > 0).length / exitPcts.length).toFixed(4)) : null,
-    extended,
-    avgExtendDays: extended ? Number((extendDaysSum / extended).toFixed(1)) : null,
+    total: {
+      n: dyn.length,
+      meanPct: dyn.length ? Number((dyn.reduce((a, b) => a + b, 0) / dyn.length).toFixed(2)) : null,
+      winPct: dyn.length ? Number((dyn.filter((v) => v > 0).length / dyn.length).toFixed(4)) : null,
+      done: doneCount,
+      total: top.length,
+    },
   }
-  return { ...withPerf, dueOn: dueOnItems, exits }
+  return { ...withPerf, top, dueOn: dueOnItems, exits }
 }
 
 /** 动态持仓管理的 AI 提示（hold / extend / exit 三选一）。 */
@@ -1307,6 +1331,19 @@ function tradingDaysUntil(fromIso, toIso) {
     d = nextTradingDay(d)
     if (d >= toIso) break
     n += 1
+  }
+  return n
+}
+
+/** 从 from（推荐生效日）到 to（终止日）实际持有的交易日数（不含 from、含 to）。 */
+function heldTradingDays(fromIso, toIso) {
+  if (!fromIso || !toIso || toIso <= fromIso) return 0
+  let d = fromIso
+  let n = 0
+  for (let i = 0; i < 300; i += 1) {
+    d = nextTradingDay(d)
+    n += 1
+    if (d >= toIso) break
   }
   return n
 }
