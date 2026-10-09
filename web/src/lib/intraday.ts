@@ -60,19 +60,26 @@ export function tsToSlot(day: string, ts: number): number {
 }
 
 /**
- * 分时均价线：累计成交额 / 累计成交量（股）。东财分钟线量单位是「手」（1 手 = 100 股），
- * 故除以 volume*100；某根量缺失/为 0 时沿用上一根均价，开头无值则为 null。
+ * 分时均价线 = 成交量加权均价（VWAP）：Σ(close×volume) / Σ(volume)。
+ *
+ * 为什么不用「成交额 / 成交量」：个股的 amount≈Σ(成交价×股数)，两者等价（差异 <0.05%）；
+ * 但**指数**（上证/深证/恒生/纳指…）与**板块**的分钟 amount 是成分股总成交额、volume 是成分股
+ * 总手数，二者相除得到的是「全市场平均每股价格」（十几元），与指数点位（几千点）不是一个量纲，
+ * 会让均价线被压到图底部。用 close 加权对个股/ETF 同样成立，对指数才正确。
+ * 量缺失/为 0 时沿用上一根均价，开头无值则为 null。
  */
-export function avgPrices(bars: Array<{ amount?: number | null; volume?: number | null }>): Array<number | null> {
-  let cumAmount = 0
+export function avgPrices(bars: Array<{ close?: number | null; volume?: number | null }>): Array<number | null> {
+  let cumPv = 0
   let cumVol = 0
   let last: number | null = null
   return bars.map((b) => {
-    const a = Number(b.amount)
+    const c = Number(b.close)
     const v = Number(b.volume)
-    if (Number.isFinite(a) && a > 0) cumAmount += a
-    if (Number.isFinite(v) && v > 0) cumVol += v * 100
-    if (cumVol > 0) last = Number((cumAmount / cumVol).toFixed(3))
+    if (Number.isFinite(c) && Number.isFinite(v) && v > 0) {
+      cumPv += c * v
+      cumVol += v
+    }
+    if (cumVol > 0) last = Number((cumPv / cumVol).toFixed(3))
     return last
   })
 }

@@ -46,11 +46,11 @@ test('slotTs / tsToSlot：伪时间戳与槽位互逆', () => {
   assert.equal(SESSION_SLOTS, 241, '含两端共 241 个点')
 })
 
-test('avgPrices：累计成交额 / 累计成交量（手 → 股）', () => {
+test('avgPrices：成交量加权均价 VWAP（Σ close×vol / Σ vol）', () => {
   const bars = [
-    { amount: 1000, volume: 1 }, // 1000 / (1*100) = 10
-    { amount: 1000, volume: 1 }, // 2000 / 200 = 10
-    { amount: 3000, volume: 1 }, // 5000 / 300 ≈ 16.667
+    { close: 10, volume: 1 }, // 10
+    { close: 10, volume: 1 }, // 20 / 2 = 10
+    { close: 30, volume: 1 }, // 50 / 3 ≈ 16.667
   ]
   const a = avgPrices(bars)
   assert.equal(a[0], 10)
@@ -59,10 +59,22 @@ test('avgPrices：累计成交额 / 累计成交量（手 → 股）', () => {
 })
 
 test('avgPrices：量缺失沿用上一根，开头无量为 null', () => {
-  const bars = [{ amount: 0, volume: 0 }, { amount: 2000, volume: 2 }]
+  const bars = [{ close: null, volume: 0 }, { close: 10, volume: 2 }]
   const a = avgPrices(bars)
   assert.equal(a[0], null)
   assert.equal(a[1], 10)
+})
+
+test('avgPrices：指数按 close 加权（amount 口径不适用）', () => {
+  // 上证指数：amount 是成分股总成交额（亿级），直接用 amount/volume 会得到十几元，
+  // 必须用 close（点位）加权，均价线才贴住指数点位。
+  const bars = [
+    { close: 3800, volume: 100, amount: 34188124160 },
+    { close: 3820, volume: 100, amount: 15854417152 },
+  ]
+  const a = avgPrices(bars)
+  assert.equal(a[0], 3800)
+  assert.equal(a[1], 3810)
 })
 
 test('lastDayBars：只留最后一个交易日', () => {
