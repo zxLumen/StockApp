@@ -193,7 +193,7 @@ test('reconcileCross：交叉票 AI 二选一（keep 撤销终止 / sell 剔除�
       [actionKey('dual', '2026-10-08', 'Y')]: mkPos('Y'),
     },
   })
-  const deps = { crossDecide: async (row) => ({ action: row.code === 'X' ? 'keep' : 'sell' }) }
+  const deps = { crossDecide: async (row) => ({ action: row.code === 'X' ? 'keep' : 'sell', confidence: 90 }) }
   const r = await reconcileCross(dir, {}, { chain: 'dual', effective: E, finalPicks: 3, deps })
   assert.equal(r.arbitrated, 2)
   assert.equal(r.dropped, 1)
@@ -202,4 +202,29 @@ test('reconcileCross：交叉票 AI 二选一（keep 撤销终止 / sell 剔除�
   const actions = await readJson(path.join(dir, 'recommend-actions.json'))
   assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, false, 'keep → 撤销终止')
   assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'Y')].exited, true, 'sell → 保持终止')
+})
+
+test('reconcileCross：低置信 sell 不剔除（默认保守，宁 keep 不误砍）', async () => {
+  const dir = await tmp()
+  const E = '2026-10-12'
+  const s = (code) => ({ secid: `1.${code}`, code, name: code, ai: { buyScore: 80, summary: '' } })
+  await fsp.mkdir(path.join(dir, 'recommend'), { recursive: true })
+  await writeJson(path.join(dir, 'recommend', `${E}.json`), { date: E, top: [s('X'), s('Z')], candidates: [s('X'), s('Z')] })
+  await writeJson(path.join(dir, 'recommend-actions.json'), {
+    version: 1,
+    positions: {
+      [actionKey('dual', '2026-10-08', 'X')]: {
+        chain: 'dual', recDate: '2026-10-08', secid: '1.X', code: 'X', name: 'X',
+        holdDays: 3, basisDate: '2026-10-08', pickPrice: 10, exited: true,
+        exit: { date: E, basisDate: '2026-10-09', price: 9.5, pct: -5, reason: '走弱' }, log: [],
+      },
+    },
+  })
+  const deps = { crossDecide: async () => ({ action: 'sell', confidence: 30 }) } // 低置信
+  const r = await reconcileCross(dir, {}, { chain: 'dual', effective: E, finalPicks: 2, deps })
+  assert.equal(r.dropped, 0, '低置信 sell 不剔除')
+  const payload = await readJson(path.join(dir, 'recommend', `${E}.json`))
+  assert.ok(payload.top.some((t) => t.code === 'X'), 'X 仍在榜')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, false, '低置信 → 撤销终止')
 })

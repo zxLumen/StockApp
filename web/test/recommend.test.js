@@ -174,6 +174,15 @@ test('selectTop10：无高分时按分降序取（低分也保留，不崩）', 
   assert.deepEqual(top.map((t) => t.code), ['a', 'b'])
 })
 
+test('selectTop10：全部无买入评分（解读全失败）→ 按原始顺序兜底，不空仓', async () => {
+  const scored = [
+    { code: 'x', name: 'x', ai: { buyScore: null, summary: '' } },
+    { code: 'y', name: 'y', ai: { buyScore: null, summary: '' } },
+  ]
+  const top = await selectTop10(null, scored, 10, () => {}, { highBar: 60 })
+  assert.deepEqual(top.map((t) => t.code), ['x', 'y'], '按原顺序返回，不返回空')
+})
+
 // ── normalizeHoldDays：模型按个股自由给持仓周期（不锁档位）──────────────────
 test('normalizeHoldDays：任意正整数原样保留（不再锁 3/5/10/20）', () => {
   for (const n of [1, 3, 4, 5, 7, 10, 12, 20, 23, 45, 60]) assert.equal(normalizeHoldDays(n), n)

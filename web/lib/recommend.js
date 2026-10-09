@@ -193,9 +193,7 @@ export const interpretUser = (ctx) =>
   ' "summary": "一句话概括，40到60字（讲清为什么值得或不值得买）",\n' +
   ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
   ' "risks": ["风险，2到3条，每条20到30字"],\n' +
-  ' "tags": ["题材或风格标签，3到5个"],\n' +
-  ' "veto": true 或 false（**是否属于「一买入就很可能会被提前终止」**：跌破关键均线且放量走坏 / 题材证伪 / 明显走坏 → true；否则 false）,\n' +
-  ' "vetoReason": "若 veto=true，一句话说明理由；否则空字符串"\n' +
+  ' "tags": ["题材或风格标签，3到5个"]\n' +
   '}\n' +
   '判断要点（务必据此打分，直接决定 buyScore 高低）：\n' +
   '- **「距 MA20 偏离」是最关键的追高风险指标**：偏离 +15% 以上基本是追高，buyScore 应 ≤40；' +
@@ -447,6 +445,11 @@ export async function selectByFactors(
 export async function selectTop10(cfg, scored, finalPicks = 10, onLog = () => {}, { highBar = 60 } = {}) {
   const byScoreDesc = (a, b) => (b.ai?.buyScore ?? -1) - (a.ai?.buyScore ?? -1)
   const withScore = scored.filter((c) => c.ai?.buyScore != null).slice().sort(byScoreDesc)
+  // 兜底：整批都没有买入评分（逐只解读全失败）→ 按原始顺序取前 finalPicks，避免 A 链路直接空仓。
+  if (!withScore.length) {
+    onLog(`无任何买入评分（解读可能全部失败）→ 按原始顺序取前 ${finalPicks}`)
+    return scored.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'fill' }))
+  }
   const high = withScore.filter((c) => c.ai.buyScore >= highBar)
 
   // ¥2 高分股不足 finalPicks：直接用（优先高分，再按分把低分垫底补满）
@@ -686,8 +689,6 @@ export async function runRecommendDaily({
       catalysts: [],
       risks: [],
       tags: [],
-      veto: false,
-      vetoReason: '',
     },
   })
   const withAi = !interpretAi ? candidates.map(noAi) : await mapLimit(candidates, concurrency, async (c) => {
@@ -717,8 +718,6 @@ export async function runRecommendDaily({
           catalysts: [],
           risks: [],
           tags: [],
-          veto: false,
-          vetoReason: '',
           ...(base || {}),
         },
       }
@@ -736,9 +735,6 @@ export async function runRecommendDaily({
         catalysts: arr(base.catalysts, 8),
         risks: arr(base.risks, 8),
         tags: arr(base.tags, 10),
-        // B 链路过筛用：模型判定"一买入就很可能会被提前终止"。
-        veto: base.veto === true,
-        vetoReason: String(base.vetoReason || '').slice(0, 80),
       },
     }
   })
@@ -750,15 +746,11 @@ export async function runRecommendDaily({
 
   // 选 Top10：**先按买入评分**，高分才配进榜；评审只在「高分股超过 10 只」时用来取舍。
   // 早先无条件把 100 只交给评审，它会选进 18 分的股（评分才是逐只精评的可靠信号）。
-  // B（factors）链路：用 AI 的 veto 把"一买入就很可能会被提前终止"的票剔出买入名单，再按因子序回填。
-  const ranked = selectMode === 'factors' ? scored.filter((c) => !c.ai?.veto) : scored
-  if (selectMode === 'factors' && ranked.length < scored.length) {
-    onLog(`AI 过筛：剔除 ${scored.length - ranked.length}/${scored.length} 只（veto），命中 ${ranked.length} 只`)
-    if (ranked.length < finalPicks) onLog(`⚠ veto 后不足 ${finalPicks} 只（${ranked.length}），可调大 --top / 候选池`)
-  }
+  // B（factors）链路：不做"新候选 veto"（与反转策略天然冲突），直接取因子序前 finalPicks；
+  // 多解读的候选（candidates）留作交叉仲裁的回填池。
   const top =
     selectMode === 'factors'
-      ? ranked.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'factor' }))
+      ? scored.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'factor' }))
       : await selectTop10(cfg, scored, finalPicks, onLog, { highBar })
   onLog(`Top${finalPicks}：${top.map((t) => `${t.code}(${t.ai.buyScore})`).join(' ')}`)
 
@@ -844,7 +836,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
  */
 export async function runRecommendRegime(opts = {}) {
-  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, vetoPool = 30, deps = {}, onLog = () => {} } = opts
+  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, candPool = 30, deps = {}, onLog = () => {} } = opts
 
   const basisDate = deps.basisDate || bjDate()
   const { tilt } = await resolveTilt(deps, basisDate)
@@ -877,8 +869,8 @@ export async function runRecommendRegime(opts = {}) {
   })
   const payloadB = await safeRun('B', {
     selectMode: 'factors',
-    // B 先按因子多取一批（vetoPool），解读后再用 AI veto 过筛、回填到 finalPicks。
-    topCandidates: Math.max(vetoPool, finalPicks),
+    // B 多解读一批（candPool）供交叉仲裁回填；top 仍是因子序前 finalPicks（不做 veto 过筛）。
+    topCandidates: Math.max(candPool, finalPicks),
     deps: { ...deps, pool: undefined },
   })
 
@@ -1598,20 +1590,27 @@ export async function decideActions(
 }
 
 // ── 交叉票联合裁决（同一只票既被提前终止、又进了当日推荐）──────────────────────
-/** 交叉票裁决提示：一次 AI，二选一 keep / sell。 */
+/** 交叉票裁决最低置信度：低于此值的 sell 不生效（宁可 keep，不误砍）。 */
+const CROSS_SELL_CONF_MIN = 60
+/** 交叉票裁决提示：**中立**，不预设哪一侧正确。 */
 const CROSS_SYSTEM =
-  '你是持仓裁决员。某票同时出现在两个结论里：①它是**今日买入推荐**；②它有一笔**已被判定今日提前终止（卖出）**的持仓。' +
-  '请二选一给终局：keep（保留推荐、撤销终止、继续持有并可加仓）或 sell（从推荐剔除、按计划清仓）。' +
-  '判据：趋势/题材仍健康、只是短期波动 → keep；已确认走坏/证伪 → sell。只输出 JSON：{"action":"keep|sell","reason":"一句话"}。'
+  '你是独立、中立的裁决员。同一天同一只票出现两个相反信号：' +
+  '（甲）**选股端今天把它选进了买入推荐**；（乙）**持仓端今天对它的某笔持仓判了提前终止（卖出）**。' +
+  '这两侧你都不要预设正确，请**独立权衡两边证据**后给终局：keep（保留推荐、撤销终止、继续持有/加仓）或 sell（从推荐剔除、清仓）。' +
+  '倾向 keep：策略当日仍选中它、均线/趋势未破坏、缩量回踩、题材仍在发酵、只是短期波动。' +
+  '倾向 sell：放量跌破关键均线、题材证伪、持续走坏或创新低。' +
+  '只输出 JSON：{"action":"keep|sell","confidence":0到100的整数(你对结论的把握),"reason":"一句话依据(要提到你权衡的关键证据)"}。'
 
 function crossUser(row) {
   const f = (n, d = 2) => (n == null || Number.isNaN(Number(n)) ? 'NA' : Number(n).toFixed(d))
-  return (
-    `标的：${row.code} ${row.name}\n` +
-    `① 今日推荐：买入评分 ${row.buyScore ?? 'NA'}｜摘要 ${row.summary || '（无）'}\n` +
-    `② 当前持仓：自推荐 ${f(row.exitPct)}%｜已持有 ${row.heldDays} 日｜今日为提前终止生效日｜终止理由：${row.exitReason || '（无）'}\n` +
-    '二选一，只输出 JSON。'
-  )
+  const buy =
+    `① 选股端（今日推荐）：买入评分 ${row.buyScore ?? 'NA'}｜摘要 ${row.summary || '（无）'}` +
+    (row.ma20Dev != null ? `｜距MA20 ${f(row.ma20Dev)}%` : '') +
+    (row.changePct != null ? `｜今日 ${f(row.changePct)}%` : '') +
+    (row.turnover != null ? `｜换手 ${f(row.turnover)}%` : '')
+  const hold =
+    `② 持仓端（今日判提前终止）：自推荐 ${f(row.exitPct)}%｜已持有 ${row.heldDays} 个交易日｜终止理由：${row.exitReason || '（无）'}`
+  return `标的：${row.code} ${row.name}\n${buy}\n${hold}\n中立权衡后二选一，只输出 JSON。`
 }
 
 /**
@@ -1648,9 +1647,11 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
       return parseJsonLoose(text)
     })
 
-  // 回填池：原 top + 全部 candidates（按排名），去重。
+  // 回填池：原 top + 全部 candidates（按排名，**排除已被 veto 的**），去重。
   const byCode = new Map()
-  for (const s of [...(payload.top || []), ...(payload.candidates || [])]) if (s?.code) byCode.set(s.code, s)
+  for (const s of [...(payload.top || []), ...(payload.candidates || [])]) {
+    if (s?.code && !s.ai?.veto) byCode.set(s.code, s)
+  }
   const pool = [...byCode.values()]
 
   const today = bjDate()
@@ -1671,6 +1672,9 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
           name: s.name,
           buyScore: s.ai?.buyScore ?? null,
           summary: s.ai?.summary || '',
+          ma20Dev: s.ma20Dev ?? null,
+          changePct: s.changePct ?? null,
+          turnover: s.turnover ?? null,
           exitPct: pos.exit?.pct ?? null,
           heldDays: heldTradingDays(pos.basisDate, today),
           exitReason: pos.exit?.reason || '',
@@ -1678,12 +1682,13 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
       } catch {
         verdict = null
       }
-      if (String(verdict?.action || '').toLowerCase() === 'sell') {
+      const conf = Number(verdict?.confidence)
+      // 仅当**明确 sell 且置信度达标**才剔除；否则（keep / 失败 / 低置信）一律 keep，绝不误砍。
+      if (String(verdict?.action || '').toLowerCase() === 'sell' && Number.isFinite(conf) && conf >= CROSS_SELL_CONF_MIN) {
         dropped += 1
         seen.add(s.code) // 剔除（保持终止）
         continue
       }
-      // 只有明确 keep 才撤销终止；裁决失败（verdict=null）也按 keep 处理，**绝不因调用失败误砍**。
       // keep → 撤销终止，继续持有
       pos.exited = false
       pos.exit = null
