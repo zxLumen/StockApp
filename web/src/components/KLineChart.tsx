@@ -21,6 +21,7 @@ import {
   sessionSlot,
   slotLabel,
   slotTs,
+  splitByBase,
   tsToSlot,
 } from '../lib/intraday'
 
@@ -96,7 +97,8 @@ export default function KLineChart({
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const maRefs = useRef<Record<string, ISeriesApi<'Line'> | null>>({})
-  const priceRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const priceUpRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const priceDownRef = useRef<ISeriesApi<'Line'> | null>(null)
   const avgRef = useRef<ISeriesApi<'Line'> | null>(null)
   const baseLineRef = useRef<IPriceLine | null>(null)
   const byTime = useRef(new Map<string, Bar>())
@@ -131,7 +133,15 @@ export default function KLineChart({
         horzLines: { color: '#1e2532' },
       },
       rightPriceScale: { borderColor: '#262e3d', scaleMargins: { top: 0.08, bottom: 0.26 } },
-      timeScale: { borderColor: '#262e3d', timeVisible: intraday, secondsVisible: false },
+      timeScale: {
+        borderColor: '#262e3d',
+        timeVisible: intraday,
+        secondsVisible: false,
+        // 缩放下限：左右都锁在第一/最后一根，既不滚到数据之外，也不留出无数据的空白。
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        lockVisibleTimeRangeOnResize: true,
+      },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: { color: '#8a94a6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b4252' },
@@ -172,12 +182,19 @@ export default function KLineChart({
       })
     }
 
-    // 分时：白色价格线 + 黄色均价线（非分时时清空、不显示）。
-    priceRef.current = chart.addSeries(LineSeries, {
-      color: '#e6e8ee',
+    // 分时：价格线按昨收分色（涨=红、跌=绿；美股沿用绿涨红跌）+ 黄色均价线（非分时清空、不显示）。
+    priceUpRef.current = chart.addSeries(LineSeries, {
+      color: colors.up,
       lineWidth: 1,
       priceLineVisible: false,
-      lastValueVisible: true,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    })
+    priceDownRef.current = chart.addSeries(LineSeries, {
+      color: colors.down,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
     avgRef.current = chart.addSeries(LineSeries, {
@@ -226,7 +243,8 @@ export default function KLineChart({
       candleRef.current = null
       volumeRef.current = null
       maRefs.current = {}
-      priceRef.current = null
+      priceUpRef.current = null
+      priceDownRef.current = null
       avgRef.current = null
       baseLineRef.current = null
     }
@@ -241,19 +259,22 @@ export default function KLineChart({
       wickUpColor: colors.up,
       wickDownColor: colors.down,
     })
+    priceUpRef.current?.applyOptions({ color: colors.up })
+    priceDownRef.current?.applyOptions({ color: colors.down })
   }, [colors.up, colors.down])
 
   useEffect(() => {
     const candle = candleRef.current
     const volume = volumeRef.current
-    const price = priceRef.current
+    const priceUp = priceUpRef.current
+    const priceDown = priceDownRef.current
     const avg = avgRef.current
     const chart = chartRef.current
-    if (!candle || !volume || !price || !avg || !chart) return
+    if (!candle || !volume || !priceUp || !priceDown || !avg || !chart) return
 
     // 清掉上一轮的分时基线（换票 / 换周期都要重建）
     if (baseLineRef.current) {
-      price.removePriceLine(baseLineRef.current)
+      priceUp.removePriceLine(baseLineRef.current)
       baseLineRef.current = null
     }
     byTime.current = new Map()
@@ -288,7 +309,11 @@ export default function KLineChart({
           volMap.set(ts, { value: b.volume ?? 0, up: b.close >= b.open })
         })
         const sorted = [...priceMap].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time: time as Time, value }))
-        price.setData(sorted)
+        // 价格线按「相对昨收」分色：>= 昨收→涨色、< 昨收→跌色（交界点两条线都含，线才连得上）。
+        const base = prevClose != null && prevClose > 0 ? prevClose : (sorted[0]?.value ?? 0)
+        const { up: upPts, down: downPts } = splitByBase(sorted, base)
+        priceUp.setData(upPts)
+        priceDown.setData(downPts)
         avg.setData(
           [...avgByTime.current]
             .map(([k, v]) => ({ time: Number(k) as Time, value: v }))
@@ -309,7 +334,7 @@ export default function KLineChart({
         chart.applyOptions({ timeScale: { tickMarkFormatter: label }, localization: { timeFormatter: label } })
         // 昨收基线（0% 参照）
         if (prevClose != null && prevClose > 0) {
-          baseLineRef.current = price.createPriceLine({
+          baseLineRef.current = priceUp.createPriceLine({
             price: prevClose,
             color: '#8a94a6',
             lineWidth: 1,
@@ -319,13 +344,15 @@ export default function KLineChart({
           })
         }
       } else {
-        price.setData([])
+        priceUp.setData([])
+        priceDown.setData([])
         avg.setData([])
         volume.setData([])
       }
     } else {
       // 蜡烛（多日全量）：分时线清空。
-      price.setData([])
+      priceUp.setData([])
+      priceDown.setData([])
       avg.setData([])
       byTime.current = new Map(viewBars.map((b) => [String(toTime(b.time, intraday)), b]))
       candle.setData(

@@ -9,6 +9,7 @@ import {
   sessionSlot,
   slotLabel,
   slotTs,
+  splitByBase,
   tsToSlot,
 } from '../src/lib/intraday.ts'
 
@@ -84,4 +85,26 @@ test('lastDayBars：只留最后一个交易日', () => {
     { time: '2026-10-08 09:32' },
   ]
   assert.deepEqual(lastDayBars(bars).map((b) => b.time), ['2026-10-08 09:31', '2026-10-08 09:32'])
+})
+
+test('splitByBase：按基准价分涨/跌两段，交界点两段都含（线不断）', () => {
+  const pts = [10, 12, 11, 8].map((value, i) => ({ time: i, value }))
+  const { up, down } = splitByBase(pts, 11)
+  assert.deepEqual(
+    up.map((p) => p.value),
+    [12, 11, 8],
+  )
+  assert.deepEqual(
+    down.map((p) => p.value),
+    [10, 12, 8],
+  )
+})
+
+test('splitByBase：等于基准记涨；全在一侧时另一侧为空', () => {
+  const { up, down } = splitByBase([{ value: 11 }, { value: 11 }], 11)
+  assert.deepEqual(
+    up.map((p) => p.value),
+    [11, 11],
+  )
+  assert.equal(down.length, 0)
 })
