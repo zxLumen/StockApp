@@ -10,7 +10,7 @@
 // 产物：DATA_DIR/recommend/<YYYY-MM-DD>.json（前端「推荐」页签读它）。
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { runRecommendDaily, runRecommendRegime, decideActions, bjDate } from '../lib/recommend.js'
+import { runRecommendDaily, runRecommendRegime, decideActions, reconcileCross, bjDate } from '../lib/recommend.js'
 import { isTradingDay } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
@@ -103,6 +103,19 @@ try {
         await decideActions(DATA_DIR, cfg, { chain, onLog: (m) => console.log('[exit]', m) })
       } catch (e) {
         console.warn(`[exit] ${chain} 决策失败（忽略）：${e instanceof Error ? e.message : e}`)
+      }
+    }
+    // 交叉票联合裁决：同一只票既被提前终止、又进了当日推荐 → 一次 AI 二选一，保证不漏、不"既买又卖"。
+    for (const chain of ['dual', 'A', 'B']) {
+      try {
+        await reconcileCross(DATA_DIR, cfg, {
+          chain,
+          effective: payload.date,
+          finalPicks: opt('--final', SEL.finalPicks),
+          onLog: (m) => console.log('[cross]', m),
+        })
+      } catch (e) {
+        console.warn(`[cross] ${chain} 裁决失败（忽略）：${e instanceof Error ? e.message : e}`)
       }
     }
   }

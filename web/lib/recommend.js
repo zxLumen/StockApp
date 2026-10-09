@@ -1596,3 +1596,109 @@ export async function decideActions(
   onLog(`[${chain}] 活跃 ${active.length}，决策 ${decisions.size}，变更 ${changed}，护栏拦截 ${gated}`)
   return { decided: active.length, changed, gated }
 }
+
+// ── 交叉票联合裁决（同一只票既被提前终止、又进了当日推荐）──────────────────────
+/** 交叉票裁决提示：一次 AI，二选一 keep / sell。 */
+const CROSS_SYSTEM =
+  '你是持仓裁决员。某票同时出现在两个结论里：①它是**今日买入推荐**；②它有一笔**已被判定今日提前终止（卖出）**的持仓。' +
+  '请二选一给终局：keep（保留推荐、撤销终止、继续持有并可加仓）或 sell（从推荐剔除、按计划清仓）。' +
+  '判据：趋势/题材仍健康、只是短期波动 → keep；已确认走坏/证伪 → sell。只输出 JSON：{"action":"keep|sell","reason":"一句话"}。'
+
+function crossUser(row) {
+  const f = (n, d = 2) => (n == null || Number.isNaN(Number(n)) ? 'NA' : Number(n).toFixed(d))
+  return (
+    `标的：${row.code} ${row.name}\n` +
+    `① 今日推荐：买入评分 ${row.buyScore ?? 'NA'}｜摘要 ${row.summary || '（无）'}\n` +
+    `② 当前持仓：自推荐 ${f(row.exitPct)}%｜已持有 ${row.heldDays} 日｜今日为提前终止生效日｜终止理由：${row.exitReason || '（无）'}\n` +
+    '二选一，只输出 JSON。'
+  )
+}
+
+/**
+ * 交叉票联合裁决：对某链路**当日 payload**，找出「新推荐里、又在当日被 AI 提前终止(exit.date===生效日)」的票，
+ * 逐只一次 AI 裁决 keep/sell：
+ *   - sell → 从 payload.top 剔除（保持终止）；
+ *   - keep → 撤销该持仓的终止（继续持有），保留推荐（加仓）。
+ * sell 剔除后从 payload.candidates 按排名**滚动回填**（回填遇新交叉票继续裁决），**保证凑满 finalPicks**。
+ * 每条链路各自跑（dual 用自己持仓 + 自己当日 payload，天然正确）。
+ * @param {string} effective 生效日（= 当日新推荐的 payload.date）
+ */
+export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, finalPicks = 10, onLog = () => {}, deps = {} } = {}) {
+  if (!effective) return { arbitrated: 0, dropped: 0, kept: 0 }
+  const file = path.join(dataDir, chainSubdir(chain), `${effective}.json`)
+  const payload = await readJson(file, null)
+  if (!payload || !Array.isArray(payload.top)) return { arbitrated: 0, dropped: 0, kept: 0 }
+  const actions = await readActions(dataDir)
+  // 本链路「生效日 E 被提前终止」的 code → pos
+  const exitedNow = new Map()
+  for (const pos of Object.values(actions.positions)) {
+    if (pos.chain !== chain || !pos.exited || !pos.exit) continue
+    if (pos.exit.date !== effective) continue
+    exitedNow.set(pos.code, pos)
+  }
+  if (!exitedNow.size) return { arbitrated: 0, dropped: 0, kept: 0 }
+
+  const decide =
+    deps.crossDecide ||
+    (async (row) => {
+      const text = await chatOnce(cfg, [
+        { role: 'system', content: CROSS_SYSTEM },
+        { role: 'user', content: crossUser(row) },
+      ])
+      return parseJsonLoose(text)
+    })
+
+  // 回填池：原 top + 全部 candidates（按排名），去重。
+  const byCode = new Map()
+  for (const s of [...(payload.top || []), ...(payload.candidates || [])]) if (s?.code) byCode.set(s.code, s)
+  const pool = [...byCode.values()]
+
+  const today = bjDate()
+  const picked = []
+  const seen = new Set()
+  let arbitrated = 0
+  let dropped = 0
+  for (const s of pool) {
+    if (picked.length >= finalPicks) break
+    if (seen.has(s.code)) continue
+    const pos = exitedNow.get(s.code)
+    if (pos) {
+      arbitrated += 1
+      let verdict = null
+      try {
+        verdict = await decide({
+          code: s.code,
+          name: s.name,
+          buyScore: s.ai?.buyScore ?? null,
+          summary: s.ai?.summary || '',
+          exitPct: pos.exit?.pct ?? null,
+          heldDays: heldTradingDays(pos.basisDate, today),
+          exitReason: pos.exit?.reason || '',
+        })
+      } catch {
+        verdict = null
+      }
+      if (String(verdict?.action || '').toLowerCase() !== 'keep') {
+        dropped += 1
+        seen.add(s.code) // 剔除（保持终止）
+        continue
+      }
+      // keep → 撤销终止，继续持有
+      pos.exited = false
+      pos.exit = null
+      if (!Array.isArray(pos.log)) pos.log = []
+      pos.log.push({ date: today, action: 'cross-keep', note: '交叉裁决：继续持有（撤销终止）' })
+      pos.updatedAt = new Date().toISOString()
+      actions.positions[`${chain}:${pos.recDate}:${s.code}`] = pos
+    }
+    picked.push(s)
+    seen.add(s.code)
+  }
+  if (picked.length) {
+    payload.top = picked
+    await writeJson(file, payload)
+  }
+  await writeActions(dataDir, actions)
+  onLog(`[cross] ${chain}@${effective} 裁决 ${arbitrated}，剔除 ${dropped}，最终 ${picked.length} 只`)
+  return { arbitrated, dropped, kept: picked.length }
+}

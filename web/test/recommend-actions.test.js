@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays } from '../lib/recommend.js'
+import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross } from '../lib/recommend.js'
 import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
@@ -167,4 +167,39 @@ test('dueOn：合并「周期到期」与「当日提前终止」两路，终止
   assert.equal(byCode.get('600519').terminated, false)
   assert.equal(byCode.get('000001').terminated, true)
   assert.equal(byCode.get('000001').exitPct, 10)
+})
+
+test('reconcileCross：交叉票 AI 二选一（keep 撤销终止 / sell 剔除并滚动回填）', async () => {
+  const dir = await tmp()
+  const E = '2026-10-12'
+  const s = (code) => ({ secid: `1.${code}`, code, name: code, ai: { buyScore: 80, summary: '' } })
+  // 当日 payload：top=[X,Y,Z]，候选池里还有 W、V 用于回填
+  await fsp.mkdir(path.join(dir, 'recommend'), { recursive: true })
+  await writeJson(path.join(dir, 'recommend', `${E}.json`), {
+    date: E,
+    top: [s('X'), s('Y'), s('Z')],
+    candidates: [s('X'), s('Y'), s('Z'), s('W'), s('V')],
+  })
+  // X、Y 都是「当日被提前终止」的持仓（交叉票）
+  const mkPos = (code) => ({
+    chain: 'dual', recDate: '2026-10-08', secid: `1.${code}`, code, name: code,
+    holdDays: 3, basisDate: '2026-10-08', pickPrice: 10, exited: true,
+    exit: { date: E, basisDate: '2026-10-09', price: 9.5, pct: -5, reason: '走弱' }, log: [],
+  })
+  await writeJson(path.join(dir, 'recommend-actions.json'), {
+    version: 1,
+    positions: {
+      [actionKey('dual', '2026-10-08', 'X')]: mkPos('X'),
+      [actionKey('dual', '2026-10-08', 'Y')]: mkPos('Y'),
+    },
+  })
+  const deps = { crossDecide: async (row) => ({ action: row.code === 'X' ? 'keep' : 'sell' }) }
+  const r = await reconcileCross(dir, {}, { chain: 'dual', effective: E, finalPicks: 3, deps })
+  assert.equal(r.arbitrated, 2)
+  assert.equal(r.dropped, 1)
+  const payload = await readJson(path.join(dir, 'recommend', `${E}.json`))
+  assert.deepEqual(payload.top.map((t) => t.code), ['X', 'Z', 'W'], 'Y 被剔除、X 保留、回填 W')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, false, 'keep → 撤销终止')
+  assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'Y')].exited, true, 'sell → 保持终止')
 })
