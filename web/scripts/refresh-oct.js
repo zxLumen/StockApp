@@ -45,9 +45,12 @@ async function main() {
   }
   const universe = await readJson(path.join(DATA_DIR, 'kline-cache', 'universe-stable.json'), null)
   if (!Array.isArray(universe) || !universe.length) throw new Error('缺少 universe-stable.json（先跑一次 backtest）')
-  console.log(`  稳健宇宙 ${universe.length} 只，载入日K…`)
+  const amountUniverse = (await readJson(path.join(DATA_DIR, 'kline-cache', 'universe-amount-10.json'), [])) || []
+  const allSecids = new Map()
+  for (const s of [...universe, ...amountUniverse]) if (s?.secid) allSecids.set(s.secid, s)
+  console.log(`  稳健宇宙 ${universe.length} 只｜成交额池 ${amountUniverse.length} 只，载入日K…`)
   const klines = new Map()
-  await mapLimit(universe, 12, async (s) => {
+  await mapLimit([...allSecids.values()], 12, async (s) => {
     const k = await cachedKline(s.secid).catch(() => null)
     if (k?.bars?.length) klines.set(s.secid, k.bars)
   })
@@ -65,29 +68,42 @@ async function main() {
     console.log(`\n[${E}] 生成日 ${D} tilt=${tilt.toFixed(2)} → 当日选链 ${chain}`)
     if (DRYRUN) continue
 
-    if (chain === 'B') {
-      const pool = []
-      for (const s of universe) {
+    const klineOf = async (secid) => {
+      const b = klines.get(secid)
+      return b ? { bars: sliceTo(b, D) } : null
+    }
+    const dayNews = await readJson(path.join(DATA_DIR, 'news-archive', `${D}.json`), [])
+    const newsFor = async (stock) => {
+      const kw = [stock.name, stock.code].filter(Boolean)
+      const hit = (dayNews || []).filter((x) => {
+        const hay = `${x.title} ${x.summary || ''}`
+        return kw.some((k) => k && k.length >= 2 && hay.includes(k))
+      })
+      return { items: hit.slice(0, 8) }
+    }
+    const evtMap = await eventScores(DATA_DIR, D, { windowDays: 5 }).catch(() => null)
+    const poolOf = (list) => {
+      const out = []
+      for (const s of list) {
         const bars = klines.get(s.secid)
         if (!bars) continue
         const at = [...bars].reverse().find((b) => b.time <= D)
         if (!at || at.close == null) continue
-        pool.push({ secid: s.secid, code: s.code, name: s.name, price: at.close, changePct: at.changePct ?? null, amount: (at.volume || 0) * at.close })
+        out.push({ secid: s.secid, code: s.code, name: s.name, price: at.close, changePct: at.changePct ?? null, amount: (at.volume || 0) * at.close })
       }
-      const klineOf = async (secid) => {
-        const b = klines.get(secid)
-        return b ? { bars: sliceTo(b, D) } : null
-      }
-      const dayNews = await readJson(path.join(DATA_DIR, 'news-archive', `${D}.json`), [])
-      const newsFor = async (stock) => {
-        const kw = [stock.name, stock.code].filter(Boolean)
-        const hit = (dayNews || []).filter((x) => {
-          const hay = `${x.title} ${x.summary || ''}`
-          return kw.some((k) => k && k.length >= 2 && hay.includes(k))
-        })
-        return { items: hit.slice(0, 8) }
-      }
-      const evtMap = await eventScores(DATA_DIR, D, { windowDays: 5 }).catch(() => null)
+      return out
+    }
+    const depsOf = (pool) => ({
+      pool: async () => pool,
+      kline: klineOf,
+      news: newsFor,
+      event: evtMap ? (c) => evtMap.get(c.code) ?? null : undefined,
+      indexBars: idxBars,
+      basisDate: D,
+      effectiveDate: E,
+    })
+
+    if (chain === 'B') {
       const payloadB = await runRecommendDaily({
         dataDir: DATA_DIR,
         cfg,
@@ -97,22 +113,32 @@ async function main() {
         interpretAi: true,
         outSubdir: 'recommend-factors-fwd',
         concurrency: 4,
-        deps: {
-          pool: async () => pool,
-          kline: klineOf,
-          news: newsFor,
-          event: evtMap ? (c) => evtMap.get(c.code) ?? null : undefined,
-          indexBars: idxBars,
-          basisDate: D,
-          effectiveDate: E,
-        },
+        deps: depsOf(poolOf(universe)),
         onLog: (m) => console.log('[B]', m),
       })
-      // 当日 dual = B：同一份写入 recommend/
-      await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), payloadB)
+      await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), payloadB) // 当日 dual = B
       console.log(`  ✓ B(+dual) 重跑完成：top ${payloadB.top.length} 只，候选 ${(payloadB.candidates || []).length}`)
+    }
+
+    // A：当日选链为 A，或已存 A payload 为空（历史某次解读全失败）→ 用成交额池重跑补齐。
+    const aExist = await readJson(path.join(DATA_DIR, 'recommend-ai-fwd', `${E}.json`), null)
+    if (chain === 'A' || !(aExist?.top || []).length) {
+      const payloadA = await runRecommendDaily({
+        dataDir: DATA_DIR,
+        cfg,
+        selectMode: 'ai',
+        topCandidates: 100,
+        finalPicks: 10,
+        interpretAi: true,
+        outSubdir: 'recommend-ai-fwd',
+        concurrency: 4,
+        deps: depsOf(poolOf(amountUniverse)),
+        onLog: (m) => console.log('[A]', m),
+      })
+      if (chain === 'A') await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), payloadA) // 当日 dual = A
+      console.log(`  ✓ A 重跑完成：top ${payloadA.top.length} 只`)
     } else {
-      console.log(`  当日选链为 A：保留存量（不重选）`)
+      console.log(`  A 已有数据（top ${(aExist.top || []).length}），保留不重选`)
     }
   }
 
