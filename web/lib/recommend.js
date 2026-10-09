@@ -1678,11 +1678,12 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
       } catch {
         verdict = null
       }
-      if (String(verdict?.action || '').toLowerCase() !== 'keep') {
+      if (String(verdict?.action || '').toLowerCase() === 'sell') {
         dropped += 1
         seen.add(s.code) // 剔除（保持终止）
         continue
       }
+      // 只有明确 keep 才撤销终止；裁决失败（verdict=null）也按 keep 处理，**绝不因调用失败误砍**。
       // keep → 撤销终止，继续持有
       pos.exited = false
       pos.exit = null
