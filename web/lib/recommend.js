@@ -193,7 +193,9 @@ export const interpretUser = (ctx) =>
   ' "summary": "一句话概括，40到60字（讲清为什么值得或不值得买）",\n' +
   ' "catalysts": ["买入逻辑/支撑，3到5条，每条20到30字"],\n' +
   ' "risks": ["风险，2到3条，每条20到30字"],\n' +
-  ' "tags": ["题材或风格标签，3到5个"]\n' +
+  ' "tags": ["题材或风格标签，3到5个"],\n' +
+  ' "veto": true 或 false（**是否属于「一买入就很可能会被提前终止」**：跌破关键均线且放量走坏 / 题材证伪 / 明显走坏 → true；否则 false）,\n' +
+  ' "vetoReason": "若 veto=true，一句话说明理由；否则空字符串"\n' +
   '}\n' +
   '判断要点（务必据此打分，直接决定 buyScore 高低）：\n' +
   '- **「距 MA20 偏离」是最关键的追高风险指标**：偏离 +15% 以上基本是追高，buyScore 应 ≤40；' +
@@ -684,6 +686,8 @@ export async function runRecommendDaily({
       catalysts: [],
       risks: [],
       tags: [],
+      veto: false,
+      vetoReason: '',
     },
   })
   const withAi = !interpretAi ? candidates.map(noAi) : await mapLimit(candidates, concurrency, async (c) => {
@@ -713,6 +717,8 @@ export async function runRecommendDaily({
           catalysts: [],
           risks: [],
           tags: [],
+          veto: false,
+          vetoReason: '',
           ...(base || {}),
         },
       }
@@ -730,6 +736,9 @@ export async function runRecommendDaily({
         catalysts: arr(base.catalysts, 8),
         risks: arr(base.risks, 8),
         tags: arr(base.tags, 10),
+        // B 链路过筛用：模型判定"一买入就很可能会被提前终止"。
+        veto: base.veto === true,
+        vetoReason: String(base.vetoReason || '').slice(0, 80),
       },
     }
   })
@@ -741,11 +750,17 @@ export async function runRecommendDaily({
 
   // 选 Top10：**先按买入评分**，高分才配进榜；评审只在「高分股超过 10 只」时用来取舍。
   // 早先无条件把 100 只交给评审，它会选进 18 分的股（评分才是逐只精评的可靠信号）。
+  // B（factors）链路：用 AI 的 veto 把"一买入就很可能会被提前终止"的票剔出买入名单，再按因子序回填。
+  const ranked = selectMode === 'factors' ? scored.filter((c) => !c.ai?.veto) : scored
+  if (selectMode === 'factors' && ranked.length < scored.length) {
+    onLog(`AI 过筛：剔除 ${scored.length - ranked.length}/${scored.length} 只（veto），命中 ${ranked.length} 只`)
+    if (ranked.length < finalPicks) onLog(`⚠ veto 后不足 ${finalPicks} 只（${ranked.length}），可调大 --top / 候选池`)
+  }
   const top =
     selectMode === 'factors'
-      ? scored.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'factor' }))
+      ? ranked.slice(0, finalPicks).map((c) => ({ ...c, reason: c.ai?.summary || '', pickedBy: 'factor' }))
       : await selectTop10(cfg, scored, finalPicks, onLog, { highBar })
-  onLog(`Top10：${top.map((t) => `${t.code}(${t.ai.buyScore})`).join(' ')}`)
+  onLog(`Top${finalPicks}：${top.map((t) => `${t.code}(${t.ai.buyScore})`).join(' ')}`)
 
   const generatedOn = bjDate() // 分析发生日（收盘后那天）
   // `date` 可显式覆盖生效日（测试用）；否则 = 生成日的下一交易日。
@@ -827,7 +842,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
  */
 export async function runRecommendRegime(opts = {}) {
-  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, deps = {}, onLog = () => {} } = opts
+  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, vetoPool = 30, deps = {}, onLog = () => {} } = opts
 
   const basisDate = deps.basisDate || bjDate()
   const { tilt } = await resolveTilt(deps, basisDate)
@@ -860,7 +875,8 @@ export async function runRecommendRegime(opts = {}) {
   })
   const payloadB = await safeRun('B', {
     selectMode: 'factors',
-    topCandidates: finalPicks,
+    // B 先按因子多取一批（vetoPool），解读后再用 AI veto 过筛、回填到 finalPicks。
+    topCandidates: Math.max(vetoPool, finalPicks),
     deps: { ...deps, pool: undefined },
   })
 
@@ -1321,7 +1337,8 @@ function exitSystem(chain, stopLossPct, minHoldDays) {
     '你是持仓管理助手。给定若干**当前持仓**（推荐日、基准价、现价、自推荐涨幅、当日涨幅、周期、已持有交易日数、距周期结束剩余交易日），' +
     '逐只判断下一步：继续持有(hold)、延长周期(extend)、提前终止(exit)。用简体中文，只输出一个 JSON 对象，不要多余文字。\n' +
     `本批持仓所属：${hint}\n` +
-    `硬性约束（违反的 exit 会被系统忽略）：只有当**自推荐跌幅 ≤ −${stopLossPct}%** 且**已持有 ≥ ${minHoldDays} 个交易日**时，才允许 exit；` +
+    `硬性约束（违反的 exit 会被系统忽略）：只有当**自推荐跌幅 ≤ −${stopLossPct}%** 且**已持有 ≥ 该行「最小持有」日数**时，才允许 exit；` +
+    `每行「最小持有」= min(${minHoldDays}, ⌊周期/2⌋)（短周期链路如 B 可低至 1 日，以每行为准）。` +
     '其余情形一律 hold 或 extend。不要因为"走势偏弱/动能不足/小幅亏损（如 −1%~−3%）"就 exit。'
   )
 }
@@ -1334,12 +1351,12 @@ function exitUser(rows, { chain, stopLossPct, minHoldDays }) {
       .map(
         (r, i) =>
           `${i + 1}. id=${r.id}｜${r.code} ${r.name}｜推荐日 ${r.recDate}｜基准价 ${f(r.pickPrice)}｜现价 ${f(r.price)}｜` +
-          `自推荐 ${f(r.sincePct)}%｜当日 ${f(r.dayPct)}%｜周期 ${r.holdDays} 个交易日｜已持有 ${r.heldDays} 日｜剩余 ${r.remaining} 个交易日`,
+          `自推荐 ${f(r.sincePct)}%｜当日 ${f(r.dayPct)}%｜周期 ${r.holdDays} 个交易日｜已持有 ${r.heldDays} 日｜最小持有 ${r.minHold} 日｜剩余 ${r.remaining} 个交易日`,
       )
       .join('\n') +
     '\n\n逐只判断，只输出：\n' +
     '{"decisions":[{"id":"上面每条的 id","action":"hold|extend|exit","holdDays":延长后的总持有交易日数(仅 extend 时给，整数，≤120),"reason":"一句话依据"}]}\n' +
-    `判据：仅当**自推荐跌幅 ≤ −${stopLossPct}% 且已持有 ≥ ${minHoldDays} 个交易日**（或题材彻底证伪）→ exit；` +
+    `判据：仅当**自推荐跌幅 ≤ −${stopLossPct}% 且已持有 ≥ 该行最小持有日数**（或题材彻底证伪）→ exit；` +
     '趋势健康、题材仍在发酵、周期不够 → extend（给出更大的总天数）；其余 → hold。'
   )
 }
@@ -1457,6 +1474,7 @@ export async function decideActions(
       sincePct: pctFromPick(a.pickPrice, q?.price),
       dayPct: q?.changePct ?? null,
       heldDays: heldTradingDays(a.basisDate, today),
+      minHold: exitMinHoldDays(a.holdDays),
       remaining: tradingDaysUntil(today, a.end),
     }
   })
@@ -1504,6 +1522,8 @@ export async function decideActions(
     if (action === 'exit') {
       if (!allowExit) continue
       if (pos.exited || price == null) continue // 终态防重复；无价不终止
+      // 退出叠加在自然到期日（或更晚）→ 不是"提前"，交给自然到期，不记 exit。
+      if (nextTradingDay(today) >= a.end) continue
       const pct = pctFromPick(pos.pickPrice ?? a.pickPrice, price)
       const elapsed = heldTradingDays(pos.basisDate ?? a.basisDate, today)
       const need = exitMinHoldDays(pos.holdDays ?? a.holdDays)

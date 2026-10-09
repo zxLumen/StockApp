@@ -11,6 +11,7 @@
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
 import { runRecommendDaily, runRecommendRegime, decideActions, bjDate } from '../lib/recommend.js'
+import { isTradingDay } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
 
@@ -28,6 +29,12 @@ const opt = (name, dflt) => {
 }
 
 const dryRun = has('--dry-run')
+// 非交易日直接跳过：cron 只按周一~周五触发（不认节假日），假期跑会用陈旧数据生成"幽灵推荐"
+// （basisDate 落在非交易日、生效日却是节后第一天）。--force 可强制生成。
+if (!isTradingDay(bjDate()) && !has('--force')) {
+  console.log('[recommend] 今日非 A 股交易日，跳过生成（如需强制用 --force）')
+  process.exit(0)
+}
 // 默认 regime 双链路（两条都跑、按 tilt 择一）；`--single-chain` 回退单链路。
 const dualChain = !has('--single-chain')
 const dualThr = opt('--dual-thr', tiltThreshold())

@@ -101,6 +101,22 @@ test('decideActions：allowExit=false 时完全不终止', async () => {
   assert.equal(!!actions.positions[actionKey('dual', basis, '600519')]?.exited, false)
 })
 
+test('decideActions：退出落在自然到期日 → 不算提前终止', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  // holdDays=1 → 自然到期日 = 10-09；今天 = 10-08（其 nextTradingDay 恰为 10-09）→ 应忽略 exit
+  const today = '2026-10-08'
+  await seedRecommend(dir, basis, basis, [recTop('1.600519', '600519', '贵州茅台', 1500, 1)])
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1300 }]), // −13%
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'dual', today, deps })
+  assert.equal(r.changed, 0)
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'), { positions: {} })
+  assert.equal(!!actions.positions[actionKey('dual', basis, '600519')]?.exited, false)
+})
+
 test('decideActions：extend 更新生效周期、同日去重、上限 clamp', async () => {
   const dir = await tmp()
   await seedRecommend(dir, '2026-10-07', '2026-10-06', [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
