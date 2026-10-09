@@ -4,7 +4,8 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay } from '../lib/recommend.js'
+import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays } from '../lib/recommend.js'
+import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
 const tmp = () => fsp.mkdtemp(path.join(os.tmpdir(), 'recactions-'))
@@ -17,28 +18,87 @@ async function seedRecommend(dir, date, basisDate, top) {
   await writeJson(path.join(dir, 'recommend', `${date}.json`), { date, basisDate, top })
 }
 
-test('decideActions：exit 为终态（重复跑不重复终止）', async () => {
+test('exitMinHoldDays：按周期相对化（短周期放宽、长周期封顶 3）', () => {
+  assert.equal(exitMinHoldDays(2), 1)
+  assert.equal(exitMinHoldDays(3), 1)
+  assert.equal(exitMinHoldDays(4), 2)
+  assert.equal(exitMinHoldDays(10), 3)
+  assert.equal(exitMinHoldDays(120), 3)
+  assert.equal(exitMinHoldDays(0), 1)
+})
+
+test('decideActions：exit 过护栏（跌幅 ≤ −8% 且持有 ≥ min）后为终态', async () => {
   const dir = await tmp()
-  await seedRecommend(dir, '2026-10-07', '2026-10-06', [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4) // 已持有 4 个交易日 ≥ min(3, ⌊10/2⌋=5→3)
+  await seedRecommend(dir, basis, basis, [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
   const deps = {
-    quotes: quotesOf([{ secid: '1.600519', price: 1600, changePct: 1.2 }]),
+    quotes: quotesOf([{ secid: '1.600519', price: 1350 }]), // −10%
     decide: decisionsOf((r) => ({ id: r.id, action: 'exit', reason: '破位' })),
   }
-  const r1 = await decideActions(dir, {}, { chain: 'dual', today: '2026-10-08', deps })
+  const r1 = await decideActions(dir, {}, { chain: 'dual', today, deps })
   assert.equal(r1.changed, 1)
-  const key = actionKey('dual', '2026-10-07', '600519')
+  const key = actionKey('dual', basis, '600519')
   let actions = await readJson(path.join(dir, 'recommend-actions.json'))
   const pos = actions.positions[key]
   assert.equal(pos.exited, true)
-  assert.equal(pos.exit.date, nextTradingDay('2026-10-08'), 'exitDate 记生效日')
-  assert.equal(pos.exit.pct, Number(((1600 / 1500 - 1) * 100).toFixed(2)))
+  assert.equal(pos.exit.date, nextTradingDay(today), 'exitDate 记生效日')
+  assert.equal(pos.exit.pct, Number(((1350 / 1500 - 1) * 100).toFixed(2)))
 
   // 再跑：已 exited → 跳过，不再变更（防重复终止）
-  const r2 = await decideActions(dir, {}, { chain: 'dual', today: '2026-10-08', deps })
+  const r2 = await decideActions(dir, {}, { chain: 'dual', today, deps })
   assert.equal(r2.changed, 0)
   assert.equal(r2.decided, 0, '已终止的票不再进入活跃集合')
   actions = await readJson(path.join(dir, 'recommend-actions.json'))
   assert.equal(actions.positions[key].log.filter((l) => l.action === 'exit').length, 1)
+})
+
+test('decideActions：跌幅未到止损线 → 护栏拦截，不终止', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  await seedRecommend(dir, basis, basis, [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1470 }]), // −2%，未到 −8%
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit', reason: '走弱' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'dual', today, deps })
+  assert.equal(r.changed, 0)
+  assert.equal(r.gated, 1)
+  const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('dual', basis, '600519')]
+  assert.equal(!!pos.exited, false, '未触发终止')
+  assert.ok(pos.log.some((l) => l.action === 'gated-exit'), '记录一条 gated-exit 便于复盘')
+})
+
+test('decideActions：持有不足最小天数 → 护栏拦截', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = nextTradingDay(basis) // 只持有 1 日 < min(3, ⌊10/2⌋)=3
+  await seedRecommend(dir, basis, basis, [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1300 }]), // −13%，跌幅够但太早
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'dual', today, deps })
+  assert.equal(r.changed, 0)
+  assert.equal(r.gated, 1)
+  const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('dual', basis, '600519')]
+  assert.equal(!!pos.exited, false)
+})
+
+test('decideActions：allowExit=false 时完全不终止', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  await seedRecommend(dir, basis, basis, [recTop('1.600519', '600519', '贵州茅台', 1500, 10)])
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1300 }]), // −13%，本可终止
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'dual', today, allowExit: false, deps })
+  assert.equal(r.changed, 0)
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'), { positions: {} })
+  assert.equal(!!actions.positions[actionKey('dual', basis, '600519')]?.exited, false)
 })
 
 test('decideActions：extend 更新生效周期、同日去重、上限 clamp', async () => {

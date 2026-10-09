@@ -43,6 +43,15 @@ export function normalizeHoldDays(v, fallback = HOLD_DAYS_FALLBACK) {
 // ── AI 动态调整持有周期 / 提前终止 ──────────────────────────────────────────
 /** 动态延长后的总持有天数上限（放宽于建仓时的 60；防 AI 无限延长导致持仓永不结束）。 */
 export const HOLD_DAYS_EXTEND_MAX = 120
+/** 提前终止的硬护栏：自推荐跌幅小于该值（默认 −8%）且已持有不足最小天数时，AI 的 exit 一律不生效。 */
+export const EXIT_STOP_LOSS_PCT = 8
+export const EXIT_MIN_HOLD_DAYS = 3
+/** 最小持有天数按周期相对化：min(EXIT_MIN_HOLD_DAYS, max(1, ⌊holdDays/2⌋))。B 链路周期短(3~4日)时放宽，长周期保留 3 日护栏。 */
+export const exitMinHoldDays = (holdDays) => {
+  const h = Number(holdDays)
+  if (!Number.isFinite(h) || h <= 0) return 1
+  return Math.min(EXIT_MIN_HOLD_DAYS, Math.max(1, Math.floor(h / 2)))
+}
 /** 动态调整记录：键 `chain:recDate:code`，`exited` 为终态。 */
 export const ACTIONS_FILE = 'recommend-actions.json'
 export const actionKey = (chain, recDate, code) => `${chain}:${recDate}:${code}`
@@ -1302,11 +1311,22 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
 }
 
 /** 动态持仓管理的 AI 提示（hold / extend / exit 三选一）。 */
-const EXIT_SYSTEM =
-  '你是持仓管理助手。给定若干**当前持仓**（推荐日、基准价、现价、自推荐涨幅、当前持有交易日数、距周期结束剩余交易日），' +
-  '逐只判断下一步：继续持有(hold)、延长周期(extend)、提前终止(exit)。用简体中文，只输出一个 JSON 对象，不要多余文字。'
+const CHAIN_HINT = {
+  A: 'A 链路：成交额池＋AI 选股，偏进攻，按动量与题材强弱判断。',
+  B: 'B 链路：低波＋短期反转因子选股——买的就是近期超跌票，**买入后短期继续走弱属正常**，不得因小幅回撤或"跌破均线"就 exit。',
+}
+function exitSystem(chain, stopLossPct, minHoldDays) {
+  const hint = CHAIN_HINT[chain] || '按各标的自身逻辑判断。'
+  return (
+    '你是持仓管理助手。给定若干**当前持仓**（推荐日、基准价、现价、自推荐涨幅、当日涨幅、周期、已持有交易日数、距周期结束剩余交易日），' +
+    '逐只判断下一步：继续持有(hold)、延长周期(extend)、提前终止(exit)。用简体中文，只输出一个 JSON 对象，不要多余文字。\n' +
+    `本批持仓所属：${hint}\n` +
+    `硬性约束（违反的 exit 会被系统忽略）：只有当**自推荐跌幅 ≤ −${stopLossPct}%** 且**已持有 ≥ ${minHoldDays} 个交易日**时，才允许 exit；` +
+    '其余情形一律 hold 或 extend。不要因为"走势偏弱/动能不足/小幅亏损（如 −1%~−3%）"就 exit。'
+  )
+}
 
-function exitUser(rows) {
+function exitUser(rows, { chain, stopLossPct, minHoldDays }) {
   const f = (n, d = 2) => (n == null || Number.isNaN(Number(n)) ? 'NA' : Number(n).toFixed(d))
   return (
     '当前持仓：\n' +
@@ -1314,12 +1334,13 @@ function exitUser(rows) {
       .map(
         (r, i) =>
           `${i + 1}. id=${r.id}｜${r.code} ${r.name}｜推荐日 ${r.recDate}｜基准价 ${f(r.pickPrice)}｜现价 ${f(r.price)}｜` +
-          `自推荐 ${f(r.sincePct)}%｜当日 ${f(r.dayPct)}%｜已持有 ${r.holdDays} 日｜剩余 ${r.remaining} 个交易日`,
+          `自推荐 ${f(r.sincePct)}%｜当日 ${f(r.dayPct)}%｜周期 ${r.holdDays} 个交易日｜已持有 ${r.heldDays} 日｜剩余 ${r.remaining} 个交易日`,
       )
       .join('\n') +
     '\n\n逐只判断，只输出：\n' +
     '{"decisions":[{"id":"上面每条的 id","action":"hold|extend|exit","holdDays":延长后的总持有交易日数(仅 extend 时给，整数，≤120),"reason":"一句话依据"}]}\n' +
-    '判据：跌破关键均线且放量走坏 / 自推荐涨幅触及止损 / 题材证伪 → exit；趋势健康、题材仍在发酵、周期不够 → extend（给出更大的总天数）；其余 → hold。'
+    `判据：仅当**自推荐跌幅 ≤ −${stopLossPct}% 且已持有 ≥ ${minHoldDays} 个交易日**（或题材彻底证伪）→ exit；` +
+    '趋势健康、题材仍在发酵、周期不够 → extend（给出更大的总天数）；其余 → hold。'
   )
 }
 
@@ -1351,12 +1372,28 @@ function heldTradingDays(fromIso, toIso) {
 /**
  * 每日对某链路的**活跃持仓**（未到期、未终止）做 AI 动态调整。
  *
- *   - exit：终态（`exited=true`），此后永不再决策（防重复终止）。
+ *   - exit：**带硬护栏**——仅当自推荐跌幅 ≤ −`stopLossPct` 且已持有 ≥ `exitMinHoldDays(holdDays)`
+ *     个交易日才生效；不满足则忽略（记一条 `gated-exit`，不终止）。生效后为终态 `exited=true`。
  *   - extend：更新生效 `holdDays`（≤ HOLD_DAYS_EXTEND_MAX），可多次；同日只延长一次。
  *   - hold：无状态变更，不落库。
+ * 选项：`allowExit`（默认 true）、`stopLossPct`（默认 8 → −8%）、`minHoldDays`（默认 3，按周期相对化）。
+ * 提示词还会带上链路上下文（B=低波+短期反转，短期走弱属正常）。
  * 只扫**可见日期**（不含隐藏窗口）。失败不抛出（由调用方决定是否记录）。
  */
-export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDate(), lookbackDays = 90, onLog = () => {}, deps = {} } = {}) {
+export async function decideActions(
+  dataDir,
+  cfg,
+  {
+    chain = 'dual',
+    today = bjDate(),
+    lookbackDays = 90,
+    allowExit = true,
+    stopLossPct = EXIT_STOP_LOSS_PCT,
+    minHoldDays = EXIT_MIN_HOLD_DAYS,
+    onLog = () => {},
+    deps = {},
+  } = {},
+) {
   const actions = await readActions(dataDir)
   const from = dateMinus(today, lookbackDays)
   const dates = (await listRecommendDates(dataDir, chain)).filter((d) => d >= from && d <= today)
@@ -1379,13 +1416,31 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
         continue
       }
       if (end <= today) continue // 已到期，不再决策
-      active.push({ id: key, key, chain, recDate: payload.date || d, secid: s.secid, code: s.code, name: s.name, basisDate: basis, pickPrice: s.price, baseHoldDays: baseHold, holdDays: eff, end })
+      active.push({
+        id: key,
+        key,
+        chain,
+        recDate: payload.date || d,
+        secid: s.secid,
+        code: s.code,
+        name: s.name,
+        basisDate: basis,
+        pickPrice: s.price,
+        baseHoldDays: baseHold,
+        holdDays: eff,
+        end,
+        // 提示词要用"当天的真实链路"：dual 就是它当天选中的 A 或 B。
+        effChain: chain === 'dual' ? payload.regime?.chain || '' : chain,
+      })
     }
   }
   if (!active.length) {
     onLog(`[${chain}] 无活跃持仓`)
     return { decided: 0, changed: 0 }
   }
+  // 提示词链路上下文：单一链路直接用它；混链则优先给 B（更保守）的说明。
+  const effChains = [...new Set(active.map((a) => a.effChain).filter(Boolean))]
+  const hintChain = effChains.length === 1 ? effChains[0] : effChains.includes('B') ? 'B' : effChains[0] || ''
   const secids = [...new Set(active.map((a) => a.secid))]
   const quotes = new Map()
   try {
@@ -1396,7 +1451,14 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
   }
   const rows = active.map((a) => {
     const q = quotes.get(a.secid)
-    return { ...a, price: q?.price ?? null, sincePct: pctFromPick(a.pickPrice, q?.price), dayPct: q?.changePct ?? null, remaining: tradingDaysUntil(today, a.end) }
+    return {
+      ...a,
+      price: q?.price ?? null,
+      sincePct: pctFromPick(a.pickPrice, q?.price),
+      dayPct: q?.changePct ?? null,
+      heldDays: heldTradingDays(a.basisDate, today),
+      remaining: tradingDaysUntil(today, a.end),
+    }
   })
   let decisions = new Map()
   try {
@@ -1404,8 +1466,8 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
       deps.decide ||
       (async (rs) => {
         const text = await chatOnce(cfg, [
-          { role: 'system', content: EXIT_SYSTEM },
-          { role: 'user', content: exitUser(rs) },
+          { role: 'system', content: exitSystem(hintChain, stopLossPct, minHoldDays) },
+          { role: 'user', content: exitUser(rs, { chain: hintChain, stopLossPct, minHoldDays }) },
         ])
         const arr = parseJsonLoose(text)?.decisions
         return Array.isArray(arr) ? arr : []
@@ -1417,6 +1479,7 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
   }
 
   let changed = 0
+  let gated = 0
   for (const a of active) {
     const dec = decisions.get(a.key)
     if (!dec) continue
@@ -1439,8 +1502,19 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
     }
     if (!Array.isArray(pos.log)) pos.log = []
     if (action === 'exit') {
+      if (!allowExit) continue
       if (pos.exited || price == null) continue // 终态防重复；无价不终止
       const pct = pctFromPick(pos.pickPrice ?? a.pickPrice, price)
+      const elapsed = heldTradingDays(pos.basisDate ?? a.basisDate, today)
+      const need = exitMinHoldDays(pos.holdDays ?? a.holdDays)
+      // 硬护栏：跌幅未到止损线、或持有不足最小天数 → 不生效（记一条 gated 便于复盘）。
+      if (pct == null || pct > -stopLossPct || elapsed < need) {
+        pos.log.push({ date: today, action: 'gated-exit', pct, heldDays: elapsed, minHold: need, reason })
+        pos.updatedAt = new Date().toISOString()
+        actions.positions[a.key] = pos
+        gated += 1
+        continue
+      }
       pos.exit = { date: nextTradingDay(today), basisDate: today, price, pct, reason }
       pos.exited = true
       pos.log.push({ date: today, action: 'exit', holdDays: pos.holdDays, price, reason })
@@ -1461,7 +1535,7 @@ export async function decideActions(dataDir, cfg, { chain = 'dual', today = bjDa
       }
     }
   }
-  if (changed) await writeActions(dataDir, actions)
-  onLog(`[${chain}] 活跃 ${active.length}，决策 ${decisions.size}，变更 ${changed}`)
-  return { decided: active.length, changed }
+  if (changed || gated) await writeActions(dataDir, actions)
+  onLog(`[${chain}] 活跃 ${active.length}，决策 ${decisions.size}，变更 ${changed}，护栏拦截 ${gated}`)
+  return { decided: active.length, changed, gated }
 }
