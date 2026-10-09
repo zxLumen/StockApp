@@ -23,6 +23,8 @@ import {
   BENCH_SECID,
   BENCH_NAME,
   CHAIN_SUBDIR,
+  entryIsoOf,
+  entryAtOpen,
 } from './recommend.js'
 import { addTradingDays, prevTradingDay, isTradingDay } from './trading-days.js'
 
@@ -79,7 +81,7 @@ async function earliestBasis(dataDir, chain) {
   if (!dates.length) return null
   const d = dates.slice().sort()[0]
   const p = await readJson(path.join(dataDir, CHAIN_SUBDIR[chain] || 'recommend', `${d}.json`), null)
-  return prevTradingDay(p?.basisDate || d)
+  return prevTradingDay(entryIsoOf(p) || d)
 }
 
 function emptyChain() {
@@ -102,11 +104,13 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
   for (const D of dates) {
     const p = await readJson(path.join(dataDir, sub, `${D}.json`), null)
     if (!p || !Array.isArray(p.top)) continue
-    // 买入日归一到交易日（basisDate 可能是跑批当天恰逢假日）。
-    const buyDate = prevTradingDay(p.basisDate || D)
+    // 新推荐：建仓锚在**生效日**（开买）；旧推荐：生成日收盘（归一到交易日，basisDate 可能恰逢假日）。
+    const atOpen = entryAtOpen(p)
+    const buyDate = atOpen ? entryIsoOf(p) || D : prevTradingDay(p.basisDate || D)
     for (const s of p.top) {
       const origHold = Number(s.ai?.holdDays ?? s.holdDays)
-      if (!s.secid || !Number.isFinite(origHold) || !(s.price > 0)) continue
+      if (!s.secid || !Number.isFinite(origHold)) continue
+      if (!atOpen && !(s.price > 0)) continue // 旧口径用快照价；新口径买入价稍后从日K开盘回填
       buys.push({
         chain,
         recDate: D,
@@ -114,7 +118,8 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
         code: s.code,
         name: s.name,
         buyDate,
-        buyPrice: Number(s.price),
+        atOpen,
+        buyPrice: atOpen ? null : Number(s.price),
         origHold,
         pos: actions[`${chain}:${D}:${s.code}`] || null,
       })
@@ -122,22 +127,37 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
   }
   if (!buys.length) return emptyChain()
 
-  // 2) 拉每只日K（收盘序列）
+  // 2) 拉每只日K（收盘 + 开盘序列）
   const closeMap = new Map() // secid -> Map<date, close>
+  const openMap = new Map() // secid -> Map<date, open>
   const lastClose = new Map() // secid -> {date, close}
   const secids = [...new Set(buys.map((b) => b.secid))]
   await mapLimit(secids, 8, async (sid) => {
     const k = await cachedKline(sid).catch(() => null)
     const m = new Map()
-    for (const bar of k?.bars || []) if (bar.close != null) m.set(bar.time, bar.close)
+    const om = new Map()
+    for (const bar of k?.bars || []) {
+      if (bar.close != null) m.set(bar.time, bar.close)
+      if (bar.open != null) om.set(bar.time, bar.open)
+    }
     if (m.size) {
       closeMap.set(sid, m)
+      openMap.set(sid, om)
       const last = (k.bars || [])[k.bars.length - 1]
       lastClose.set(sid, { date: last?.time ?? null, close: last?.close ?? null })
     }
   })
 
   const closeOn = (secid, day) => closeMap.get(secid)?.get(day) ?? null
+  const openOn = (secid, day) => openMap.get(secid)?.get(day) ?? null
+  // 开买开卖：回填 atOpen 的买入价（生效日开盘）；取不到（还没开盘/无该日）就丢弃该笔。
+  for (let i = buys.length - 1; i >= 0; i -= 1) {
+    const b = buys[i]
+    if (!b.atOpen) continue
+    b.buyPrice = openOn(b.secid, b.buyDate)
+    if (!Number.isFinite(b.buyPrice) || b.buyPrice <= 0) buys.splice(i, 1)
+  }
+  if (!buys.length) return emptyChain()
   // 盘中：一次性批量实时行情（含沪深300），用于「今天」这一点；折叠进本函数的缓存计算里，
   // 访客请求只读缓存，不会每次刷新都打上游。
   const liveMap = new Map()
@@ -153,8 +173,8 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
     (useIntraday ? liveMap.get(secid)?.price : null) ?? closeOn(secid, valuationDate) ?? lastClose.get(secid)?.close ?? null
   const priceAt = (secid) => livePrice(secid)
 
-  const o = buildLedger(buys, 'orig', { valuationDate, closeOn, priceAt })
-  const a = buildLedger(buys, 'ai', { valuationDate, closeOn, priceAt })
+  const o = buildLedger(buys, 'orig', { valuationDate, closeOn, openOn, priceAt })
+  const a = buildLedger(buys, 'ai', { valuationDate, closeOn, openOn, priceAt })
   const equity = buildEquity(buys, {
     closeMap,
     benchBars,
@@ -183,7 +203,7 @@ function effHoldOf(b, mode) {
  * 移动加权台账：把「逐笔买入 + 逐笔结束卖出」按时间排序（**同日先买后卖**），逐股维护 {股数,成本}。
  * 买入摊薄；卖出按当时均价计已实现，只减数量、均价不变。估值日给出 持仓中/已了结/流水/汇总。
  */
-function buildLedger(buys, mode, { valuationDate, closeOn, priceAt }) {
+function buildLedger(buys, mode, { valuationDate, closeOn, openOn, priceAt }) {
   const events = []
   const lots = [] // 供收益曲线（方法无关）
   let invested = 0
@@ -202,7 +222,7 @@ function buildLedger(buys, mode, { valuationDate, closeOn, priceAt }) {
       reason = 'cycle'
     }
     const dueClosed = !!sellDate && sellDate <= valuationDate
-    if (dueClosed && !Number.isFinite(sellPrice)) sellPrice = closeOn(b.secid, sellDate)
+    if (dueClosed && !Number.isFinite(sellPrice)) sellPrice = b.atOpen ? openOn(b.secid, sellDate) : closeOn(b.secid, sellDate)
     const closed = dueClosed && sellPrice != null
     invested += shares * b.buyPrice
     events.push({ date: b.buyDate, type: 'buy', secid: b.secid, code: b.code, name: b.name, shares, price: b.buyPrice })

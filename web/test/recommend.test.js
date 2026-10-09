@@ -20,6 +20,8 @@ import {
   benchReturns,
   isAshareSession,
   recommendTtlMs,
+  entryIsoOf,
+  entryAtOpen,
   FORWARD_A_DIR,
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
@@ -218,6 +220,29 @@ test('benchReturns：持有窗口已走完则按结束日收盘，不跟到实�
   assert.equal(r.holdIdxPct, Number(((4100 / 4050 - 1) * 100).toFixed(2)))
   // 至今窗口仍取实时
   assert.equal(r.sinceIdxPct, Number(((9999 / 4050 - 1) * 100).toFixed(2)))
+})
+
+// ── R2 生效日口径：开买开卖（entryAnchor）────────────────────────────────
+test('entryIsoOf/entryAtOpen：新推荐锚生效日、旧推荐锚生成日', () => {
+  const nu = { date: '2026-10-08', basisDate: '2026-10-07', entryAnchor: 'effective' }
+  assert.equal(entryIsoOf(nu), '2026-10-08')
+  assert.equal(entryAtOpen(nu), true)
+  const old = { date: '2026-10-08', basisDate: '2026-10-07' }
+  assert.equal(entryIsoOf(old), '2026-10-07')
+  assert.equal(entryAtOpen(old), false)
+})
+
+test('benchReturns：开买开卖用生效日开盘做基准、结束日开盘卖出', () => {
+  const bars = [
+    { time: '2020-01-02', close: 4000, open: 3900 },
+    { time: '2020-01-03', close: 4050, open: 3950 },
+    { time: '2020-01-06', close: 4100, open: 4080 },
+  ]
+  // atOpen：基准 = 01-03 开盘 3950；持有结束 01-06 已走完 → 用 01-06 开盘 4080
+  const r = benchReturns(bars, '2020-01-03', '2020-01-06', 9999, { atOpen: true })
+  assert.equal(r.holdIdxPct, Number(((4080 / 3950 - 1) * 100).toFixed(2)))
+  // 至今：实时点位，但基准仍是开盘 3950
+  assert.equal(r.sinceIdxPct, Number(((9999 / 3950 - 1) * 100).toFixed(2)))
 })
 
 

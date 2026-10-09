@@ -676,7 +676,7 @@ function PickCard({
       {open && (
         <div className="rec-detail">
           <div className="rec-stats">
-            <span>现价 {fmt(stock.price)}</span>
+            <span>基准价 {fmt(stock.price)}</span>
             <span>成交额 {yi(stock.amount)}</span>
             <span>换手 {fmt(stock.turnover)}%</span>
             <span>总市值 {yi(stock.mktcap)}</span>

@@ -772,6 +772,8 @@ export async function runRecommendDaily({
   // （`basisDate` 已在函数开头定下 —— 泄漏断言要用它，不能只在这里才算。）
   const payload = {
     date: effective,
+    // 新口径：买入锚在**生效日**（开买开卖）。旧推荐无此字段→仍走生成日收盘口径，互不影响。
+    entryAnchor: 'effective',
     generatedAt: new Date().toISOString(),
     basisDate,
     model: cfg.model,
@@ -991,8 +993,10 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
   for (const d of dates) {
     const payload = await readJson(path.join(dataDir, chainSubdir(chain), `${d}.json`), null)
     if (!payload || !Array.isArray(payload.top)) continue
-    const basis = payload.basisDate || d
     const recDate = payload.date || d
+    // 卖出日锚：新推荐锚在生效日（开买开卖），旧推荐锚在生成日。
+    const anchor = entryIsoOf(payload)
+    const atOpen = entryAtOpen(payload)
     for (const s of payload.top) {
       const baseHold = s.ai?.holdDays ?? s.holdDays
       if (!s.secid || baseHold == null) continue
@@ -1001,7 +1005,7 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
       const effHold = pos?.holdDays ?? baseHold
       let sell
       try {
-        sell = addTradingDays(basis, Number(effHold))
+        sell = addTradingDays(anchor, Number(effHold))
       } catch {
         continue
       }
@@ -1013,8 +1017,8 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
         name: s.name,
         holdDays: Number(effHold),
         fromDate: recDate,
-        basisDate: basis,
-        pickPrice: s.price ?? null,
+        basisDate: anchor,
+        pickPrice: atOpen ? (await entryOpenOf(s.secid, anchor)) ?? s.price ?? null : s.price ?? null,
         holdReason: s.ai?.holdReason ?? '',
         terminated: false,
         extended,
@@ -1072,43 +1076,62 @@ export async function loadRecommend(dataDir, date, chain = 'dual') {
  * 交易日收盘。周期未走完（还没有那根 K 线）→ holdPct=null、holdDone=false。
  * 只读日K的历史切片，无未来数据。
  */
-async function holdReturn(secid, basisDate, holdDays, livePrice = null) {
-  if (!secid || !basisDate || !holdDays) return { holdPct: null, holdEndDate: null, holdDone: false }
+/** 新推荐锚在**生效日**（开买开卖，`entryAnchor:'effective'`）；旧推荐仍锚在生成日 basisDate（收盘口径）。 */
+export const entryIsoOf = (payload) => (payload?.entryAnchor === 'effective' ? payload.date : payload.basisDate)
+export const entryAtOpen = (payload) => payload?.entryAnchor === 'effective'
+
+/** 某日开盘价（用于"生效日开买"的基准价；取不到返回 null）。 */
+async function entryOpenOf(secid, iso) {
+  if (!secid || !iso) return null
+  const bars = (await cachedKline(secid).catch(() => null))?.bars || []
+  const b = bars.find((x) => x.time === iso)
+  return b?.open ?? null
+}
+
+async function holdReturn(secid, entryIso, holdDays, livePrice = null, { atOpen = false } = {}) {
+  const empty = { holdPct: null, holdEndDate: null, holdDone: false, base: null }
+  if (!secid || !entryIso || !holdDays) return empty
   try {
     const bars = (await cachedKline(secid))?.bars || []
-    // 取「≤ basisDate 的最后一根」而不是严格等于：basisDate 可能是节假日（如国庆），
-    // 严格相等会查不到、整列变 null。与 benchReturns 同口径，两边才可相减出超额。
+    // 开买开卖（atOpen）：严格取「生效日」那根的开盘；旧口径：取「≤ entryIso 的最后一根」的收盘
+    // （entryIso 可能是节假日，严格相等会查不到，与 benchReturns 同口径才能相减出超额）。
     let idx = -1
-    for (let k = bars.length - 1; k >= 0; k -= 1) {
-      if (bars[k].time <= basisDate && bars[k].close) {
-        idx = k
-        break
+    if (atOpen) {
+      idx = bars.findIndex((b) => b.time === entryIso)
+    } else {
+      for (let k = bars.length - 1; k >= 0; k -= 1) {
+        if (bars[k].time <= entryIso && bars[k].close) {
+          idx = k
+          break
+        }
       }
     }
-    if (idx < 0) return { holdPct: null, holdEndDate: null, holdDone: false }
-    const base = bars[idx].close
-    if (!base) return { holdPct: null, holdEndDate: null, holdDone: false }
+    if (idx < 0) return empty
+    const priceOf = (b) => (atOpen ? b?.open : b?.close)
+    const base = priceOf(bars[idx])
+    if (!base) return empty
     const sell = bars[idx + holdDays]
-    // 周期没走完（还没有「basis 往后第 holdDays 个交易日」那根 K 线）→ 按现价折算到当日：
-    // 优先拿实时价（盘中就有数），没有才退到最新一根日K。holdDone 仍为 false（前端标
-    // 「未走完」），但持有收益与基准同期都能实时给出，不会一直「暂无数据」。
-    if (!sell?.close) {
+    const sellVal = priceOf(sell)
+    // 周期没走完（还没有那根 K 线）→ 按现价折算到当日（优先实时价，其次最新收盘），holdDone=false。
+    if (!sellVal) {
       const lastBar = bars[bars.length - 1]
       const eff = livePrice != null ? Number(livePrice) : lastBar?.close
-      if (!eff) return { holdPct: null, holdEndDate: null, holdDone: false }
+      if (!eff) return { ...empty, base }
       return {
         holdPct: Number(((eff / base - 1) * 100).toFixed(2)),
         holdEndDate: livePrice != null ? bjDate() : lastBar.time,
         holdDone: false,
+        base,
       }
     }
     return {
-      holdPct: Number(((sell.close / base - 1) * 100).toFixed(2)),
+      holdPct: Number(((sellVal / base - 1) * 100).toFixed(2)),
       holdEndDate: sell.time,
       holdDone: true,
+      base,
     }
   } catch {
-    return { holdPct: null, holdEndDate: null, holdDone: false }
+    return empty
   }
 }
 
@@ -1126,19 +1149,24 @@ export const BENCH_NAME = '沪深300'
  * 两个窗口都会算成 0.00%（看起来像没数据）。所以这里额外接实时点位 liveIndex
  * （与个股 q.price 同一口径）：盘中拿实时，收盘后实时≈当日收盘，无缝衔接。
  */
-export function benchReturns(bars, basisDate, holdEndDate, liveIndex = null) {
-  // 取「≤ basisDate 的最后一根」而不是严格等于：basisDate 可能是节假日（如国庆），
-  // 严格相等会查不到、整列变 null。个股那份基准价同样是「≤ basisDate 的最后一根收盘」，
-  // 两边口径一致才能相减出超额。
+export function benchReturns(bars, anchorIso, holdEndDate, liveIndex = null, { atOpen = false } = {}) {
+  // 开买开卖：基准 = 生效日那根开盘；旧口径：取「≤ anchorIso 的最后一根」收盘（anchorIso 可能是
+  // 节假日，严格相等会查不到）。与个股 holdReturn 同口径，两边才能相减出超额。
   let i = -1
-  for (let k = bars.length - 1; k >= 0; k -= 1) {
-    if (bars[k].time <= basisDate && bars[k].close) {
-      i = k
-      break
+  if (atOpen) {
+    i = bars.findIndex((b) => b.time === anchorIso)
+  } else {
+    for (let k = bars.length - 1; k >= 0; k -= 1) {
+      if (bars[k].time <= anchorIso && bars[k].close) {
+        i = k
+        break
+      }
     }
   }
   if (i < 0) return { holdIdxPct: null, sinceIdxPct: null }
-  const base = bars[i].close
+  const priceOf = (b) => (atOpen ? b?.open : b?.close)
+  const base = priceOf(bars[i])
+  if (!base) return { holdIdxPct: null, sinceIdxPct: null }
   const last = bars[bars.length - 1]
   // 至今窗口：优先实时点位（盘中即时、收盘后即当日收盘）；拿不到才退回日K最后一根。
   // 最后一根就是基准那根时旧口径会返回 0（「取不到」与「恰好为 0」分不开），实时点位能直接破掉这点。
@@ -1159,12 +1187,11 @@ export function benchReturns(bars, basisDate, holdEndDate, liveIndex = null) {
         break
       }
     }
-    // 窗口已走完（结束日本身已是过去的交易日）→ 按结束日收盘，保持「同一持有窗口」语义；
-    // 未走完 / 结束日就是今天（日K尚未出当日根）→ 用实时点位，与个股 holdReturn 实时折算对齐。
+    // 窗口已走完 → 按结束日价（开买开卖→开盘；旧口径→收盘）；未走完 → 实时点位。
     const closed = !!end && !!holdEndDate && holdEndDate < bjDate()
-    if (closed) holdIdxPct = Number(((end.close / base - 1) * 100).toFixed(2))
+    if (closed && end) holdIdxPct = Number(((priceOf(end) / base - 1) * 100).toFixed(2))
     else if (liveOk) holdIdxPct = Number(((live / base - 1) * 100).toFixed(2))
-    else if (end) holdIdxPct = Number(((end.close / base - 1) * 100).toFixed(2))
+    else if (end) holdIdxPct = Number(((priceOf(end) / base - 1) * 100).toFixed(2))
   }
   return { holdIdxPct, sinceIdxPct }
 }
@@ -1199,17 +1226,22 @@ export async function attachPerformance(
   const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
     const holdDays = s.ai?.holdDays ?? null
-    const hr = await holdReturn(s.secid, payload.basisDate, holdDays, q?.price)
+    const atOpen = entryAtOpen(payload)
+    const entryIso = entryIsoOf(payload)
+    const hr = await holdReturn(s.secid, entryIso, holdDays, q?.price, { atOpen })
     const bench = benchBars.length
-      ? benchReturns(benchBars, payload.basisDate, hr.holdEndDate, indexLive)
+      ? benchReturns(benchBars, entryIso, hr.holdEndDate, indexLive, { atOpen })
       : {}
+    // 开买开卖：基准价 = 生效日开盘（生效日前为 null，不拿生成日收盘充数）；旧口径仍用快照 price。
+    const entryPrice = atOpen ? hr.base : s.price
     return {
       ...s,
+      price: entryPrice,
       latestPrice: q?.price ?? null,
       // 「今日涨幅」列：优先实时行情（有效日之后 = 自推荐日的真实涨跌），
-      // 别用生成时写入的快照 changePct（那是上一个交易日的涨幅）。基准价 price 不动。
+      // 别用生成时写入的快照 changePct（那是上一个交易日的涨幅）。
       changePct: q?.changePct ?? s.changePct ?? null,
-      sincePickPct: pctFromPick(s.price, q?.price),
+      sincePickPct: pctFromPick(entryPrice, q?.price),
       holdDays,
       holdPct: hr.holdPct,
       holdEndDate: hr.holdEndDate,
@@ -1272,17 +1304,19 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
   const withPerf = await attachPerformance(payload, { quotes, ttlMs })
 
   // 额外信息（不影响 AI周期 与 holdPct）：终止→终止盈亏+实际持有天数；延长→延长后周期+盈亏。
+  const entryIso = entryIsoOf(payload)
+  const atOpen = entryAtOpen(payload)
   const top = await mapLimit(withPerf.top, 8, async (s) => {
     const pos = posMap.get(s.code)
     if (!pos) return s
     if (pos.exited && pos.exit) {
-      const heldDays = heldTradingDays(payload.date, pos.exit.date)
+      const heldDays = heldTradingDays(entryIso, pos.exit.date)
       return { ...s, exit: { ...pos.exit, heldDays } }
     }
     const base = pos.baseHoldDays ?? s.ai?.holdDays ?? null
     if (pos.holdDays != null && base != null && pos.holdDays > base) {
       const q = quotes.get(s.secid)
-      const hr = await holdReturn(s.secid, payload.basisDate, pos.holdDays, q?.price)
+      const hr = await holdReturn(s.secid, entryIso, pos.holdDays, q?.price, { atOpen })
       return { ...s, extend: { days: pos.holdDays - base, pct: hr.holdPct, done: hr.holdDone } }
     }
     return s
@@ -1418,17 +1452,20 @@ export async function decideActions(
   for (const d of dates) {
     const payload = await readJson(path.join(dataDir, chainSubdir(chain), `${d}.json`), null)
     if (!payload || !Array.isArray(payload.top)) continue
-    const basis = payload.basisDate || d
+    // 新推荐：建仓锚在**生效日**（开买开卖）；旧推荐仍锚在生成日。
+    const anchor = entryIsoOf(payload) || d
+    const atOpen = entryAtOpen(payload)
     for (const s of payload.top) {
       const baseHold = s.ai?.holdDays
       if (!s.secid || baseHold == null) continue
+      if (anchor > today) continue // 生效日还没到 → 尚未建仓，不管理
       const key = actionKey(chain, payload.date || d, s.code)
       const pos = actions.positions[key]
       if (pos?.exited) continue // 终态：永不重复决策
       const eff = pos?.holdDays ?? baseHold
       let end
       try {
-        end = addTradingDays(basis, eff)
+        end = addTradingDays(anchor, eff)
       } catch {
         continue
       }
@@ -1441,8 +1478,8 @@ export async function decideActions(
         secid: s.secid,
         code: s.code,
         name: s.name,
-        basisDate: basis,
-        pickPrice: s.price,
+        basisDate: anchor,
+        pickPrice: atOpen ? (await entryOpenOf(s.secid, anchor)) ?? s.price : s.price,
         baseHoldDays: baseHold,
         holdDays: eff,
         end,
