@@ -89,22 +89,3 @@ export function lastDayBars<T extends { time: string }>(bars: T[]): T[] {
   const day = bars.length ? barDay(bars[bars.length - 1].time) : ''
   return day ? bars.filter((b) => barDay(b.time) === day) : bars
 }
-
-/**
- * 按基准价（分时的昨收）把价格折线拆成「涨/跌」两段，供两条不同颜色的线series 分别绘制。
- * >= base 记涨、< base 记跌；相邻两点跨色时把交界点同时写进两段，折线才连得上（不出现断点）。
- */
-export function splitByBase<T extends { value: number }>(
-  points: T[],
-  base: number,
-): { up: T[]; down: T[] } {
-  const up: T[] = []
-  const down: T[] = []
-  points.forEach((p, i) => {
-    const isUp = p.value >= base
-    ;(isUp ? up : down).push(p)
-    const next = points[i + 1]
-    if (next && (next.value >= base) !== isUp) (isUp ? up : down).push(next)
-  })
-  return { up, down }
-}
