@@ -1,5 +1,6 @@
 import {
   getKline as emKline,
+  getTrends as emTrends,
   getQuotes as emQuotes,
   getBoards as emBoards,
   getBoardMembers as emBoardMembers,
@@ -120,6 +121,15 @@ export async function getKline(secid, opts = {}) {
   // 分时（m1）只有东财提供分钟级；往前翻页依赖 end 游标（腾讯/新浪不认 end，会返回最新而非更早），
   // 两种情况都只走东财，避免静默降级成日线 / 最新数据。
   if (opts.period === 'm1' || opts.end) {
+    // 分时优先走 trends2（含 09:30 集合竞价那根 + 权威均价 f58）；失败再回退 klt=1。
+    if (opts.period === 'm1' && !opts.end) {
+      try {
+        const out = await emTrends(secid, opts)
+        if (out && Array.isArray(out.bars) && out.bars.length) return { ...out, source: 'eastmoney' }
+      } catch {
+        /* 回退到 klt=1 */
+      }
+    }
     try {
       return { ...(await emKline(secid, opts)), source: 'eastmoney' }
     } catch (err) {

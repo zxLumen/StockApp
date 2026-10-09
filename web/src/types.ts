@@ -37,6 +37,8 @@ export interface Bar {
   changePct: number | null
   change: number | null
   turnover: number | null
+  /** 分时均价（东财 trends2 的 f58）；仅分时有，日/周/月为 null。 */
+  avg?: number | null
   ma5: number | null
   ma10: number | null
   ma20: number | null

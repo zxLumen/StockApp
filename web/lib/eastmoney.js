@@ -187,8 +187,49 @@ export async function getKline(secid, { period = 'd', fq = 1, limit = 240, end =
   }
 }
 
-const QUOTE_FIELDS = 'f1,f2,f3,f4,f5,f6,f8,f12,f13,f14,f15,f16,f17,f18,f20,f21'
+/**
+ * 分时（当日逐分钟）——东财 `trends2`。与 `kline?klt=1` 的关键差别：
+ *   - 返回 **241 个点、从 09:30 起**；09:30 那根是 **集合竞价**（o=h=l=c=开盘价，带竞价成交量/额）；
+ *   - `klt=1` 从 09:31 起、且把竞价并进 09:31，故 09:30 无点、也没有竞价量额；
+ *   - trends2 每行还直接带 **均价**（f58），即分时均价线的权威值。
+ * 每行字段：`时间,开,收,高,低,量(手),额(元),均价`。
+ */
+export async function getTrends(secid, { days = 1 } = {}) {
+  const ndays = Math.min(5, Math.max(1, Number(days) || 1))
+  const pathAndQuery =
+    `/api/qt/stock/trends2/get?secid=${enc(secid)}` +
+    `&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13` +
+    `&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=${ndays}&iscr=0&iscca=0`
+  const json = await cached(`t:${secid}:${ndays}`, 60_000, () => klinePool(pathAndQuery))
+  const d = json?.data
+  if (!d || !Array.isArray(d.trends) || !d.trends.length) throw new Error('无分时数据')
+  const bars = d.trends.map((line) => {
+    const c = line.split(',')
+    return {
+      time: c[0],
+      open: num(c[1]),
+      close: num(c[2]),
+      high: num(c[3]),
+      low: num(c[4]),
+      volume: num(c[5]),
+      amount: num(c[6]),
+      avg: num(c[7]),
+      amplitude: null,
+      changePct: null,
+      change: null,
+      turnover: null,
+    }
+  })
+  return {
+    secid,
+    code: d.code ?? null,
+    market: marketOf(secid),
+    name: d.name ?? null,
+    bars: withDerived(withMa(bars)),
+  }
+}
 
+const QUOTE_FIELDS = 'f1,f2,f3,f4,f5,f6,f8,f12,f13,f14,f15,f16,f17,f18,f20,f21'
 export function decodeQuote(x) {
   const d = num(x.f1) ?? 2
   const p = 10 ** d

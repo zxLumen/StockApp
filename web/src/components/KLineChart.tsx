@@ -14,6 +14,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import type { Bar } from '../types'
+import { fmtAmount } from '../format'
 import {
   SESSION_SLOTS,
   avgPrices,
@@ -115,6 +116,10 @@ export default function KLineChart({
   const avgByTime = useRef(new Map<string, number>())
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
+  // 昨收用 ref 传进十字光标回调：图表只在「分时与否」变化时重建，换标的（周期不变）不重建，
+  // 若回调闭包捕获 prevClose，换标的后续会用**旧标的的昨收**算涨跌（从指数切到低价股会冒出 -99%）。
+  const prevCloseRef = useRef(prevClose)
+  prevCloseRef.current = prevClose
   const loadMoreRef = useRef(onLoadMore)
   loadMoreRef.current = onLoadMore
   const canLoadRef = useRef(false)
@@ -226,9 +231,10 @@ export default function KLineChart({
       const bar = key ? (byTime.current.get(key) ?? null) : null
       if (bar) {
         const avg = avgByTime.current.get(key) ?? null
+        const pc = prevCloseRef.current
         const chgPct =
-          prevClose != null && prevClose > 0 && bar.close != null
-            ? Number((((bar.close - prevClose) / prevClose) * 100).toFixed(2))
+          pc != null && pc > 0 && bar.close != null
+            ? Number((((bar.close - pc) / pc) * 100).toFixed(2))
             : bar.changePct
         setTip({ x: param.point.x, y: param.point.y, bar, avg, chgPct })
       } else {
@@ -311,8 +317,9 @@ export default function KLineChart({
             priceMap.set(ts, b.close)
             byTime.current.set(String(ts), b)
           }
-          if (avgs[i] != null) {
-            avgByTime.current.set(String(ts), avgs[i] as number)
+          const avgVal = b.avg ?? avgs[i]
+          if (avgVal != null) {
+            avgByTime.current.set(String(ts), avgVal as number)
           }
           const prev = i > 0 ? viewBars[i - 1].close : (first.open ?? first.close)
           volMap.set(ts, { value: b.volume ?? 0, up: b.close >= (prev ?? b.close) })
@@ -422,7 +429,7 @@ export default function KLineChart({
           className="kline-tip"
           style={{
             left: tip.x + 14 + tipW > boxW ? Math.max(6, tip.x - tipW - 8) : tip.x + 14,
-            top: Math.max(6, Math.min(tip.y - 6, boxH - (timeshare ? 168 : 216))),
+            top: Math.max(6, Math.min(tip.y - 6, boxH - (timeshare ? 190 : 216))),
           }}
         >
           <div className="kline-tip-time">{tip.bar.time}</div>
@@ -443,6 +450,10 @@ export default function KLineChart({
               <div className="kline-tip-row">
                 <span>量</span>
                 <b>{tip.bar.volume != null ? tip.bar.volume.toLocaleString('zh-CN') : '—'}</b>
+              </div>
+              <div className="kline-tip-row">
+                <span>额</span>
+                <b>{fmtAmount(tip.bar.amount)}</b>
               </div>
             </>
           ) : (
