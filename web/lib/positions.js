@@ -15,6 +15,7 @@ import { readJson } from './store.js'
 import { cached } from './http.js'
 import { cachedKline } from './kline-cache.js'
 import { mapLimit } from './rank.js'
+import { getQuotes } from './market.js'
 import {
   bjDate,
   listRecommendDates,
@@ -23,10 +24,16 @@ import {
   BENCH_NAME,
   CHAIN_SUBDIR,
 } from './recommend.js'
-import { addTradingDays, prevTradingDay } from './trading-days.js'
+import { addTradingDays, prevTradingDay, isTradingDay } from './trading-days.js'
 
 const ACTIONS_FILE = 'recommend-actions.json'
 const PER_STOCK = 10000
+
+/** 北京时间（UTC+8）的当天分钟数：判断是否已开盘（>=09:30）。 */
+function bjNowMinutes() {
+  const bj = new Date(Date.now() + 8 * 3600_000)
+  return bj.getUTCHours() * 60 + bj.getUTCMinutes()
+}
 
 /** 目标成本 1 万，**股数一律取整**：低价股整手（100 股/手）；一手就超 1 万的高价股取整股。 */
 export function sharesFor(price) {
@@ -47,8 +54,12 @@ async function computeAll(dataDir) {
   const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
   const actions = raw && raw.positions ? raw.positions : {}
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
-  // 估值日 = 最近一个「有日K」的交易日（未开盘的今天不合成，避免幽灵点）。
-  const valuationDate = benchBars.length ? benchBars[benchBars.length - 1].time : bjDate()
+  const today = bjDate()
+  const lastBar = benchBars.length ? benchBars[benchBars.length - 1].time : today
+  // 盘中（已开盘）且当日日K还没出 → 用**实时价**给「今天」这一点估值：收盘后实时≈收盘，无缝；
+  // 盘前无今日 → 用最近收盘，不会幽灵。这样盘中曲线跟着动，且不引入盘前假点。
+  const useIntraday = today > lastBar && isTradingDay(today) && bjNowMinutes() >= 9 * 60 + 30
+  const valuationDate = useIntraday ? today : lastBar
   // 全局起点 = 所有链路里最早的买入日：三条曲线共用同一 x 轴。
   let globalStart = null
   for (const chain of ['dual', 'A', 'B']) {
@@ -57,7 +68,7 @@ async function computeAll(dataDir) {
   }
   const chains = {}
   for (const chain of ['dual', 'A', 'B']) {
-    chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate).catch(() => emptyChain())
+    chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate, useIntraday).catch(() => emptyChain())
   }
   return { benchName: BENCH_NAME, asOf: valuationDate, chains }
 }
@@ -81,7 +92,7 @@ function emptySummary() {
   return { count: 0, openCount: 0, closedCount: 0, invested: 0, openCost: 0, realized: 0, unrealized: 0, total: 0, returnPct: null, winPct: null }
 }
 
-async function computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate) {
+async function computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate, useIntraday) {
   const sub = CHAIN_SUBDIR[chain] || 'recommend'
   const dates = (await listRecommendDates(dataDir, chain)).slice().sort() // 升序
   if (!dates.length) return emptyChain()
@@ -127,11 +138,34 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
   })
 
   const closeOn = (secid, day) => closeMap.get(secid)?.get(day) ?? null
-  const priceAt = (secid) => closeOn(secid, valuationDate) ?? lastClose.get(secid)?.close ?? null
+  // 盘中：一次性批量实时行情（含沪深300），用于「今天」这一点；折叠进本函数的缓存计算里，
+  // 访客请求只读缓存，不会每次刷新都打上游。
+  const liveMap = new Map()
+  if (useIntraday) {
+    try {
+      const q = await getQuotes([...secids, BENCH_SECID])
+      for (const x of q.items || []) liveMap.set(x.secid, x)
+    } catch {
+      /* 行情挂了则退回最近收盘 */
+    }
+  }
+  const livePrice = (secid) =>
+    (useIntraday ? liveMap.get(secid)?.price : null) ?? closeOn(secid, valuationDate) ?? lastClose.get(secid)?.close ?? null
+  const priceAt = (secid) => livePrice(secid)
 
   const o = buildLedger(buys, 'orig', { valuationDate, closeOn, priceAt })
   const a = buildLedger(buys, 'ai', { valuationDate, closeOn, priceAt })
-  const equity = buildEquity(buys, { closeMap, benchBars, valuationDate, globalStart, origLots: o.lots, aiLots: a.lots })
+  const equity = buildEquity(buys, {
+    closeMap,
+    benchBars,
+    valuationDate,
+    globalStart,
+    origLots: o.lots,
+    aiLots: a.lots,
+    useIntraday,
+    livePrice,
+    benchLive: useIntraday ? liveMap.get(BENCH_SECID)?.price ?? null : null,
+  })
   return {
     orig: { summary: o.summary, open: o.open, closed: o.closed, trades: o.trades },
     ai: { summary: a.summary, open: a.open, closed: a.closed, trades: a.trades },
@@ -242,62 +276,64 @@ function buildLedger(buys, mode, { valuationDate, closeOn, priceAt }) {
 }
 
 /** 金额法曲线：逐日（该口径下 realized+unrealized）/累计投入；沪深300 同起点按收盘归一。 */
-function buildEquity(buys, { closeMap, benchBars, valuationDate, globalStart, origLots, aiLots }) {
+function buildEquity(buys, { closeMap, benchBars, valuationDate, globalStart, origLots, aiLots, useIntraday, livePrice, benchLive }) {
   const benchByDay = new Map()
   for (const b of benchBars) if (b.close != null) benchByDay.set(b.time, b.close)
   const chainStart = buys.reduce((m, b) => (b.buyDate < m ? b.buyDate : m), buys[0].buyDate)
   const start = globalStart && globalStart < chainStart ? globalStart : chainStart
+  // 曲线日期 = 沪深300 有日K的交易日；盘中今日日K还没出，故 cal 只到最近收盘日，今日单独补。
   const cal = benchBars.map((b) => b.time).filter((t) => t >= start && t <= valuationDate).sort()
   if (cal.length === 0) return []
 
   const closeOf = (secid, day) => closeMap.get(secid)?.get(day) ?? null
-  const seriesAccount = (lots) => {
-    const out = []
-    for (const t of cal) {
-      let realized = 0
-      let unrealized = 0
-      let invested = 0
-      for (const p of lots) {
-        if (p.buyDate > t) continue
-        invested += p.shares * p.buyPrice
-        if (p.sellDate && p.sellDate <= t) {
-          if (p.sellPrice != null) realized += p.shares * (p.sellPrice - p.buyPrice)
-        } else {
-          const c = closeOf(p.secid, t)
-          if (c != null) unrealized += p.shares * (c - p.buyPrice)
-        }
+  // 某日组合收益率（金额法）：未了结持仓用 priceFn 定价。
+  const valueAt = (lots, t, priceFn) => {
+    let realized = 0
+    let unrealized = 0
+    let invested = 0
+    for (const p of lots) {
+      if (p.buyDate > t) continue
+      invested += p.shares * p.buyPrice
+      if (p.sellDate && p.sellDate <= t) {
+        if (p.sellPrice != null) realized += p.shares * (p.sellPrice - p.buyPrice)
+      } else {
+        const c = priceFn(p.secid)
+        if (c != null) unrealized += p.shares * (c - p.buyPrice)
       }
-      out.push({ date: t, pct: invested > 0 ? round2(((realized + unrealized) / invested) * 100) : 0 })
     }
-    return out
+    return invested > 0 ? round2(((realized + unrealized) / invested) * 100) : 0
   }
-  const origS = seriesAccount(origLots)
-  const aiS = seriesAccount(aiLots)
-  const benchS = (() => {
-    const out = []
+
+  const out = cal.map((t) => ({
+    date: t,
+    orig: valueAt(origLots, t, (sid) => closeOf(sid, t)),
+    ai: valueAt(aiLots, t, (sid) => closeOf(sid, t)),
+    bench: null,
+  }))
+  // 沪深300 累计收益率（同起点=cal[0]）
+  {
     let cum = 1
     let base = null
-    for (let i = 0; i < cal.length; i += 1) {
-      const t = cal[i]
-      const c = benchByDay.get(t)
-      if (i === 0 || base == null) {
-        base = c ?? base
-        out.push({ date: t, pct: 0 })
+    for (const row of out) {
+      const c = benchByDay.get(row.date)
+      if (base == null) {
+        base = c ?? null
+        row.bench = 0
         continue
       }
       cum = c != null && base ? c / base : cum
-      out.push({ date: t, pct: round2((cum - 1) * 100) })
+      row.bench = round2((cum - 1) * 100)
     }
-    return out
-  })()
-  const origMap = new Map(origS.map((x) => [x.date, x.pct]))
-  const aiMap = new Map(aiS.map((x) => [x.date, x.pct]))
-  const benchMap = new Map(benchS.map((x) => [x.date, x.pct]))
-  const dates = [...new Set([...origS, ...aiS].map((x) => x.date))].sort()
-  return dates.map((d) => ({
-    date: d,
-    orig: origMap.get(d) ?? null,
-    ai: aiMap.get(d) ?? null,
-    bench: benchMap.get(d) ?? null,
-  }))
+  }
+  // 盘中补「今天」这一个点：组合用实时价，基准用实时指数点位。
+  if (useIntraday && valuationDate > cal[cal.length - 1]) {
+    const base = benchByDay.get(cal[0]) ?? null
+    out.push({
+      date: valuationDate,
+      orig: valueAt(origLots, valuationDate, livePrice),
+      ai: valueAt(aiLots, valuationDate, livePrice),
+      bench: benchLive != null && base ? round2((benchLive / base - 1) * 100) : out[out.length - 1].bench,
+    })
+  }
+  return out
 }
