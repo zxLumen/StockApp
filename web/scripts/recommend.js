@@ -10,7 +10,9 @@
 // 产物：DATA_DIR/recommend/<YYYY-MM-DD>.json（前端「推荐」页签读它）。
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { runRecommendDaily, runRecommendRegime, decideActions, reconcileCross, bjDate } from '../lib/recommend.js'
+import { runRecommendDaily, runRecommendRegime, decideActions, reconcileCross, ensureEntryPositions, CHAIN_SUBDIR, bjDate } from '../lib/recommend.js'
+import { readJson } from '../lib/store.js'
+import path from 'node:path'
 import { isTradingDay } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
@@ -98,6 +100,24 @@ try {
   // 提前终止带硬护栏（跌幅 ≤ −8% 且已持有 ≥ min(3, ⌊周期/2⌋) 日才生效，见 decideActions）。
   // 生成失败不阻断（上面的 try 已处理）；这里再各自兜底，任一链路失败不影响其它。
   if (!dryRun) {
+    // 当日新推荐"落库"：B / dual 在 B 日预写 actions（含 entryDefer + entryApproved），
+    // 让 decideActions 立刻看到入口已批、放弃提前终止（臣服）。A / dual-A-day 不臣服，函数自动跳过。
+    for (const chain of ['dual', 'A', 'B']) {
+      try {
+        const f = path.join(DATA_DIR, CHAIN_SUBDIR[chain] || 'recommend', `${payload.date}.json`)
+        const p = await readJson(f, null)
+        if (!p || !(p.top || []).length) continue
+        await ensureEntryPositions(DATA_DIR, {
+          chain,
+          recDate: payload.date,
+          basisDate: payload.basisDate,
+          top: p.top,
+          onLog: (m) => console.log('[entry]', m),
+        })
+      } catch (e) {
+        console.warn(`[entry] ${chain} 落库失败（忽略）：${e instanceof Error ? e.message : e}`)
+      }
+    }
     for (const chain of ['dual', 'A', 'B']) {
       try {
         await decideActions(DATA_DIR, cfg, { chain, onLog: (m) => console.log('[exit]', m) })

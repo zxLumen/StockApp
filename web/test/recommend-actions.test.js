@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross } from '../lib/recommend.js'
+import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, CHAIN_SUBDIR } from '../lib/recommend.js'
 import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
@@ -145,6 +145,87 @@ test('decideActions：已到期持仓不再决策', async () => {
   const deps = { quotes: quotesOf([{ secid: '1.600519', price: 1600 }]), decide: decisionsOf((r) => ({ id: r.id, action: 'exit' })) }
   const r = await decideActions(dir, {}, { chain: 'dual', today: '2026-10-08', deps })
   assert.equal(r.decided, 0, 'holdEndDate == today 视为已到期')
+})
+
+test('ensureEntryPositions：B 落库并臣服——入口已批则忽略 AI 提前终止', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  const top = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.B), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.B, `${basis}.json`), { date: basis, basisDate: basis, top, regime: { chain: 'B' } })
+
+  const r0 = await ensureEntryPositions(dir, { chain: 'B', recDate: basis, basisDate: basis, top })
+  assert.equal(r0.added, 1)
+  let pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('B', basis, '600519')]
+  assert.equal(pos.entryDefer, true)
+  assert.equal(pos.entryApproved, true)
+
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 900 }]), // −40% 极端也不终止
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit', reason: '崩盘' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'B', today, deps })
+  assert.equal(r.deferred, 1, '入口臣服 1 笔')
+  assert.equal(r.changed, 0)
+  pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('B', basis, '600519')]
+  assert.equal(!!pos.exited, false, '臣服：不提前终止')
+  assert.ok(pos.log.some((l) => l.action === 'entry-defer'), '记录 entry-defer')
+})
+
+test('ensureEntryPositions：dual 在 B 日臣服（按 payload.regime.chain）', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  const top = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await seedRecommend(dir, basis, basis, top) // dual 落在 recommend/
+  const p = await readJson(path.join(dir, 'recommend', `${basis}.json`))
+  p.regime = { chain: 'B' }
+  await writeJson(path.join(dir, 'recommend', `${basis}.json`), p)
+
+  const r0 = await ensureEntryPositions(dir, { chain: 'dual', recDate: basis, basisDate: basis, top })
+  assert.equal(r0.added, 1)
+  const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('dual', basis, '600519')]
+  assert.equal(pos.entryDefer, true)
+})
+
+test('decideActions：B 臣服不影响延长（extend 仍生效）', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const top = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.B), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.B, `${basis}.json`), { date: basis, basisDate: basis, top, regime: { chain: 'B' } })
+  await ensureEntryPositions(dir, { chain: 'B', recDate: basis, basisDate: basis, top })
+
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1520 }]),
+    decide: decisionsOf((r) => ({ id: r.id, action: 'extend', holdDays: 30 })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'B', today: '2026-10-09', deps })
+  assert.equal(r.changed, 1)
+  const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('B', basis, '600519')]
+  assert.equal(pos.holdDays, 30)
+})
+
+test('decideActions：A 链路不臣服——ensureEntryPositions 不落 entryDefer，照常提前终止', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  const top = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.A), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.A, `${basis}.json`), { date: basis, basisDate: basis, top, regime: { chain: 'A' } })
+
+  const r0 = await ensureEntryPositions(dir, { chain: 'A', recDate: basis, basisDate: basis, top })
+  assert.equal(r0.added, 0, 'A 不落 entryDefer')
+
+  const deps = {
+    quotes: quotesOf([{ secid: '1.600519', price: 1350 }]), // −10% 过护栏
+    decide: decisionsOf((r) => ({ id: r.id, action: 'exit' })),
+  }
+  const r = await decideActions(dir, {}, { chain: 'A', today, deps })
+  assert.equal(r.changed, 1)
+  const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('A', basis, '600519')]
+  assert.equal(pos.exited, true)
 })
 
 test('dueOn：合并「周期到期」与「当日提前终止」两路，终止优先', async () => {

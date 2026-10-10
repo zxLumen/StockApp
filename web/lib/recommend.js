@@ -1527,6 +1527,7 @@ export async function decideActions(
 
   let changed = 0
   let gated = 0
+  let deferred = 0
   for (const a of active) {
     const dec = decisions.get(a.key)
     if (!dec) continue
@@ -1553,6 +1554,15 @@ export async function decideActions(
       if (pos.exited || price == null) continue // 终态防重复；无价不终止
       // 退出叠加在自然到期日（或更晚）→ 不是"提前"，交给自然到期，不记 exit。
       if (nextTradingDay(today) >= a.end) continue
+      // 入口臣服：B（或 dual 在 B 日）由入口 AI 批准的持仓 → 跳过提前终止（仅自然到期 / extend 退出）。
+      if (pos.entryDefer && pos.entryApproved) {
+        pos.log = Array.isArray(pos.log) ? pos.log : []
+        pos.log.push({ date: today, action: 'entry-defer', note: '向入口 AI 臣服：放弃提前终止' })
+        pos.updatedAt = new Date().toISOString()
+        actions.positions[a.key] = pos
+        deferred += 1
+        continue
+      }
       const pct = pctFromPick(pos.pickPrice ?? a.pickPrice, price)
       const elapsed = heldTradingDays(pos.basisDate ?? a.basisDate, today)
       const need = exitMinHoldDays(pos.holdDays ?? a.holdDays)
@@ -1584,9 +1594,9 @@ export async function decideActions(
       }
     }
   }
-  if (changed || gated) await writeActions(dataDir, actions)
-  onLog(`[${chain}] 活跃 ${active.length}，决策 ${decisions.size}，变更 ${changed}，护栏拦截 ${gated}`)
-  return { decided: active.length, changed, gated }
+  if (changed || gated || deferred) await writeActions(dataDir, actions)
+  onLog(`[${chain}] 活跃 ${active.length}，决策 ${decisions.size}，变更 ${changed}，护栏拦截 ${gated}，入口臣服 ${deferred}`)
+  return { decided: active.length, changed, gated, deferred }
 }
 
 // ── 交叉票联合裁决（同一只票既被提前终止、又进了当日推荐）──────────────────────
@@ -1707,4 +1717,71 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
   await writeActions(dataDir, actions)
   onLog(`[cross] ${chain}@${effective} 裁决 ${arbitrated}，剔除 ${dropped}，最终 ${picked.length} 只`)
   return { arbitrated, dropped, kept: picked.length }
+}
+
+// ── 当日新推荐"落库"：让后续 decideActions 立即看到 entryApproved / entryDefer ──────────
+/**
+ * 为某链路某日的 Top10 在 actions.positions 里**预先写入**仓条目（含 entry 标志 / ai / pickPrice），
+ * 让 `decideActions` 当天就能"看到"该仓由入口 AI 批准，并按 B 链路规则"臣服"——放弃提前终止、只由自然到期结束。
+ *
+ * - 只对 **B**（或 dual 在 regime===B 的那天）设 `entryDefer=true`；A / dual-A-day 不臣服。
+ * - 已存在的 `exited=true` 仓位**不**覆盖（已离场）。
+ * - 已有仓位但 `entryApproved/entryDefer` 缺失的 → 按当日 payload 回填（并补 `ai/pickPrice`）。
+ */
+export async function ensureEntryPositions(
+  dataDir,
+  { chain, recDate, basisDate, top, onlyExisting = false, onLog = () => {} } = {},
+) {
+  if (!recDate || !Array.isArray(top) || !top.length) return { added: 0, backfilled: 0 }
+  const payload = await readJson(path.join(dataDir, chainSubdir(chain), `${recDate}.json`), null)
+  const isDefer = chain === 'B' || (chain === 'dual' && payload?.regime?.chain === 'B')
+  if (!isDefer) return { added: 0, backfilled: 0 }
+  const actions = await readActions(dataDir)
+  const today = bjDate()
+  let added = 0
+  let backfilled = 0
+  for (const s of top) {
+    if (!s?.code || !s.secid) continue
+    const ai = s.ai || null
+    const baseHold = normalizeHoldDays(ai?.holdDays ?? s.holdDays)
+    const entryApproved = !!ai && ai.veto !== true
+    const key = `${chain}:${recDate}:${s.code}`
+    const existing = actions.positions[key]
+    if (existing) {
+      if (existing.exited) continue
+      let dirty = false
+      if (existing.entryDefer === undefined) { existing.entryDefer = true; dirty = true }
+      if (existing.entryApproved === undefined) { existing.entryApproved = entryApproved; dirty = true }
+      if (ai && !existing.ai) { existing.ai = ai; dirty = true }
+      if (existing.pickPrice == null && s.price != null) { existing.pickPrice = s.price; dirty = true }
+      if (dirty) {
+        existing.updatedAt = new Date().toISOString()
+        actions.positions[key] = existing
+        backfilled += 1
+      }
+      continue
+    }
+    if (onlyExisting) continue // 回填模式：只补已有仓，不新建（避免复活早已到期的旧推荐）
+    actions.positions[key] = {
+      chain,
+      recDate,
+      secid: s.secid,
+      code: s.code,
+      name: s.name,
+      basisDate,
+      pickPrice: s.price ?? null,
+      baseHoldDays: baseHold,
+      holdDays: baseHold,
+      exited: false,
+      exit: null,
+      entryDefer: true,
+      entryApproved,
+      ai,
+      log: [{ date: today, action: 'entry', holdDays: baseHold }],
+    }
+    added += 1
+  }
+  if (added || backfilled) await writeActions(dataDir, actions)
+  onLog(`[entry] ${chain}@${recDate} 新增 ${added}，回填 ${backfilled}`)
+  return { added, backfilled }
 }
