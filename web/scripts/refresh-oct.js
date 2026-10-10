@@ -116,7 +116,9 @@ async function main() {
         deps: depsOf(poolOf(universe)),
         onLog: (m) => console.log('[B]', m),
       })
-      await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), { ...payloadB, regime: { chain: 'B' } }) // 当日 dual = B（补 regime，供臣服判链/提示词）
+      const bRegime = { tilt: Number(tilt.toFixed(4)), thr: tiltThreshold(), chain: 'B' }
+      await writeJson(path.join(DATA_DIR, 'recommend-factors-fwd', `${E}.json`), { ...payloadB, regime: bRegime }) // 前瞻归档补 regime（与生产一致）
+      await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), { ...payloadB, regime: bRegime }) // 当日 dual = B
       console.log(`  ✓ B(+dual) 重跑完成：top ${payloadB.top.length} 只，候选 ${(payloadB.candidates || []).length}`)
     }
 
@@ -135,7 +137,9 @@ async function main() {
         deps: depsOf(poolOf(amountUniverse)),
         onLog: (m) => console.log('[A]', m),
       })
-      if (chain === 'A') await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), { ...payloadA, regime: { chain: 'A' } }) // 当日 dual = A（补 regime）
+      const aRegime = { tilt: Number(tilt.toFixed(4)), thr: tiltThreshold(), chain: 'A' }
+      await writeJson(path.join(DATA_DIR, 'recommend-ai-fwd', `${E}.json`), { ...payloadA, regime: aRegime }) // 前瞻归档补 regime
+      if (chain === 'A') await writeJson(path.join(DATA_DIR, 'recommend', `${E}.json`), { ...payloadA, regime: aRegime }) // 当日 dual = A
       console.log(`  ✓ A 重跑完成：top ${payloadA.top.length} 只`)
     } else {
       console.log(`  A 已有数据（top ${(aExist.top || []).length}），保留不重选`)
