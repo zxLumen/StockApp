@@ -27,6 +27,7 @@
   - [ ] `OBJECTIVE`（`rank.js`）/ `RECOMMEND_DEV_HI` → 训练产物
   - [ ] `poolPages / topCandidates / finalPicks / maxPerIndustry` → 训练产物
   - [ ] 训练脚本窗口参数化（`optimize-factors` 的 `RANGES/TRAIN_KEYS/HOLD_KEYS`）
+  - [x] 事件因子窗口参数化：`config/model.json` `factors.eventWindowDays`（默认 5）；改**交易日**口径（`lib/ann-factor.js` `eventWindowDays`，含其间自然日），`basisDate` 对齐前一交易日；`recommend.js` 每日自动归档当日公告
   - [ ] `HIDDEN_RECOMMEND_*` 按新划分重算
 - [ ] **3. 训 B-only**：2024 拟合 → 2025 验证 → 冻结（留档）
 - [ ] **4. 训 A-only**：2024 开发 prompt/`w` → 2025 验证 → 冻结（留档）

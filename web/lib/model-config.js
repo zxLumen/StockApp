@@ -38,3 +38,5 @@ export const factorWeights = () => {
 export const objectiveConfig = () => ({ ...(MODEL.objective || {}) })
 /** 选股 / 池子参数。 */
 export const selectConfig = () => ({ ...(MODEL.select || {}) })
+/** 公告事件因子回看窗口（**交易日**个数，见 lib/ann-factor.js）。 */
+export const eventWindowDays = () => pick('RECOMMEND_EVENT_WINDOW', MODEL.factors?.eventWindowDays) ?? 5

@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "recommend": "node --env-file-if-exists=.env scripts/recommend.js",
     "archive:news": "node --env-file-if-exists=.env scripts/archive-news.js",
+    "archive:ann": "node --env-file-if-exists=.env scripts/archive-info.js --ann-only",
     "backtest": "node --env-file-if-exists=.env scripts/backtest.js",
     "eval:backtest": "node --env-file-if-exists=.env scripts/eval-backtest.js",
     "opt:factors": "node --env-file-if-exists=.env scripts/optimize-factors.js",

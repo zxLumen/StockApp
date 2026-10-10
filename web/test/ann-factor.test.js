@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { classifyAnn, scoreAnnItem, prevDays, eventScores } from '../lib/ann-factor.js'
+import { classifyAnn, scoreAnnItem, prevDays, eventWindowDays, eventScores } from '../lib/ann-factor.js'
 
 // ── classifyAnn / scoreAnnItem ─────────────────────────────────────────────
 test('classifyAnn：识别利好公告', () => {
@@ -51,6 +51,26 @@ test('classifyAnn：同一类只计一次（去重）', () => {
 test('prevDays：含评估日、连续回看', () => {
   assert.deepEqual(prevDays('2026-09-10', 3), ['2026-09-08', '2026-09-09', '2026-09-10'])
   assert.deepEqual(prevDays('2026-03-01', 2), ['2026-02-28', '2026-03-01'], '跨月')
+})
+
+// ── eventWindowDays（交易日口径） ───────────────────────────────────────────
+test('eventWindowDays：锚定最近 N 个交易日、含其间自然日（跨长假）', () => {
+  // 2026-09-30 的前 5 个交易日 = 09-30, 09-29, 09-28, 09-24, 09-23
+  // （09-25~27 中秋假 + 周末被跳过，但仍回看满 5 个交易日）
+  assert.deepEqual(eventWindowDays('2026-09-30', 5), [
+    '2026-09-23',
+    '2026-09-24',
+    '2026-09-25',
+    '2026-09-26',
+    '2026-09-27',
+    '2026-09-28',
+    '2026-09-29',
+    '2026-09-30',
+  ])
+  // n=1 → 仅评估日
+  assert.deepEqual(eventWindowDays('2026-09-30', 1), ['2026-09-30'])
+  // 评估日落在非交易日 → 先对齐到 ≤ 它的最后一个交易日
+  assert.deepEqual(eventWindowDays('2026-09-27', 5), eventWindowDays('2026-09-24', 5), '周日对齐到 09-24')
 })
 
 // ── eventScores ────────────────────────────────────────────────────────────

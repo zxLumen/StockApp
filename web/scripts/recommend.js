@@ -15,7 +15,8 @@ import { readJson } from '../lib/store.js'
 import path from 'node:path'
 import { isTradingDay } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
-import { tiltThreshold, objectiveConfig, selectConfig } from '../lib/model-config.js'
+import { archiveAnnouncements } from '../lib/archive-ann.js'
+import { tiltThreshold, objectiveConfig, selectConfig, eventWindowDays } from '../lib/model-config.js'
 
 // 策略参数来自可训练配置（web/config/model.json）；代码不写死。
 const SEL = selectConfig()
@@ -49,14 +50,23 @@ if (!cfg?.apiKey) {
 }
 
 console.log(`[recommend] 数据目录 ${DATA_DIR} | 模型 ${cfg.model}`)
-// 公告事件净分（≤ 今日，回看 5 天）：与回测同口径注入因子选股。
-// 需当日 ann-archive 已归档；缺失则该项不贡献（不阻断）。
+// 公告事件净分（≤ 今日，回看 N 个交易日，N 见 config/model.json factors.eventWindowDays）：
+// 与回测同口径注入因子选股。需当日 ann-archive 已归档；缺失则该项不贡献（不阻断）。
 const basisDate = bjDate()
-const evtMap = await eventScores(DATA_DIR, basisDate, { windowDays: 5 }).catch((e) => {
+// 自动归档当日公告（best-effort）：保证事件因子当天有归档可用；失败不阻断出榜。
+await archiveAnnouncements({
+  dataDir: DATA_DIR,
+  from: basisDate,
+  to: basisDate,
+  preload: false,
+  maxPage: 20,
+  log: (m) => console.log('[recommend]', m),
+}).catch((e) => console.warn(`[recommend] 公告归档失败（忽略）：${e instanceof Error ? e.message : e}`))
+const evtMap = await eventScores(DATA_DIR, basisDate, { windowDays: eventWindowDays() }).catch((e) => {
   console.warn(`[recommend] 事件分计算失败（忽略该因子）：${e instanceof Error ? e.message : e}`)
   return null
 })
-if (evtMap) console.log(`[recommend] 事件因子覆盖 ${evtMap.size} 只（回看 5 天）`)
+if (evtMap) console.log(`[recommend] 事件因子覆盖 ${evtMap.size} 只（回看 ${eventWindowDays()} 个交易日）`)
 try {
   // 双链路自己管 selectMode / topCandidates（A=100、B=final），这里只给公共参数。
   const shared = {

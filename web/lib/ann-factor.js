@@ -7,6 +7,7 @@
 // 一旦用于 OOS 验证，就不得再依据 2025-09 的表现增删规则 —— 否则 OOS 失效。
 import path from 'node:path'
 
+import { prevTradingDay } from './trading-days.js'
 import { readJson } from './store.js'
 
 const DAY_MS = 86400000
@@ -72,14 +73,37 @@ export function prevDays(day, n) {
   return out
 }
 
+const pad2 = (n) => String(n).padStart(2, '0')
+const addDays = (iso, n) => {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + n))
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`
+}
+
 /**
- * 某评估日 D 的个股事件净分：回看 `windowDays` 天（含 D）的公告归档，按 code 累加。
- * 返回 `Map<code(6位), score>`；只保留已上市 A 股（6 位数字代码）。无事件不出现。
+ * 事件窗口（**交易日口径**）：先把 day 对齐到 ≤ 它的最后一个交易日 D，再以「≤ D 的最近 n 个交易日」
+ * 为锚，返回从第 n 个交易日到 D 的**全部自然日**（含其间的周末 / 节假日）。公告按自然日归档，
+ * 周末 / 节假日公告也要计入；用交易日锚定则窗口**恒覆盖 n 个交易日**，不会被「某天恰逢长假」
+ * 扭曲（与旧的自然日窗口相比，长假的日历跨度更长，但市场活动长度恒定）。
+ */
+export function eventWindowDays(day, n = 5) {
+  const end = prevTradingDay(day)
+  let start = end
+  for (let i = 1; i < n; i += 1) start = prevTradingDay(addDays(start, -1))
+  const out = []
+  for (let d = start; d <= end; d = addDays(d, 1)) out.push(d)
+  return out
+}
+
+/**
+ * 某评估日 D 的个股事件净分：回看 `windowDays` **个交易日**（含 D，见 {@link eventWindowDays}）
+ * 的公告归档，按 code 累加。`day` 若非交易日先对齐到 ≤ 它的最后一个交易日（窗口不跨越长假
+ * 之后的「尾巴」）。返回 `Map<code(6位), score>`；只保留已上市 A 股（6 位数字代码）。无事件不出现。
  */
 export async function eventScores(dataDir, day, { windowDays = 5 } = {}) {
   const limit = Date.parse(`${day}T23:59:59+08:00`)
   const acc = new Map()
-  for (const d of prevDays(day, windowDays)) {
+  for (const d of eventWindowDays(day, windowDays)) {
     const items = await readJson(path.join(dataDir, 'ann-archive', `${d}.json`), [])
     for (const it of Array.isArray(items) ? items : []) {
       if (it?.time && it.time > limit) throw new Error(`未来数据泄漏：公告 ${it.time} > ${day}`)

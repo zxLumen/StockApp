@@ -22,6 +22,7 @@ import {
 } from '../lib/recommend.js'
 import { financeFactors } from '../lib/finance.js'
 import { regimeTilt } from '../lib/factors.js'
+import { eventWindowDays } from '../lib/model-config.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { buildNameIndex, buildDailyInfo } from '../lib/news-factor.js'
 
@@ -151,7 +152,7 @@ async function main() {
       continue
     }
     const tilt = regimeTilt(idxBars.filter((b) => b.time <= D))
-    const evtMap = await eventScores(DATA_DIR, D, { windowDays: 5 }).catch(() => null)
+    const evtMap = await eventScores(DATA_DIR, D, { windowDays: eventWindowDays() }).catch(() => null)
     const info = await buildDailyInfo(DATA_DIR, D, nameIndex).catch(() => new Map())
     const klineOf = (secid) => ({ bars: slice(allBars.get(secid) || [], D) })
     const newsFor = (s) => {

@@ -14,7 +14,7 @@ import { aiConfig } from '../lib/settings.js'
 import { readJson, writeJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'
 import { mapLimit } from '../lib/rank.js'
-import { tiltThreshold } from '../lib/model-config.js'
+import { tiltThreshold, eventWindowDays } from '../lib/model-config.js'
 import { prevTradingDay, isTradingDay } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
 import {
@@ -88,7 +88,7 @@ async function main() {
       })
       return { items: hit.slice(0, 8) }
     }
-    const evtMap = await eventScores(DATA_DIR, D, { windowDays: 5 }).catch(() => null)
+    const evtMap = await eventScores(DATA_DIR, D, { windowDays: eventWindowDays() }).catch(() => null)
     const poolOf = (list) => {
       const out = []
       for (const s of list) {

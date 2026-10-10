@@ -9,6 +9,7 @@
     "hi": 0.04
   },
   "factors": {
+    "eventWindowDays": 5,
     "weights": {
       "reversal": 0.2,
       "midRev": 0.4,
