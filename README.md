@@ -98,6 +98,13 @@ A/B 对照数据 —— 判定「A 是不是背过历史行情」、日后重标
 `recommend/`。攒够后用：
 `node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd`。
 
+**盘前刷新（`--refresh`）**：另一条 cron 在**交易日 09:00**（开盘前）跑
+`node scripts/recommend.js --refresh`，用**最新公告（含隔夜/周末）重算当天推荐并覆盖**原文件：
+价格基准仍取**上一交易日**收盘（`basisDate=prevTradingDay`），事件因子窗口末端延伸到运行日
+（纳入隔夜/周末公告，`lib/ann-factor.js` 的 `eventWindowDays`）。后置流程走「方案甲」——
+**替换**当天建仓（`replaceEntryPositions`：清旧仓→按新 top 重建，重派生臣服标记）+ 重跑
+`reconcileCross`，**不跑 `decideActions`**（持仓的延长/终止交给当晚收盘那次）。
+
 > **数据划分（训练/验证/测试/评估、隐藏窗口）见 [`docs/DATA-SPLIT.md`](docs/DATA-SPLIT.md)** ——
 > 线上只展示 2026-10 起的前瞻，2026-03~09 是训练/验证样本故隐藏。改任何窗口都要同时
 > 改该文档与代码常量。

@@ -81,14 +81,13 @@ const addDays = (iso, n) => {
 }
 
 /**
- * 事件窗口（**交易日口径**）：先把 day 对齐到 ≤ 它的最后一个交易日 D，再以「≤ D 的最近 n 个交易日」
- * 为锚，返回从第 n 个交易日到 D 的**全部自然日**（含其间的周末 / 节假日）。公告按自然日归档，
- * 周末 / 节假日公告也要计入；用交易日锚定则窗口**恒覆盖 n 个交易日**，不会被「某天恰逢长假」
- * 扭曲（与旧的自然日窗口相比，长假的日历跨度更长，但市场活动长度恒定）。
+ * 事件窗口（**交易日锚定**）：窗口**末端 = 传入的 `day`**（可为非交易日，用于盘前刷新纳入隔夜/
+ * 周末公告）；起点锚「≤ day 的第 n 个交易日」。返回 [起点 … day] 的**全部自然日**（含其间周末/
+ * 节假日）。日常调用传交易日 → 末端即该交易日，行为不变；盘前刷新传运行日 → 末端延伸，纳入隔夜。
  */
 export function eventWindowDays(day, n = 5) {
-  const end = prevTradingDay(day)
-  let start = end
+  const end = day
+  let start = prevTradingDay(day)
   for (let i = 1; i < n; i += 1) start = prevTradingDay(addDays(start, -1))
   const out = []
   for (let d = start; d <= end; d = addDays(d, 1)) out.push(d)
@@ -96,9 +95,10 @@ export function eventWindowDays(day, n = 5) {
 }
 
 /**
- * 某评估日 D 的个股事件净分：回看 `windowDays` **个交易日**（含 D，见 {@link eventWindowDays}）
- * 的公告归档，按 code 累加。`day` 若非交易日先对齐到 ≤ 它的最后一个交易日（窗口不跨越长假
- * 之后的「尾巴」）。返回 `Map<code(6位), score>`；只保留已上市 A 股（6 位数字代码）。无事件不出现。
+ * 某评估日的个股事件净分：回看 `windowDays` **个交易日**（起点锚定交易日，末端 = 传入的 `day`，
+ * 见 {@link eventWindowDays}）的公告归档，按 code 累加。`day` 传交易日 = 日常口径；传盘前运行日
+ * 则末端延伸到该日，纳入隔夜/周末公告。返回 `Map<code(6位), score>`；只保留已上市 A 股
+ * （6 位数字代码）。无事件不出现。
  */
 export async function eventScores(dataDir, day, { windowDays = 5 } = {}) {
   const limit = Date.parse(`${day}T23:59:59+08:00`)

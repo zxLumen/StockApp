@@ -1788,6 +1788,30 @@ export async function ensureEntryPositions(
   return { added, backfilled }
 }
 
+/**
+ * **替换**某链某推荐日的全部建仓：先删该链 `recDate` 的旧仓，再按新 top 用 `ensureEntryPositions`
+ * 重建（重新派生 `entryDefer/entryApproved`）。用于盘前刷新——当日 top 变了，持仓要跟着换，
+ * 避免旧票持仓残留（recDate 相同但已不在推荐里）。
+ */
+export async function replaceEntryPositions(
+  dataDir,
+  { chain, recDate, basisDate, top, onLog = () => {} } = {},
+) {
+  const actions = await readActions(dataDir)
+  const prefix = `${chain}:${recDate}:`
+  let removed = 0
+  for (const k of Object.keys(actions.positions)) {
+    if (k.startsWith(prefix)) {
+      delete actions.positions[k]
+      removed += 1
+    }
+  }
+  if (removed) await writeActions(dataDir, actions)
+  const r = await ensureEntryPositions(dataDir, { chain, recDate, basisDate, top, onLog })
+  onLog(`[replace] ${chain}@${recDate} 删旧仓 ${removed}，新建 ${r.added}，回填 ${r.backfilled}`)
+  return { removed, ...r }
+}
+
 // ── 存量回填：以**持仓**为主补「入口臣服」标记（B / dual 在 B 日）──────────────────────
 /**
  * 逐条扫未退出的持仓，读其 `recDate` 的 payload 判定当日是否 B（或 dual 在 B 日）→ 写 `entryDefer`；

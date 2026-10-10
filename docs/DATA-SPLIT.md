@@ -22,10 +22,11 @@
 
 - 日K 截断 `≤ D`；财务 `NOTICE_DATE ≤ asOf`（越界报错）；公告/新闻 `time ≤ D`。
 - 训练/验证/测试共用同一 `asOf` 注入，禁止"全量"旁路。
-- **事件因子窗口按交易日**：回看 N 个交易日（默认 5，见 `config/model.json` 的
-  `factors.eventWindowDays`），含其间自然日；`basisDate` 先对齐到 `≤` 它的最后一个交易日
-  （见 `lib/ann-factor.js` 的 `eventWindowDays`）。这样窗口恒覆盖 N 个交易日，不被长假扭曲。
-  公告归档（`ann-archive`）由每日 `scripts/recommend.js` 自动补当日（best-effort）。
+- **事件因子窗口按交易日**：起点锚「≤ 评估日的第 N 个交易日」（默认 5，见 `config/model.json`
+  的 `factors.eventWindowDays`），**末端 = 传入的评估日**（见 `lib/ann-factor.js` 的
+  `eventWindowDays`）。日常传交易日 → 末端即该交易日；盘前刷新传运行日 → 末端延伸到该日，
+  纳入隔夜/周末公告。公告归档（`ann-archive`）由每日 `scripts/recommend.js` 自动补当日、
+  盘前刷新补 `[上一交易日..运行日]`（best-effort）。
 
 ## 2. 数据可用性（决定各窗口能否真跑）
 

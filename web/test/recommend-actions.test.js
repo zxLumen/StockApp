@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, backfillEntryFlags, CHAIN_SUBDIR } from '../lib/recommend.js'
+import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, replaceEntryPositions, backfillEntryFlags, CHAIN_SUBDIR } from '../lib/recommend.js'
 import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
@@ -187,6 +187,27 @@ test('ensureEntryPositions：dual 在 B 日臣服（按 payload.regime.chain）'
   assert.equal(r0.added, 1)
   const pos = (await readJson(path.join(dir, 'recommend-actions.json'))).positions[actionKey('dual', basis, '600519')]
   assert.equal(pos.entryDefer, true)
+})
+
+test('replaceEntryPositions：清掉该链该日旧仓，按新 top 重建（重派生臣服标记）', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const oldTop = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.B), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.B, `${basis}.json`), { date: basis, basisDate: basis, top: oldTop, regime: { chain: 'B' } })
+  await ensureEntryPositions(dir, { chain: 'B', recDate: basis, basisDate: basis, top: oldTop })
+
+  // 刷新：新 top 换成另一只（旧票应被清掉、新票建仓且带臣服标记）
+  const newTop = [recTop('0.000002', '000002', '万科A', 8, 5)]
+  const r = await replaceEntryPositions(dir, { chain: 'B', recDate: basis, basisDate: basis, top: newTop })
+  assert.equal(r.removed, 1, '删掉旧仓')
+  assert.equal(r.added, 1, '按新 top 建仓')
+
+  const positions = (await readJson(path.join(dir, 'recommend-actions.json'))).positions
+  assert.equal(positions[actionKey('B', basis, '600519')], undefined, '旧票持仓已清')
+  const pos = positions[actionKey('B', basis, '000002')]
+  assert.equal(pos.entryDefer, true)
+  assert.equal(pos.entryApproved, true)
 })
 
 test('decideActions：B 臣服不影响延长（extend 仍生效）', async () => {
