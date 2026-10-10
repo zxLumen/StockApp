@@ -34,6 +34,12 @@ const TO = val('--to', '2026-10-12')
 const DRYRUN = has('--dry-run')
 const VETO_POOL = Number(val('--pool-size', 30)) || 30
 
+const pad2 = (n) => String(n).padStart(2, '0')
+const dateMinus = (iso, n) => {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d - n))
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`
+}
 const sliceTo = (bars, D) => (Array.isArray(bars) ? bars.filter((b) => b.time <= D) : [])
 
 async function main() {
@@ -61,7 +67,8 @@ async function main() {
   console.log(`  生效日: ${effs.join(' ')}`)
 
   for (const E of effs) {
-    const D = prevTradingDay(E)
+    // 生成日 = E 的**前一交易日**（prevTradingDay 含自身，须先退回一天再对齐）。
+    const D = prevTradingDay(dateMinus(E, 1))
     const idxBars = sliceTo(allIdx, D)
     const { tilt } = await resolveTilt({ indexBars: idxBars }, D)
     const chain = pickChain(tilt, tiltThreshold())
