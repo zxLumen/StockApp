@@ -18,7 +18,7 @@ import { aiConfig } from '../lib/settings.js'
 import { runRecommendDaily, runRecommendRegime, decideActions, reconcileCross, ensureEntryPositions, replaceEntryPositions, CHAIN_SUBDIR, bjDate } from '../lib/recommend.js'
 import { readJson } from '../lib/store.js'
 import path from 'node:path'
-import { isTradingDay, prevTradingDay } from '../lib/trading-days.js'
+import { isTradingDay, prevTradingDayBefore } from '../lib/trading-days.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { archiveAnnouncements } from '../lib/archive-ann.js'
 import { tiltThreshold, objectiveConfig, selectConfig, eventWindowDays } from '../lib/model-config.js'
@@ -62,7 +62,7 @@ console.log(`[recommend] 数据目录 ${DATA_DIR} | 模型 ${cfg.model}`)
 // 事件因子 as-of：日常=基准日；盘前刷新=今天（窗口末端延伸到运行日，纳入隔夜/周末公告）。
 // 公告归档（best-effort）：日常补当日；盘前刷新补 [基准日..今天]（含隔夜/周末）。
 const asOf = bjDate()
-const basisDate = refresh ? prevTradingDay(asOf) : asOf
+const basisDate = refresh ? prevTradingDayBefore(asOf) : asOf
 await archiveAnnouncements({
   dataDir: DATA_DIR,
   from: basisDate,

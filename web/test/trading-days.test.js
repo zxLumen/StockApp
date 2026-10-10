@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isTradingDay, nextTradingDay, prevTradingDay, addTradingDays } from '../lib/trading-days.js'
+import { isTradingDay, nextTradingDay, prevTradingDay, prevTradingDayBefore, addTradingDays } from '../lib/trading-days.js'
 
 test('isTradingDay：跳过周末与法定节假日', () => {
   assert.equal(isTradingDay('2026-10-08'), true)
@@ -13,6 +13,12 @@ test('prevTradingDay：交易日返回自身，节假日回退', () => {
   assert.equal(prevTradingDay('2026-10-08'), '2026-10-08')
   assert.equal(prevTradingDay('2026-10-01'), '2026-09-30', '国庆首日回退到节前最后交易日')
   assert.equal(prevTradingDay('2026-10-10'), '2026-10-09', '周六回退到周五')
+})
+
+test('prevTradingDayBefore：严格早于输入（交易日也不返回自身）', () => {
+  assert.equal(prevTradingDayBefore('2026-10-12'), '2026-10-09', '周一 → 上一交易日周五')
+  assert.equal(prevTradingDayBefore('2026-10-13'), '2026-10-12', '周二 → 周一')
+  assert.equal(prevTradingDayBefore('2026-10-08'), '2026-09-30', '节后首日 → 节前最后交易日')
 })
 
 test('nextTradingDay：跨节假日', () => {

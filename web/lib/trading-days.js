@@ -86,6 +86,14 @@ export function prevTradingDay(iso) {
 }
 
 /**
+ * 严格「上一个交易日」：返回**早于** iso 的最近交易日（iso 本身是交易日也**不**返回它自己）。
+ * 盘前刷新用：运行日 E 本身是交易日，价格基准要取它**之前**那个交易日的收盘。
+ */
+export function prevTradingDayBefore(iso) {
+  return prevTradingDay(addDays(iso, -1))
+}
+
+/**
  * 从 iso 起往后第 n 个交易日（n≥0，0 返回对齐后的交易日本身）。
  * 与推荐的 holdReturn 同口径：买入基准在基准交易日收盘，持有 n 个交易日后收盘卖出。
  */
