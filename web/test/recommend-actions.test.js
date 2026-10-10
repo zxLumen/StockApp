@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, CHAIN_SUBDIR } from '../lib/recommend.js'
+import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, backfillEntryFlags, CHAIN_SUBDIR } from '../lib/recommend.js'
 import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
@@ -309,3 +309,37 @@ test('reconcileCross：低置信 sell 不剔除（默认保守，宁 keep 不误
   const actions = await readJson(path.join(dir, 'recommend-actions.json'))
   assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, false, '低置信 → 撤销终止')
 })
+
+test('backfillEntryFlags：为未退出的 B 仓补 entryDefer/entryApproved；A 与已退出仓不动', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const top = [recTop('1.600519', '600519', '贵州茅台', 1500, 10)]
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.B), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.B, `${basis}.json`), { date: basis, basisDate: basis, top, regime: { chain: 'B' } })
+  const pos = (chain, exited = false) => ({
+    chain,
+    recDate: basis,
+    secid: '1.600519',
+    code: '600519',
+    name: '贵州茅台',
+    exited,
+    exit: null,
+    log: [],
+  })
+  await writeJson(path.join(dir, 'recommend-actions.json'), {
+    version: 1,
+    positions: {
+      'B:2026-10-08:600519': pos('B'),
+      'A:2026-10-08:600519': pos('A'),
+      'B:2026-10-08:000001': pos('B', true),
+    },
+  })
+  const r = await backfillEntryFlags(dir)
+  assert.equal(r.changed, 1, '只补未退出的 B 仓')
+  const a = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(a.positions['B:2026-10-08:600519'].entryDefer, true)
+  assert.equal(a.positions['B:2026-10-08:600519'].entryApproved, true)
+  assert.equal(a.positions['A:2026-10-08:600519'].entryDefer, undefined, 'A 不臣服、不动')
+  assert.equal(a.positions['B:2026-10-08:000001'].entryDefer, undefined, '已退出的仓不动')
+})
+

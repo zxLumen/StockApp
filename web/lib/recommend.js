@@ -1785,3 +1785,51 @@ export async function ensureEntryPositions(
   onLog(`[entry] ${chain}@${recDate} 新增 ${added}，回填 ${backfilled}`)
   return { added, backfilled }
 }
+
+// ── 存量回填：以**持仓**为主补「入口臣服」标记（B / dual 在 B 日）──────────────────────
+/**
+ * 逐条扫未退出的持仓，读其 `recDate` 的 payload 判定当日是否 B（或 dual 在 B 日）→ 写 `entryDefer`；
+ * `entryApproved` = 该 code 在当日 top 里且未被 veto。A / dual-A 一律不动。
+ *
+ * 用途：把「臣服规则」套用到规则上线前就存在的持仓（`ensureEntryPositions` 只处理当日 Top）。
+ * 注意顺序：需在 **重开终止** 之后、`decideActions` 之前调用（`rerun-exits.js` 已内联），
+ * 否则已 exited 的仓会先被 `continue` 跳过、拿不到标记。
+ */
+export async function backfillEntryFlags(dataDir, { onLog = () => {} } = {}) {
+  const actions = await readActions(dataDir)
+  const cache = new Map()
+  const payloadOf = async (chain, recDate) => {
+    const k = `${chain}:${recDate}`
+    if (cache.has(k)) return cache.get(k)
+    const p = await readJson(path.join(dataDir, chainSubdir(chain), `${recDate}.json`), null)
+    cache.set(k, p)
+    return p
+  }
+  let changed = 0
+  const byChain = {}
+  for (const [key, pos] of Object.entries(actions.positions)) {
+    if (!pos || pos.exited) continue
+    const chain = pos.chain
+    if (chain !== 'B' && chain !== 'dual') continue
+    const payload = await payloadOf(chain, pos.recDate)
+    const isDefer = chain === 'B' || (chain === 'dual' && payload?.regime?.chain === 'B')
+    if (!isDefer) continue
+    const inTop = (payload?.top || []).find((s) => s.code === pos.code)
+    const approved = !!(inTop && inTop.ai && inTop.ai.veto !== true)
+    if (pos.entryDefer === true && pos.entryApproved === approved) continue
+    pos.entryDefer = true
+    pos.entryApproved = approved
+    if (inTop?.ai && !pos.ai) pos.ai = inTop.ai
+    if (pos.pickPrice == null && inTop?.price != null) pos.pickPrice = inTop.price
+    pos.updatedAt = new Date().toISOString()
+    changed += 1
+    byChain[chain] = (byChain[chain] || 0) + 1
+  }
+  if (changed) await writeActions(dataDir, actions)
+  onLog(
+    `[backfill] 入口臣服标记 ${changed} 笔${
+      Object.keys(byChain).length ? `（${Object.entries(byChain).map(([k, v]) => `${k}:${v}`).join('，')}）` : ''
+    }`,
+  )
+  return { changed, byChain }
+}

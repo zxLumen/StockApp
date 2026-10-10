@@ -8,7 +8,7 @@
 import path from 'node:path'
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { decideActions, bjDate, ACTIONS_FILE } from '../lib/recommend.js'
+import { decideActions, bjDate, ACTIONS_FILE, backfillEntryFlags } from '../lib/recommend.js'
 import { readJson, writeJson } from '../lib/store.js'
 
 const argv = process.argv.slice(2)
@@ -60,6 +60,10 @@ if (dryRun) {
 }
 if (reopened > 0) await writeJson(file, actions)
 
+// 关键顺序：重开后、再决策前，先给 B / dual(B 日) 的仓补「入口臣服」标记，
+// 否则 decideActions 会立刻把它们再次提前终止。
+await backfillEntryFlags(DATA_DIR, { onLog: (m) => console.log(m) })
+
 const cfg = await aiConfig(DATA_DIR)
 if (!cfg?.apiKey) {
   console.error('[rerun] AI 未配置 API Key —— 先在站内 ⚙ 设置里配好 provider / Key')
@@ -70,7 +74,7 @@ console.log(`[rerun] 模型 ${cfg.model}｜链路 ${chains.join(',')}`)
 for (const chain of chains) {
   try {
     const r = await decideActions(DATA_DIR, cfg, { chain, today, onLog: (m) => console.log('[exit]', m) })
-    console.log(`[rerun] ${chain}: 活跃 ${r.decided}｜变更 ${r.changed}｜护栏拦截 ${r.gated}`)
+    console.log(`[rerun] ${chain}: 活跃 ${r.decided}｜变更 ${r.changed}｜护栏拦截 ${r.gated}｜入口臣服 ${r.deferred}`)
   } catch (e) {
     console.warn(`[rerun] ${chain} 决策失败（忽略）：${e instanceof Error ? e.message : e}`)
   }
