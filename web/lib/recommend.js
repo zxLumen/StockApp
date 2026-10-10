@@ -1643,6 +1643,8 @@ export async function reconcileCross(dataDir, cfg, { chain = 'dual', effective, 
   for (const pos of Object.values(actions.positions)) {
     if (pos.chain !== chain || !pos.exited || !pos.exit) continue
     if (pos.exit.date !== effective) continue
+    // 门卫：入口已批准（臣服）的仓不参与交叉仲裁——只能自然到期，终止记录不得把它摘出当日报榜单。
+    if (pos.entryApproved === true) continue
     exitedNow.set(pos.code, pos)
   }
   if (!exitedNow.size) return { arbitrated: 0, dropped: 0, kept: 0 }

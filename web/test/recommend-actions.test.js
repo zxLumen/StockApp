@@ -310,6 +310,34 @@ test('reconcileCross：低置信 sell 不剔除（默认保守，宁 keep 不误
   assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, false, '低置信 → 撤销终止')
 })
 
+test('reconcileCross：门卫——入口已批准(entryApproved)的仓不参与交叉仲裁（不摘榜、不翻转）', async () => {
+  const dir = await tmp()
+  const E = '2026-10-12'
+  const s = (code) => ({ secid: `1.${code}`, code, name: code, ai: { buyScore: 80, summary: '' } })
+  await fsp.mkdir(path.join(dir, 'recommend'), { recursive: true })
+  await writeJson(path.join(dir, 'recommend', `${E}.json`), { date: E, top: [s('X')], candidates: [s('X')] })
+  await writeJson(path.join(dir, 'recommend-actions.json'), {
+    version: 1,
+    positions: {
+      [actionKey('dual', '2026-10-08', 'X')]: {
+        chain: 'dual', recDate: '2026-10-08', secid: '1.X', code: 'X', name: 'X',
+        holdDays: 3, basisDate: '2026-10-08', pickPrice: 10, exited: true, entryApproved: true,
+        exit: { date: E, basisDate: '2026-10-09', price: 9.5, pct: -5, reason: '走弱' }, log: [],
+      },
+    },
+  })
+  let called = 0
+  const deps = { crossDecide: async () => { called += 1; return { action: 'sell', confidence: 99 } } }
+  const r = await reconcileCross(dir, {}, { chain: 'dual', effective: E, finalPicks: 1, deps })
+  assert.equal(called, 0, '门卫：不触发 AI 裁决')
+  assert.equal(r.arbitrated, 0)
+  assert.equal(r.dropped, 0)
+  const payload = await readJson(path.join(dir, 'recommend', `${E}.json`))
+  assert.deepEqual(payload.top.map((t) => t.code), ['X'], '门卫：不因终止记录摘出榜单')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, true, '门卫：不翻转仓位状态')
+})
+
 test('backfillEntryFlags：为未退出的 B 仓补 entryDefer/entryApproved；A 与已退出仓不动', async () => {
   const dir = await tmp()
   const basis = '2026-10-08'
