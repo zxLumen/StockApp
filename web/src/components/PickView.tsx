@@ -80,6 +80,14 @@ const signedPct = (n: number | null | undefined) =>
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const pad2 = (n: number) => String(n).padStart(2, '0')
+/** ISO 时间 → 北京时间「MM-DD HH:mm」（手算 UTC+8，不受浏览器时区影响）。 */
+const bjTime = (iso?: string | null) => {
+  if (!iso) return ''
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return ''
+  const d = new Date(ms + 8 * 3600_000)
+  return `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`
+}
 const monthOf = (iso: string) => iso.slice(0, 7)
 const addMonth = (ym: string, delta: number) => {
   const [y, m] = ym.split('-').map(Number)
@@ -308,6 +316,10 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
           {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
+          {data.generatedAt ? ` · 生成 ${bjTime(data.generatedAt)}` : ''}
+          {data.refreshedAt && bjTime(data.refreshedAt) !== bjTime(data.generatedAt)
+            ? ` · 最后刷新 ${bjTime(data.refreshedAt)}`
+            : ''}
         </span>
         {dates.length > 0 && (
           <div className="rec-dates">

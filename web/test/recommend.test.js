@@ -17,6 +17,7 @@ import {
   resolveChainPayload,
   forwardArchive,
   archiveForwardChains,
+  stampRefresh,
   benchReturns,
   isAshareSession,
   recommendTtlMs,
@@ -252,6 +253,57 @@ test('benchReturns：开买开卖用生效日开盘做基准、结束日开盘�
   assert.equal(r.holdIdxPct, Number(((4080 / 3950 - 1) * 100).toFixed(2)))
   // 至今：实时点位，但基准仍是开盘 3950
   assert.equal(r.sinceIdxPct, Number(((9999 / 3950 - 1) * 100).toFixed(2)))
+})
+
+test('benchReturns：生效日当天无当日日K时用实时今开兜底（否则整列 null）', () => {
+  const bars = [
+    { time: '2020-01-02', close: 4000, open: 3900 },
+    { time: '2020-01-03', close: 4050, open: 3950 },
+  ]
+  // 生效日 01-05 日K里没有（盘中不含当日）；实时今开 3980、实时点位 4090.5 → 用今开当基准。
+  const r = benchReturns(bars, '2020-01-05', '2020-01-06', 4090.5, {
+    atOpen: true,
+    fallbackOpen: 3980,
+  })
+  assert.equal(r.sinceIdxPct, Number(((4090.5 / 3980 - 1) * 100).toFixed(2)))
+  assert.equal(r.holdIdxPct, Number(((4090.5 / 3980 - 1) * 100).toFixed(2)))
+  // 没有今开兜底 → 仍为 null，不拿别的价充数。
+  const none = benchReturns(bars, '2020-01-05', '2020-01-06', 4090.5, { atOpen: true })
+  assert.equal(none.sinceIdxPct, null)
+  assert.equal(none.holdIdxPct, null)
+})
+
+test('forwardArchive：保留 entryAnchor / 刷新时间（A/B 归档与 dual 同口径）', () => {
+  const payload = {
+    date: '2026-10-08',
+    generatedAt: '2026-10-07T10:00:00.000Z',
+    entryAnchor: 'effective',
+    refreshedAt: '2026-10-08T01:00:00.000Z',
+    refreshCount: 2,
+    basisDate: '2026-10-07',
+    model: 'm',
+    pool: { size: 500 },
+    top: [{ code: 'a' }],
+  }
+  const a = forwardArchive({ payload, chain: 'A', tilt: 0.5, thr: 0.6 })
+  assert.equal(a.generatedAt, '2026-10-07T10:00:00.000Z')
+  assert.equal(a.entryAnchor, 'effective')
+  assert.equal(a.refreshedAt, '2026-10-08T01:00:00.000Z')
+  assert.equal(a.refreshCount, 2)
+})
+
+test('stampRefresh：保留原始 generatedAt、写入 refreshedAt/refreshCount', () => {
+  const now = new Date('2026-10-08T01:00:00.000Z')
+  const p = { generatedAt: '2026-10-08T01:00:00.000Z' }
+  stampRefresh(p, [{ generatedAt: '2026-10-07T10:00:00.000Z', refreshCount: 1 }], now)
+  assert.equal(p.generatedAt, '2026-10-07T10:00:00.000Z', '原始生成时间不被刷新覆盖')
+  assert.equal(p.refreshedAt, '2026-10-08T01:00:00.000Z')
+  assert.equal(p.refreshCount, 2)
+  // 没有任何既有产物 → 保留自身生成时间，计数从 1 开始。
+  const q = { generatedAt: '2026-10-08T01:00:00.000Z' }
+  stampRefresh(q, [], now)
+  assert.equal(q.generatedAt, '2026-10-08T01:00:00.000Z')
+  assert.equal(q.refreshCount, 1)
 })
 
 

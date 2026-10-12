@@ -203,6 +203,12 @@ export interface RecommendPayload {
   /** 推荐生效日（生成日的下一交易日） */
   date: string
   generatedAt: string
+  /** 最近一次盘前刷新的时间（没有则从未刷新过） */
+  refreshedAt?: string
+  /** 累计刷新次数 */
+  refreshCount?: number
+  /** 新推荐：'effective' = 买入价锚在生效日开盘（旧文件无此字段 → 生成日收盘口径） */
+  entryAnchor?: 'effective'
   /** 基准价对应的日期（生成日收盘） */
   basisDate?: string
   /** 对照基准名（如「沪深300」），服务端补 */

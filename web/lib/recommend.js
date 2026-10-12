@@ -797,6 +797,11 @@ export function forwardArchive({ payload, chain, tilt, thr }) {
   return {
     date: payload.date,
     generatedAt: payload.generatedAt,
+    // 保留 entryAnchor：新推荐锚在「生效日开盘」。旧归档丢了这个字段 → A/B 会退回生成日收盘口径，
+    // 和同日的 dual payload / 持仓页不一致（标签页之间盈亏对不上）。旧文件不动，新归档一律带上。
+    entryAnchor: payload.entryAnchor,
+    refreshedAt: payload.refreshedAt,
+    refreshCount: payload.refreshCount,
     basisDate: payload.basisDate,
     model: payload.model,
     pool: payload.pool,
@@ -901,6 +906,19 @@ export async function runRecommendRegime(opts = {}) {
 }
 
 /**
+ * 盘前刷新时给 payload 盖「刷新」章：**保留原始 `generatedAt`**（首次生成时间不因刷新而丢失），
+ * 另记 `refreshedAt` / `refreshCount`。同日已有产物（dual 与 B 归档可能不同步）里谁带原始时间就用谁。
+ */
+export function stampRefresh(payload, prevPayloads = [], now = new Date()) {
+  const prevGen = prevPayloads.find((p) => p?.generatedAt)?.generatedAt
+  if (prevGen) payload.generatedAt = prevGen
+  payload.refreshedAt = now.toISOString()
+  payload.refreshCount =
+    Math.max(0, ...prevPayloads.map((p) => Number(p?.refreshCount) || 0)) + 1
+  return payload
+}
+
+/**
  * **盘前刷新**（交易日 09:00，`scripts/recommend.js --refresh`）：只重算**受公告影响的 B（factors）
  * 链路**，池子用 point-in-time（调用方注入「≤ basisDate 的日K」组池 + 日K 迭代器），**不依赖盘前
  * 实时快照**（开盘前新浪榜单 `trade/amount` 全为 0，会把整池误判为停牌，A/B 一起空仓 → 刷新失败）。
@@ -955,12 +973,25 @@ export async function runRecommendRefresh(opts = {}) {
   })
   payload.regime = { tilt: Number(tilt.toFixed(4)), thr, chain: 'B' }
 
+  // 保留**原始生成时间**：盘前刷新只更新快照，不该把「生成于 X」也抹掉。
+  // 读同日的既有产物（dual 可能与 B 归档不同步，谁先有原始时间就用谁），另记 refreshedAt/refreshCount。
+  const dualPath = path.join(dataDir, outSubdir, `${payload.date}.json`)
+  const bPath = path.join(dataDir, FORWARD_B_DIR, `${payload.date}.json`)
+  const prevDual = await readJson(dualPath, null)
+  const prevB = await readJson(bPath, null)
+  stampRefresh(payload, [prevDual, prevB])
+
   if (!dryRun) {
-    await writeJson(path.join(dataDir, FORWARD_B_DIR, `${payload.date}.json`), payload)
+    // B 前瞻归档走 forwardArchive（与收盘跑批同形状：含 entryAnchor / regime / 刷新时间），
+    // 别直接写完整 payload，否则同目录下两种形状混在一起。
+    const bArchive = forwardArchive({ payload, chain: 'B', tilt, thr })
+    await writeJson(bPath, bArchive)
     onLog(`已写入 ${FORWARD_B_DIR}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
     if (chain === 'B') {
-      await writeJson(path.join(dataDir, outSubdir, `${payload.date}.json`), payload)
-      onLog(`已写入 ${outSubdir}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
+      await writeJson(dualPath, payload)
+      onLog(
+        `已写入 ${outSubdir}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}，刷新于 ${payload.refreshedAt}）`,
+      )
     } else {
       onLog(`当天选链为 A：${outSubdir}/${payload.date}.json 保持 A 的收盘产物不动`)
     }
@@ -1150,7 +1181,17 @@ async function entryOpenOf(secid, iso) {
   return b?.open ?? null
 }
 
-async function holdReturn(secid, entryIso, holdDays, livePrice = null, { atOpen = false } = {}) {
+/**
+ * 生效日=今天时，日K 还没有今天这根（新浪日K盘中不含当日），但实时快照已有「今开」。
+ * 用它作开盘基准兜底，别让生效日当天整列变空。非当天 / 取不到 → null（不拿别的价充数）。
+ */
+function liveOpenOf(q, isTodayEntry) {
+  if (!isTodayEntry) return null
+  const v = Number(q?.open)
+  return Number.isFinite(v) && v > 0 ? v : null
+}
+
+async function holdReturn(secid, entryIso, holdDays, livePrice = null, { atOpen = false, fallbackOpen = null } = {}) {
   const empty = { holdPct: null, holdEndDate: null, holdDone: false, base: null }
   if (!secid || !entryIso || !holdDays) return empty
   try {
@@ -1168,7 +1209,20 @@ async function holdReturn(secid, entryIso, holdDays, livePrice = null, { atOpen 
         }
       }
     }
-    if (idx < 0) return empty
+    if (idx < 0) {
+      // 生效日当天：日K还没这根（新浪日K盘中不含当日）→ 用实时今开当基准、现价折算。
+      // 非当天（历史日）不该走这里：那根早就在日K里；拿不到今开就留空。
+      const fb = Number(fallbackOpen)
+      if (!atOpen || !(fb > 0)) return empty
+      const eff = livePrice != null ? Number(livePrice) : null
+      if (!Number.isFinite(eff) || eff <= 0) return { ...empty, base: fb }
+      return {
+        holdPct: Number(((eff / fb - 1) * 100).toFixed(2)),
+        holdEndDate: bjDate(),
+        holdDone: false,
+        base: fb,
+      }
+    }
     const priceOf = (b) => (atOpen ? b?.open : b?.close)
     const base = priceOf(bars[idx])
     if (!base) return empty
@@ -1211,7 +1265,7 @@ export const BENCH_NAME = '沪深300'
  * 两个窗口都会算成 0.00%（看起来像没数据）。所以这里额外接实时点位 liveIndex
  * （与个股 q.price 同一口径）：盘中拿实时，收盘后实时≈当日收盘，无缝衔接。
  */
-export function benchReturns(bars, anchorIso, holdEndDate, liveIndex = null, { atOpen = false } = {}) {
+export function benchReturns(bars, anchorIso, holdEndDate, liveIndex = null, { atOpen = false, fallbackOpen = null } = {}) {
   // 开买开卖：基准 = 生效日那根开盘；旧口径：取「≤ anchorIso 的最后一根」收盘（anchorIso 可能是
   // 节假日，严格相等会查不到）。与个股 holdReturn 同口径，两边才能相减出超额。
   let i = -1
@@ -1225,7 +1279,15 @@ export function benchReturns(bars, anchorIso, holdEndDate, liveIndex = null, { a
       }
     }
   }
-  if (i < 0) return { holdIdxPct: null, sinceIdxPct: null }
+  if (i < 0) {
+    // 生效日当天：指数日K也还没当日这根 → 用实时今开当基准，实时点位折算（窗口必然未走完）。
+    const fb = Number(fallbackOpen)
+    if (!atOpen || !(fb > 0)) return { holdIdxPct: null, sinceIdxPct: null }
+    const live = Number(liveIndex)
+    const liveOk = Number.isFinite(live) && live > 0
+    const pct = liveOk ? Number(((live / fb - 1) * 100).toFixed(2)) : null
+    return { holdIdxPct: holdEndDate ? pct : null, sinceIdxPct: pct }
+  }
   const priceOf = (b) => (atOpen ? b?.open : b?.close)
   const base = priceOf(bars[i])
   if (!base) return { holdIdxPct: null, sinceIdxPct: null }
@@ -1284,15 +1346,24 @@ export async function attachPerformance(
   }
   // 基准指数日K只取一次（算基准价与已走完窗口的收盘）；拿不到就整列 null（前端显示 —），不阻断个股盈亏。
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
-  const indexLive = quotes.get(BENCH_SECID)?.price ?? null
+  const indexQuote = quotes.get(BENCH_SECID)
+  const indexLive = indexQuote?.price ?? null
+  const atOpen = entryAtOpen(payload)
+  const entryIso = entryIsoOf(payload)
+  // 生效日=今天：日K还没这根，但实时快照已有今开 → 用它兜底（仅当天；历史日的今开早就在日K里）。
+  const isTodayEntry = atOpen && entryIso === bjDate()
   const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
     const holdDays = s.ai?.holdDays ?? null
-    const atOpen = entryAtOpen(payload)
-    const entryIso = entryIsoOf(payload)
-    const hr = await holdReturn(s.secid, entryIso, holdDays, q?.price, { atOpen })
+    const hr = await holdReturn(s.secid, entryIso, holdDays, q?.price, {
+      atOpen,
+      fallbackOpen: liveOpenOf(q, isTodayEntry),
+    })
     const bench = benchBars.length
-      ? benchReturns(benchBars, entryIso, hr.holdEndDate, indexLive, { atOpen })
+      ? benchReturns(benchBars, entryIso, hr.holdEndDate, indexLive, {
+          atOpen,
+          fallbackOpen: liveOpenOf(indexQuote, isTodayEntry),
+        })
       : {}
     // 开买开卖：基准价 = 生效日开盘（生效日前为 null，不拿生成日收盘充数）；旧口径仍用快照 price。
     const entryPrice = atOpen ? hr.base : s.price
@@ -1368,6 +1439,7 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
   // 额外信息（不影响 AI周期 与 holdPct）：终止→终止盈亏+实际持有天数；延长→延长后周期+盈亏。
   const entryIso = entryIsoOf(payload)
   const atOpen = entryAtOpen(payload)
+  const isTodayEntry = atOpen && entryIso === bjDate()
   const top = await mapLimit(withPerf.top, 8, async (s) => {
     const pos = posMap.get(s.code)
     if (!pos) return s
@@ -1378,7 +1450,10 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
     const base = pos.baseHoldDays ?? s.ai?.holdDays ?? null
     if (pos.holdDays != null && base != null && pos.holdDays > base) {
       const q = quotes.get(s.secid)
-      const hr = await holdReturn(s.secid, entryIso, pos.holdDays, q?.price, { atOpen })
+      const hr = await holdReturn(s.secid, entryIso, pos.holdDays, q?.price, {
+        atOpen,
+        fallbackOpen: liveOpenOf(q, isTodayEntry),
+      })
       return { ...s, extend: { days: pos.holdDays - base, pct: hr.holdPct, done: hr.holdDone } }
     }
     return s

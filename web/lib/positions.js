@@ -150,16 +150,8 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
 
   const closeOn = (secid, day) => closeMap.get(secid)?.get(day) ?? null
   const openOn = (secid, day) => openMap.get(secid)?.get(day) ?? null
-  // 开买开卖：回填 atOpen 的买入价（生效日开盘）；取不到（还没开盘/无该日）就丢弃该笔。
-  for (let i = buys.length - 1; i >= 0; i -= 1) {
-    const b = buys[i]
-    if (!b.atOpen) continue
-    b.buyPrice = openOn(b.secid, b.buyDate)
-    if (!Number.isFinite(b.buyPrice) || b.buyPrice <= 0) buys.splice(i, 1)
-  }
-  if (!buys.length) return emptyChain()
-  // 盘中：一次性批量实时行情（含沪深300），用于「今天」这一点；折叠进本函数的缓存计算里，
-  // 访客请求只读缓存，不会每次刷新都打上游。
+  // 盘中：一次性批量实时行情（含沪深300），既用于「今天」这一点，也用于生效日开盘价兜底。
+  // 折叠进本函数的缓存计算里，访客请求只读缓存，不会每次刷新都打上游。
   const liveMap = new Map()
   if (useIntraday) {
     try {
@@ -169,6 +161,21 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
       /* 行情挂了则退回最近收盘 */
     }
   }
+  // 开买开卖：回填 atOpen 的买入价（生效日开盘）。生效日当天日K还没这根（新浪日K盘中不含当日），
+  // 用实时「今开」兜底；两者都取不到（还没开盘 / 无该日）才丢弃该笔。
+  const todayBj = bjDate()
+  for (let i = buys.length - 1; i >= 0; i -= 1) {
+    const b = buys[i]
+    if (!b.atOpen) continue
+    let px = openOn(b.secid, b.buyDate)
+    if (!(Number.isFinite(px) && px > 0) && b.buyDate === todayBj) {
+      const o = Number(liveMap.get(b.secid)?.open)
+      if (Number.isFinite(o) && o > 0) px = o
+    }
+    b.buyPrice = px
+    if (!Number.isFinite(b.buyPrice) || b.buyPrice <= 0) buys.splice(i, 1)
+  }
+  if (!buys.length) return emptyChain()
   const livePrice = (secid) =>
     (useIntraday ? liveMap.get(secid)?.price : null) ?? closeOn(secid, valuationDate) ?? lastClose.get(secid)?.close ?? null
   const priceAt = (secid) => livePrice(secid)
