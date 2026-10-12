@@ -112,11 +112,22 @@ async function computeAll(dataDir, { historical = null } = {}) {
     const s = await earliestBasis(dataDir, chain).catch(() => null)
     if (s && (!globalStart || s < globalStart)) globalStart = s
   }
-  // 可选回看日期：沪深300 有日K的交易日（从全局起点起）。历史回看复用同一份，避免 select 抖动。
+  // 可选回看日期：沪深300 有日K的交易日（从全局起点起）。历史回看复用同一份，避免选择器抖动。
   const dates = benchBars
     .map((b) => b.time)
     .filter((t) => (!globalStart || t >= globalStart) && t <= today)
     .sort()
+  // 盘中/收盘后日K还没更新到当天时，曲线已用实时价补出「今天」这一点 —— 故把 today 也列进来，
+  // 保证日历与曲线末点一致（latest / historical 用同一份，切日期时不会忽隐忽现）。
+  const lastBench = benchBars.length ? benchBars[benchBars.length - 1].time : null
+  if (
+    isTradingDay(today) &&
+    (!lastBench || today > lastBench) &&
+    bjNowMinutes() >= 9 * 60 + 30 &&
+    !dates.includes(today)
+  ) {
+    dates.push(today)
+  }
   const chains = {}
   for (const chain of ['dual', 'A', 'B']) {
     chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate, useIntraday).catch(() => emptyChain())

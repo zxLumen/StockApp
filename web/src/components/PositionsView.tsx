@@ -427,7 +427,7 @@ function EquityChart({ equity, markerDate }: { equity: PositionEquityPoint[]; ma
     if (markerDate) {
       const row = byDate.get(markerDate)
       const at = (p: number | null, color: string, text?: string): SeriesMarker<Time> | null =>
-        p == null ? null : { time: markerDate as Time, position: 'atPriceMiddle', price: p, shape: 'circle', color, text, size: 2 }
+        p == null ? null : { time: markerDate as Time, position: 'atPriceMiddle', price: p, shape: 'circle', color, text }
       const mOrig = row ? at(row.orig, '#4a8ef0') : null
       const mAi = row ? at(row.ai, '#e8a33d', '回看') : null
       if (mOrig) createSeriesMarkers(sOrig, [mOrig])

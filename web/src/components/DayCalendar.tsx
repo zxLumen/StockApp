@@ -47,19 +47,19 @@ export default function DayCalendar({
   const dateSet = useMemo(() => new Set(dates), [dates])
   const years = useMemo(() => [...new Set(dates.map((d) => d.slice(0, 4)))].sort().reverse(), [dates])
 
-  // 升序位置：'最新' 视作序列末尾之后的一格（占位）。`latestIsVirtual` = latestValue 不在 dates 里
-  // （持仓页的 `''`），此时可从最新一天再往「后一天」退到「最新」态；推荐页 latestValue 是真实日期，无占位。
-  const latestIsVirtual = latestValue !== '' && !dateSet.has(latestValue)
-  const isLatest = value === latestValue
-  const pos = isLatest ? asc.length : dateSet.has(value) ? asc.indexOf(value) : asc.length
-  const anchor = isLatest ? asc[asc.length - 1] : value
-  const olderDate = pos > 0 ? asc[pos - 1] : null
+  // 相邻日按**真实索引**算（只跳有数据的交易日，跳过周末/假日）。当 `latestValue` 指向一个不在
+  // dates 里的值（持仓页的 `''`）时，视作序列末尾之后多一个「最新」格：最末交易日往后一天 = 最新。
+  const idx = dateSet.has(value) ? asc.indexOf(value) : -1
+  const hasLatestSlot = latestValue === '' || !dateSet.has(latestValue)
+  const olderDate = idx > 0 ? asc[idx - 1] : idx < 0 && hasLatestSlot ? asc[asc.length - 1] : null
   const newerDate =
-    pos >= 0 && pos + 1 < asc.length
-      ? asc[pos + 1]
-      : pos + 1 === asc.length && latestIsVirtual
+    idx >= 0 && idx < asc.length - 1
+      ? asc[idx + 1]
+      : idx === asc.length - 1 && hasLatestSlot
         ? latestValue
         : null
+  // 弹窗锚点 / 选中高亮：value 为空（「最新」态）时落在最末交易日那天。
+  const anchor = dateSet.has(value) ? value : asc[asc.length - 1] || ''
 
   if (!dates.length) return null
 
@@ -74,7 +74,7 @@ export default function DayCalendar({
     setCalPick('')
     setOpen((o) => !o)
   }
-  const label = isLatest && latestValue === '' ? '最新' : value || '选择日期'
+  const label = value ? value : latestValue === '' ? '最新' : '选择日期'
 
   return (
     <div className="rec-dates">
@@ -197,7 +197,7 @@ export default function DayCalendar({
                 <button
                   type="button"
                   key={d}
-                  className={`rec-cal-day${d === value ? ' is-sel' : ''}${dateSet.has(d) ? ' has' : ''}`}
+                  className={`rec-cal-day${d === anchor ? ' is-sel' : ''}${dateSet.has(d) ? ' has' : ''}`}
                   disabled={!dateSet.has(d)}
                   onClick={() => pick(d)}
                 >
