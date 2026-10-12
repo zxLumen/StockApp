@@ -25,6 +25,7 @@ import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js
 import { marketNews, stockNews, newsScope } from './lib/news.js'
 import { loadRecommend, listRecommendDates, enrichRecommend, recommendTtlMs, isAshareSession } from './lib/recommend.js'
 import { buildPositionsAll } from './lib/positions.js'
+import { prevTradingDay } from './lib/trading-days.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
 import { loadSettings, saveSettings, saveKey, publicSettings, aiConfig, aiConfigFor } from './lib/settings.js'
@@ -257,7 +258,12 @@ route('GET', /^\/api\/recommend$/, async (ctx) => {
 })
 
 // 模拟推荐持仓：全部链路 × 原始/AI 两套（结果整体缓存 + 后台预热）。
-route('GET', /^\/api\/positions$/, async () => buildPositionsAll(DATA_DIR))
+// `?date=YYYY-MM-DD` 回看某个过去交易日的模拟持仓（对齐到 ≤ 该日的交易日）；不带 = 最新（含盘中实时）。
+route('GET', /^\/api\/positions$/, async (ctx) => {
+  const date = ctx.url.searchParams.get('date') || ''
+  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(date) ? prevTradingDay(date) : undefined
+  return buildPositionsAll(DATA_DIR, { asOf })
+})
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))
 

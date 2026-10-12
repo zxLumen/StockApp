@@ -2,11 +2,11 @@
 //   docker exec docker-stock-1 node scripts/recommend.js
 // 或本地：npm run recommend -- --dry-run
 //
-// `--refresh`：**盘前刷新**（交易日 09:00，另一条 cron）。用最新公告（含隔夜/周末）重算**当天**
-// 的 **B（客观多因子）** 链路并覆盖（A 不吃公告，不动）；价格基准取**上一交易日**收盘
-// （basisDate=prevTradingDay）；候选池用 point-in-time（≤ 基准日的日K），**不拿盘前实时快照**
-// （开盘前 trade/amount 全为 0，会把整池误判停牌 → 刷新失败）。后置流程走「方案甲」——
-// 替换当天建仓（dual/B）+ 重跑交叉，不跑 decideActions。
+// `--refresh`：**盘前刷新**（交易日 09:00，另一条 cron）。用最新公告（含隔夜/周末）+ 最新个股资讯
+// 重算**当天被选中的整条链路（修法 1：A、B 两条都重算）**并覆盖 dual；价格基准取**上一交易日**收盘
+// （basisDate=prevTradingDay）；候选池用 point-in-time（≤ 基准日的日K：B=稳健宇宙、A=成交额宇宙），
+// **不拿盘前实时快照**（开盘前 trade/amount 全为 0，会把整池误判停牌 → 刷新失败）。后置流程走「方案甲」
+// ——替换当天建仓（dual/B）+ 重跑交叉，不跑 decideActions。
 //   docker exec docker-stock-1 node scripts/recommend.js --refresh
 //   手动/盘后回补时加 `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早一天，避免当日白天公告泄漏。
 //
@@ -18,7 +18,7 @@
 // 产物：DATA_DIR/recommend/<YYYY-MM-DD>.json（前端「推荐」页签读它）。
 import { DATA_DIR } from '../lib/scope.js'
 import { aiConfig } from '../lib/settings.js'
-import { runRecommendDaily, runRecommendRegime, runRecommendRefresh, decideActions, reconcileCross, ensureEntryPositions, replaceEntryPositions, CHAIN_SUBDIR, bjDate } from '../lib/recommend.js'
+import { runRecommendDaily, runRecommendRegime, runRecommendRefresh, decideActions, reconcileCross, ensureEntryPositions, replaceEntryPositions, snapshotActions, ACTIONS_ARCHIVE_DIR, CHAIN_SUBDIR, bjDate } from '../lib/recommend.js'
 import { readJson } from '../lib/store.js'
 import { poolFromUniverse } from '../lib/rank.js'
 import { cachedKline } from '../lib/kline-cache.js'
@@ -111,6 +111,7 @@ try {
   // 盘前刷新：**不能用实时快照**——开盘前新浪榜单 trade/amount 全为 0，会把整池误判为停牌。
   // 改用「≤ basisDate 的日K」组 point-in-time 稳健池，并把同一份日K（截到 basisDate）喂给因子。
   let refreshPool
+  let refreshPoolA
   if (refresh) {
     const klineCached = (secid) => cachedKline(secid, { minTime: basisDate })
     const universe = await readJson(path.join(DATA_DIR, 'kline-cache', 'universe-stable.json'), null)
@@ -124,6 +125,19 @@ try {
       onLog: (m) => console.log('[recommend]', m),
     })
     if (!refreshPool.length) throw new Error('point-in-time 稳健池为空（日K 缓存缺失？）')
+    // 修法 1：A 链路也要在盘前重算（用最新资讯）。A 的候选池是**成交额池** → 用 PIT 成交额宇宙，
+    // 绝不拿 09:00 实时榜（trade/amount 全为 0，会把整池误判停牌）。口径与 refresh-oct.js 一致。
+    const amountUniverse = await readJson(path.join(DATA_DIR, 'kline-cache', 'universe-amount-10.json'), null)
+    if (!Array.isArray(amountUniverse) || !amountUniverse.length) {
+      throw new Error('缺少 kline-cache/universe-amount-10.json（盘前刷新的 A 成交额池需要它）')
+    }
+    console.log(`[recommend] 盘前刷新：载入成交额宇宙 ${amountUniverse.length} 只（基准日 ${basisDate}）…`)
+    refreshPoolA = await poolFromUniverse(amountUniverse, {
+      basisDate,
+      kline: klineCached,
+      onLog: (m) => console.log('[recommend]', m),
+    })
+    if (!refreshPoolA.length) throw new Error('point-in-time 成交额池为空（日K 缓存缺失？）')
     deps.kline = async (secid) => {
       const k = await klineCached(secid)
       if (!k?.bars) return k
@@ -144,7 +158,7 @@ try {
     onLog: (m) => console.log('[recommend]', m),
   }
   const payload = refresh
-    ? await runRecommendRefresh({ ...shared, thr: dualThr, pool: () => refreshPool })
+    ? await runRecommendRefresh({ ...shared, thr: dualThr, pool: () => refreshPool, poolA: () => refreshPoolA })
     : dualChain
       ? await runRecommendRegime({ ...shared, thr: dualThr })
       : await runRecommendDaily({
@@ -177,7 +191,10 @@ try {
     // 盘前刷新（方案甲）：**替换** E 的建仓（dual/B：清旧仓 → 按新 top 重建，重派生臣服标记），
     // 再重跑交叉裁决（让 E 的终止对齐刷新后的新 top）。**不跑 decideActions** —— 持仓的延长/终止
     // 交给正常收盘节奏（E 当晚那次）；A 的持仓同样交给收盘节奏。
-    // 刷新只重算 B；dual 只在**当天选链为 B**时才被覆盖，所以也只在这时替换 dual 的建仓。
+    // 建仓替换（安全网）：生效日 E 的持仓要等 E 收盘那次 decideActions/ensureEntryPositions 才落库，
+    // 09:00 刷新时通常还没有 E 的持仓，替换基本是空操作；但手动/盘后重跑能借此清掉旧票。
+    // dual 只在**选链为 B** 时替换：A 的建仓不经 ensureEntryPositions（A 不臣服），在 A 日替换 dual
+    // 会「删了旧仓却建不回」→ 反而丢仓。B 归档两条都刷，故 B 始终替换。
     const replaceChains = payload.regime?.chain === 'B' ? ['dual', 'B'] : ['B']
     for (const chain of replaceChains) {
       try {
@@ -245,6 +262,17 @@ try {
       } catch (e) {
         console.warn(`[cross] ${chain} 裁决失败（忽略）：${e instanceof Error ? e.message : e}`)
       }
+    }
+  }
+
+  // 每日 actions **全量快照**（历史回看用）：放在所有落库/决策之后，记录"今天的最终状态"。
+  // 与刷新共用同一运行日 → 09:00 那份会被 18:30 收盘那份覆盖，即"当日收盘后的状态"，正是回看所需。
+  if (!dryRun) {
+    try {
+      const day = await snapshotActions(DATA_DIR)
+      if (day) console.log(`[recommend] 已快照 actions → ${ACTIONS_ARCHIVE_DIR}/${day}.json`)
+    } catch (e) {
+      console.warn(`[recommend] actions 快照失败（忽略）：${e instanceof Error ? e.message : e}`)
     }
   }
   process.exit(0)

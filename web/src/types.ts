@@ -412,6 +412,13 @@ export interface PositionsChain {
 
 export interface PositionsPayload {
   benchName: string
+  /** 估值日（历史回看时为所回看的那天）。 */
   asOf: string
+  /** 可回看的交易日（升序，从全局起点到最新）；供日期选择器。 */
+  dates: string[]
+  /** 历史回看实际采用的 actions 快照日；`null` = 无快照、回退当前 actions。 */
+  actionsAsOf: string | null
+  /** actions 是否来自**当日**快照（完全忠实）；`false` = 快照缺失，按当前/最近口径近似。 */
+  actionsFaithful: boolean
   chains: Record<PositionChain, PositionsChain>
 }

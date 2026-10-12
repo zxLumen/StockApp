@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { readJson } from '../lib/store.js'
+import { readJson, writeJson } from '../lib/store.js'
 import {
   parseJsonLoose,
   buildReviewRows,
@@ -15,6 +15,11 @@ import {
   selectTop10,
   pickChain,
   resolveChainPayload,
+  runRecommendRefresh,
+  actionKey,
+  snapshotActions,
+  readActionsAsOf,
+  ACTIONS_ARCHIVE_DIR,
   forwardArchive,
   archiveForwardChains,
   stampRefresh,
@@ -304,6 +309,159 @@ test('stampRefresh：保留原始 generatedAt、写入 refreshedAt/refreshCount'
   stampRefresh(q, [], now)
   assert.equal(q.generatedAt, '2026-10-08T01:00:00.000Z')
   assert.equal(q.refreshCount, 1)
+})
+
+test('actions 每日快照：按日回放当时状态；缺快照退最近并标不忠实', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'act-snap-'))
+  const key = actionKey('dual', '2026-10-08', '600000')
+  // 当前 actions：这只后来被延长到 12 天
+  await writeJson(path.join(dir, 'recommend-actions.json'), { version: 1, positions: { [key]: { holdDays: 12 } } })
+  // 10-08 当天快照：当时还是 5 天
+  await writeJson(path.join(dir, ACTIONS_ARCHIVE_DIR, '2026-10-08.json'), { version: 1, positions: { [key]: { holdDays: 5 } } })
+
+  const exact = await readActionsAsOf(dir, '2026-10-08')
+  assert.equal(exact.positions[key].holdDays, 5, '取当日快照（不被后来的 extend 污染）')
+  assert.equal(exact.asOf, '2026-10-08')
+  assert.equal(exact.faithful, true)
+
+  const near = await readActionsAsOf(dir, '2026-10-09')
+  assert.equal(near.positions[key].holdDays, 5, '缺当日快照 → 取 ≤ 的最近快照')
+  assert.equal(near.asOf, '2026-10-08')
+  assert.equal(near.faithful, false)
+
+  const older = await readActionsAsOf(dir, '2026-10-07')
+  assert.equal(older.positions[key].holdDays, 12, '早于所有快照 → 回退当前 actions')
+  assert.equal(older.asOf, null)
+  assert.equal(older.faithful, false)
+
+  // snapshotActions 全量落盘当前状态
+  assert.equal(await snapshotActions(dir, '2026-10-10'), '2026-10-10')
+  const snap = await readJson(path.join(dir, ACTIONS_ARCHIVE_DIR, '2026-10-10.json'))
+  assert.equal(snap.positions[key].holdDays, 12)
+})
+
+// ── 修法 1：盘前刷新重算**当天被选中的整条链路**（A、B 都跑）────────────────────
+const mkWritable = async (date, basisDate, dualChain) => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'refresh-'))
+  await fsp.mkdir(path.join(dir, FORWARD_A_DIR), { recursive: true })
+  await fsp.mkdir(path.join(dir, FORWARD_B_DIR), { recursive: true })
+  // 收盘产物：dual + 两条前瞻归档（带**原始 generatedAt**，刷新要保留它）。
+  const base = {
+    date,
+    generatedAt: '2026-10-09T10:35:10.000Z',
+    basisDate,
+    model: 'm',
+    pool: { size: 1, filtered: 1, candidates: 1 },
+    top: [{ code: 'old' }],
+    regime: { chain: dualChain },
+  }
+  await writeJson(path.join(dir, 'recommend', `${date}.json`), base)
+  await writeJson(path.join(dir, FORWARD_A_DIR, `${date}.json`), { ...base, regime: { chain: 'A' } })
+  await writeJson(path.join(dir, FORWARD_B_DIR, `${date}.json`), { ...base, regime: { chain: 'B' } })
+  return dir
+}
+
+test('runRecommendRefresh：A/B 两条都重算、两条归档都写；A 日也覆盖 dual 并保留原始生成时间', async () => {
+  const date = '2026-10-12'
+  const basis = '2026-10-09'
+  const dir = await mkWritable(date, basis, 'A')
+  const calls = []
+  const fakeRun = async (o) => {
+    calls.push(o.selectMode)
+    return {
+      date,
+      generatedAt: new Date().toISOString(),
+      basisDate: basis,
+      model: 'm',
+      pool: { size: 1, filtered: 1, candidates: 1 },
+      top: [{ code: o.selectMode === 'ai' ? 'aaa' : 'bbb' }],
+    }
+  }
+  const payload = await runRecommendRefresh({
+    dataDir: dir,
+    cfg: {},
+    thr: 0.6,
+    // tilt=0.9 ≥ 0.6 → 选 A（修法 1 的核心：A 也要吃最新资讯）
+    deps: { basisDate: basis, tilt: 0.9 },
+    poolA: () => [],
+    pool: () => [],
+    runDaily: fakeRun,
+    onLog: () => {},
+  })
+  assert.deepEqual(calls, ['ai', 'factors'], 'A、B 两条都跑（A 先 B 后，顺序防限流）')
+  assert.equal(payload.regime.chain, 'A')
+  assert.equal(payload.regime.intended, 'A')
+  assert.equal(payload.regime.ranBoth, true)
+
+  const dual = await readJson(path.join(dir, 'recommend', `${date}.json`))
+  assert.equal(dual.top[0].code, 'aaa', 'A 日 dual 被刷新后的 A 覆盖（不再保持收盘产物不动）')
+  assert.equal(dual.generatedAt, '2026-10-09T10:35:10.000Z', '原始生成时间不被刷新覆盖')
+  assert.ok(dual.refreshedAt, '写入 refreshedAt')
+  assert.equal(dual.refreshCount, 1)
+
+  const a = await readJson(path.join(dir, FORWARD_A_DIR, `${date}.json`))
+  const b = await readJson(path.join(dir, FORWARD_B_DIR, `${date}.json`))
+  assert.equal(a.top[0].code, 'aaa')
+  assert.equal(a.regime.chain, 'A')
+  assert.equal(a.generatedAt, '2026-10-09T10:35:10.000Z')
+  assert.equal(b.top[0].code, 'bbb')
+  assert.equal(b.regime.chain, 'B')
+})
+
+test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回另一条并记 fellBack', async () => {
+  const date = '2026-10-12'
+  const basis = '2026-10-09'
+  // B 日：tilt=0.0 < 0.6 → 选 B，dual 应被 B 覆盖
+  const dirB = await mkWritable(date, basis, 'B')
+  const fakeRun = async (o) => ({
+    date,
+    generatedAt: new Date().toISOString(),
+    basisDate: basis,
+    model: 'm',
+    pool: { size: 1, filtered: 1, candidates: 1 },
+    top: [{ code: o.selectMode === 'ai' ? 'aaa' : 'bbb' }],
+  })
+  await runRecommendRefresh({
+    dataDir: dirB,
+    cfg: {},
+    thr: 0.6,
+    deps: { basisDate: basis, tilt: 0.0 },
+    poolA: () => [],
+    pool: () => [],
+    runDaily: fakeRun,
+    onLog: () => {},
+  })
+  const dualB = await readJson(path.join(dirB, 'recommend', `${date}.json`))
+  assert.equal(dualB.top[0].code, 'bbb', 'B 日 dual 覆盖为 B')
+  assert.equal(dualB.regime.chain, 'B')
+
+  // A 挂了 + tilt 选 A → dual 退回 B，regime.fellBack=true（cron 仍要出当天排行）
+  const dirF = await mkWritable(date, basis, 'A')
+  const flaky = async (o) => {
+    if (o.selectMode === 'ai') throw new Error('boom')
+    return {
+      date,
+      generatedAt: new Date().toISOString(),
+      basisDate: basis,
+      model: 'm',
+      pool: { size: 1, filtered: 1, candidates: 1 },
+      top: [{ code: 'bbb' }],
+    }
+  }
+  const p = await runRecommendRefresh({
+    dataDir: dirF,
+    cfg: {},
+    thr: 0.6,
+    deps: { basisDate: basis, tilt: 0.9 },
+    poolA: () => [],
+    pool: () => [],
+    runDaily: flaky,
+    onLog: () => {},
+  })
+  assert.equal(p.regime.chain, 'B')
+  assert.equal(p.regime.fellBack, true)
+  const dualF = await readJson(path.join(dirF, 'recommend', `${date}.json`))
+  assert.equal(dualF.top[0].code, 'bbb')
 })
 
 

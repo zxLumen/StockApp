@@ -101,17 +101,22 @@ A/B 对照数据 —— 判定「A 是不是背过历史行情」、日后重标
 **盘前刷新（`--refresh`）**：另一条 cron 在**交易日 09:00**（开盘前）跑
 `node scripts/recommend.js --refresh`，用**最新公告（含隔夜/周末）重算当天推荐**。要点：
 
-- **只重算 B（客观多因子）链路** —— 公告事件因子只被 `selectByFactors` 消费，A（AI 选股）不吃公告，
-  重算 A 只是浪费额度且让 A 归档抖动。A 当天的产物保持收盘那次不动。
-- **候选池用 point-in-time**（`kline-cache/universe-stable.json` + **≤ 上一交易日**的日K，`poolFromUniverse`），
-  **不拿盘前实时快照**：开盘前新浪榜单 `trade/amount` 全为 0，直接用它会把整池误判成「停牌」→ 两条链路
-  一起空仓、刷新直接失败（2026-10-12 首次上线即踩此坑）。
+- **重算 A、B 两条链路（修法 1）** —— 公告事件因子只被 `selectByFactors` 消费（B），但 A 的**个股资讯
+  标题**窗口会随周末/长假变旧（周末 ~2.5 天、国庆 8 天、春节 11 天）；当天选中的若恰好是 A，就会丢掉
+  隔夜/假期资讯。故盘前把 A（用**最新资讯**重选）与 B 都重算，覆盖当天选中的那条；两条前瞻归档也都
+  刷新，保证 A/B 对照与持仓页一致。（旧实现只刷 B、A 日保持收盘产物不动。）
+- **候选池用 point-in-time**（B = `kline-cache/universe-stable.json`、A = `kline-cache/universe-amount-10.json`，
+  均取 **≤ 上一交易日**的日K，`poolFromUniverse`），**不拿盘前实时快照**：开盘前新浪榜单
+  `trade/amount` 全为 0，直接用它会把整池误判成「停牌」→ 两条链路一起空仓、刷新直接失败
+  （2026-10-12 首次上线即踩此坑）。
 - 价格基准取**上一交易日**收盘（`basisDate=prevTradingDay`），事件窗口末端延伸到运行日
   （纳入隔夜/周末公告，`lib/ann-factor.js` 的 `eventWindowDays`）。若把手动/回补挪到盘后，用
   `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早的一天，避免当日白天公告造成未来信息泄漏。
 - 后置流程走「方案甲」——**替换**当天 B 的建仓（`replaceEntryPositions`：清旧仓→按新 top 重建，
-  重派生臣服标记；仅当当天选链为 B 时同时替换 dual）+ 重跑 `reconcileCross`，**不跑 `decideActions`**
-  （持仓的延长/终止交给当晚收盘那次）。
+  重派生臣服标记；当天选链为 B 时同时替换 dual）+ 重跑 `reconcileCross`，**不跑 `decideActions`**
+  （持仓的延长/终止交给当晚收盘那次）。生效日 E 的持仓要等 E 收盘才落库，09:00 刷新时替换基本是空操作，
+  主要是手动/盘后重跑时的安全网；A 的建仓不经 `ensureEntryPositions`（A 不臣服），在 A 日替换 dual 会
+  「删了旧仓却建不回」→ 反而丢仓，故 dual 只在选链为 B 时替换。
 - **入场锚点**：新推荐产物带 `entryAnchor: 'effective'` → 买入价锚在**生效日开盘**（旧文件无此字段，
   仍按生成日收盘口径）。生效日当天日K还没有当日这根（新浪日K盘中不含当日），盈亏改用实时快照的
   **今开**兜底（推荐页与持仓页同理）；开盘前今开未形成才留空。前瞻归档 `recommend-*-fwd/` 也带上该字段，

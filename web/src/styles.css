@@ -2139,6 +2139,11 @@ button.member-row:hover {
   background: var(--zx-up);
   color: #fff;
 }
+.pos-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .pos-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

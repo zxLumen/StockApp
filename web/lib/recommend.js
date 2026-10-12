@@ -65,6 +65,54 @@ async function writeActions(dataDir, obj) {
   await writeJson(path.join(dataDir, ACTIONS_FILE), obj)
 }
 
+/**
+ * 每日 actions **全量快照**目录：`actions-archive/<运行日>.json`。
+ *
+ * 为什么需要快照：`recommend-actions.json` 是**可变**的（延长/终止会原地改写），历史回看
+ * 「某一天的模拟持仓」时，若直接读当前 actions，就会把**后来才发生**的 extend/exit 提前套到过去
+ * （例如某票 10-20 才被延长，回看 10-12 却按延长后的周期算）。每天收尾落一份快照，回看时按日取，
+ * 才能**完全忠实回放**当时的状态。快照很小（一天一份全量 JSON）。
+ */
+export const ACTIONS_ARCHIVE_DIR = 'actions-archive'
+
+/** 把当前 `recommend-actions.json` 全量快照到 `actions-archive/<day>.json`（day 默认北京今天）。 */
+export async function snapshotActions(dataDir, day = bjDate()) {
+  const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
+  if (!raw) return null
+  await writeJson(path.join(dataDir, ACTIONS_ARCHIVE_DIR, `${day}.json`), raw)
+  return day
+}
+
+/**
+ * 回看 `day` 当天应使用的 actions 状态：优先取该日快照；其次取 `≤ day` 的**最近**快照
+ * （`day` 是非交易日/当天没跑批时，状态等于最近一次快照）；都没有（新功能上线前的历史）则
+ * 回退到**当前** actions 并标 `faithful:false`（前端据此注明「当时快照缺失，按当前口径近似」）。
+ *
+ * @returns {Promise<{positions: Record<string, object>, asOf: string|null, faithful: boolean}>}
+ */
+export async function readActionsAsOf(dataDir, day) {
+  const exact = await readJson(path.join(dataDir, ACTIONS_ARCHIVE_DIR, `${day}.json`), null)
+  if (exact && exact.positions) return { positions: exact.positions, asOf: day, faithful: true }
+  let days = []
+  try {
+    const files = await fsp.readdir(path.join(dataDir, ACTIONS_ARCHIVE_DIR))
+    days = files
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .map((f) => f.slice(0, 10))
+      .filter((d) => d <= day)
+      .sort()
+  } catch {
+    days = []
+  }
+  if (days.length) {
+    const d = days[days.length - 1]
+    const raw = await readJson(path.join(dataDir, ACTIONS_ARCHIVE_DIR, `${d}.json`), null)
+    if (raw && raw.positions) return { positions: raw.positions, asOf: d, faithful: false }
+  }
+  const cur = await readJson(path.join(dataDir, ACTIONS_FILE), null)
+  return { positions: cur && cur.positions ? cur.positions : {}, asOf: null, faithful: false }
+}
+
 const yi = (n) => (n == null || Number.isNaN(Number(n)) ? 'NA' : `${(Number(n) / 1e8).toFixed(2)} 亿`)
 
 /** 北京时间当天 YYYY-MM-DD。 */
@@ -919,18 +967,23 @@ export function stampRefresh(payload, prevPayloads = [], now = new Date()) {
 }
 
 /**
- * **盘前刷新**（交易日 09:00，`scripts/recommend.js --refresh`）：只重算**受公告影响的 B（factors）
- * 链路**，池子用 point-in-time（调用方注入「≤ basisDate 的日K」组池 + 日K 迭代器），**不依赖盘前
+ * **盘前刷新**（交易日 09:00，`scripts/recommend.js --refresh`）：重算**当天被选中的整条链路**，
+ * 池子用 point-in-time（调用方注入「≤ basisDate 的日K」组池 + 日K 迭代器），**不依赖盘前
  * 实时快照**（开盘前新浪榜单 `trade/amount` 全为 0，会把整池误判为停牌，A/B 一起空仓 → 刷新失败）。
  *
- * 为什么不重算 A：`deps.event`（公告事件因子）只被 `selectByFactors` 消费，A 链路（AI 选股）不吃公告，
- * 重算只会浪费 AI 额度、并让 A 归档无谓抖动。
+ * **修法 1**：A、B **两条都重算**。旧实现只刷 B，理由是「A 不吃公告」——但 A 的个股**资讯标题**
+ * 窗口会随周末/长假变旧（周末 ~2.5 天、国庆 8 天、春节 11 天），选中的若是 A 就会丢掉隔夜资讯。
+ * 现在盘前把 A 也用**最新资讯**（`stockNews`，实时）重算，A 的池子改用 point-in-time **成交额池**
+ * （`universe-amount-10.json` + `poolFromUniverse`），**不拿 09:00 实时榜**（会全 0）。
  *
  * 落盘：
- *   - 始终写 `recommend-factors-fwd/<生效日>.json`（B 前瞻归档，含 regime）；
- *   - **仅当当天 tilt 选链为 B** 时，才覆盖 `recommend/<生效日>.json`（A 日保持 A 的收盘产物不动）。
+ *   - 写 `recommend-ai-fwd/<生效日>.json`（A 前瞻归档，含 regime）与
+ *     `recommend-factors-fwd/<生效日>.json`（B 前瞻归档，含 regime）——两条都刷，保持 A/B 对照；
+ *   - 覆盖 `recommend/<生效日>.json` = 当天 tilt 选中的那条链路（A 或 B）。
  *
- * @returns {Promise<object>} payload（含 `regime.chain`），调用方据此决定替换哪些链路的建仓。
+ * @param {object} opts 透传 runRecommendDaily 的公共参数；`poolA`/`pool` 分别是 A/B 的 point-in-time
+ *   候选池函数（缺省回退实时榜，仅测试/本地用）。
+ * @returns {Promise<object>} 选中的 payload（含 `regime.chain`），调用方据此决定替换哪些链路的建仓。
  */
 export async function runRecommendRefresh(opts = {}) {
   const {
@@ -940,63 +993,101 @@ export async function runRecommendRefresh(opts = {}) {
     finalPicks = SEL.finalPicks,
     candPool = 30,
     pool,
+    poolA,
     deps = {},
     outSubdir = 'recommend',
     objTarget = OBJECTIVE.target,
     concurrency = 4,
     dryRun = false,
+    runDaily = runRecommendDaily,
     onLog = () => {},
   } = opts
 
   const basisDate = deps.basisDate || bjDate()
   const { tilt } = await resolveTilt(deps, basisDate)
-  const chain = pickChain(tilt, thr)
+  const intended = pickChain(tilt, thr)
+  const useA = intended === 'A'
   onLog(
-    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ 刷新 B（客观多因子，公告敏感）` +
-      (chain === 'B' ? '；当日选链为 B，将覆盖 recommend/' : '；当日选链为 A，A 不吃公告 → 只更 B 归档'),
+    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ 盘前刷新 A、B 两条链路` +
+      `（选中 ${intended}，将覆盖 ${outSubdir}/）`,
   )
 
-  // dryRun:true 让 runRecommendDaily 自己不落盘 —— 我们统一补上 regime 后再写，避免写出没有判据的中间态。
-  const payload = await runRecommendDaily({
-    dataDir,
-    cfg,
+  // 与 runRecommendRegime 同构：两条都跑（顺序，不并发——上游按 IP 限流），哪条挂了不阻断另一条。
+  // dryRun:true 让 runRecommendDaily 自己不落盘 —— 我们统一补上 regime / 刷新章后再写，避免中间态。
+  const safeRun = async (label, cfgArgs) => {
+    try {
+      return await runDaily({
+        dataDir,
+        cfg,
+        finalPicks,
+        objTarget,
+        concurrency,
+        outSubdir,
+        dryRun: true,
+        onLog: (m) => onLog(`[${label}] ${m}`),
+        ...cfgArgs,
+      })
+    } catch (e) {
+      onLog(`[${label}] 链路失败（不阻断，另一条继续）：${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
+  }
+
+  // A 用**最新资讯**重算（修法 1 的核心）：池子走注入的 PIT 成交额池；deps.kline 已截到 basisDate。
+  const payloadA = await safeRun('A', {
+    selectMode: 'ai',
+    topCandidates: SEL.topCandidates,
+    deps: { ...deps, pool: poolA || (() => aSharePool()) },
+  })
+  const payloadB = await safeRun('B', {
     selectMode: 'factors',
     // B 多解读一批（candPool）供交叉仲裁回填；top 仍是因子序前 finalPicks。
     topCandidates: Math.max(candPool, finalPicks),
-    finalPicks,
-    objTarget,
-    concurrency,
-    outSubdir: FORWARD_B_DIR,
-    dryRun: true,
     deps: { ...deps, pool: pool || (() => stablePool()) },
-    onLog: (m) => onLog(`[B] ${m}`),
   })
-  payload.regime = { tilt: Number(tilt.toFixed(4)), thr, chain: 'B' }
+
+  const picked = resolveChainPayload({ useA, a: payloadA, b: payloadB })
+  if (!picked) throw new Error('A / B 两条链路都失败，今天没有推荐产出')
+  const { payload, chain: actualChain, fellBack } = picked
+  if (fellBack) onLog(`⚠ tilt 选中的 ${intended} 链路不可用，已退回 ${actualChain} 链路`)
 
   // 保留**原始生成时间**：盘前刷新只更新快照，不该把「生成于 X」也抹掉。
-  // 读同日的既有产物（dual 可能与 B 归档不同步，谁先有原始时间就用谁），另记 refreshedAt/refreshCount。
+  // 读同日的既有产物（dual 可能与归档不同步，谁先有原始时间就用谁），另记 refreshedAt/refreshCount。
   const dualPath = path.join(dataDir, outSubdir, `${payload.date}.json`)
+  const aPath = path.join(dataDir, FORWARD_A_DIR, `${payload.date}.json`)
   const bPath = path.join(dataDir, FORWARD_B_DIR, `${payload.date}.json`)
   const prevDual = await readJson(dualPath, null)
-  const prevB = await readJson(bPath, null)
-  stampRefresh(payload, [prevDual, prevB])
+  if (payloadA) stampRefresh(payloadA, [prevDual, await readJson(aPath, null)])
+  if (payloadB) stampRefresh(payloadB, [prevDual, await readJson(bPath, null)])
+
+  // 判据：事后复盘「tilt 选链」对不对，全靠这几个字段（与收盘跑批同形）。
+  payload.regime = {
+    tilt: Number(tilt.toFixed(4)),
+    thr,
+    chain: actualChain,
+    intended: useA ? 'A' : 'B',
+    fellBack,
+    ranBoth: !!(payloadA && payloadB),
+  }
 
   if (!dryRun) {
-    // B 前瞻归档走 forwardArchive（与收盘跑批同形状：含 entryAnchor / regime / 刷新时间），
+    // 两条前瞻归档都走 forwardArchive（与收盘跑批同形状：含 entryAnchor / regime / 刷新时间），
     // 别直接写完整 payload，否则同目录下两种形状混在一起。
-    const bArchive = forwardArchive({ payload, chain: 'B', tilt, thr })
-    await writeJson(bPath, bArchive)
-    onLog(`已写入 ${FORWARD_B_DIR}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
-    if (chain === 'B') {
-      await writeJson(dualPath, payload)
-      onLog(
-        `已写入 ${outSubdir}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}，刷新于 ${payload.refreshedAt}）`,
-      )
-    } else {
-      onLog(`当天选链为 A：${outSubdir}/${payload.date}.json 保持 A 的收盘产物不动`)
+    if (payloadA) {
+      await writeJson(aPath, forwardArchive({ payload: payloadA, chain: 'A', tilt, thr }))
+      onLog(`已写入 ${FORWARD_A_DIR}/${payload.date}.json（链路 A，tilt=${tilt.toFixed(2)}）`)
     }
+    if (payloadB) {
+      await writeJson(bPath, forwardArchive({ payload: payloadB, chain: 'B', tilt, thr }))
+      onLog(`已写入 ${FORWARD_B_DIR}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
+    }
+    // 覆盖 dual = 当天选中的那条（A 日也要覆盖：修法 1 就是要让 A 吃到隔夜/周末资讯）。
+    await writeJson(dualPath, payload)
+    onLog(
+      `已写入 ${outSubdir}/${payload.date}.json（链路 ${actualChain}，tilt=${tilt.toFixed(2)}，刷新于 ${payload.refreshedAt}）`,
+    )
   } else {
-    onLog(`（dry-run，未落盘）链路 B，tilt=${tilt.toFixed(2)}`)
+    onLog(`（dry-run，未落盘）链路 ${actualChain}，tilt=${tilt.toFixed(2)}`)
   }
   return payload
 }

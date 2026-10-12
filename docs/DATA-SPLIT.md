@@ -27,9 +27,11 @@
   `eventWindowDays`）。日常传交易日 → 末端即该交易日；盘前刷新传运行日 → 末端延伸到该日，
   纳入隔夜/周末公告。公告归档（`ann-archive`）由每日 `scripts/recommend.js` 自动补当日、
   盘前刷新补 `[上一交易日..事件日]`（best-effort）。
-- **盘前刷新只重算 B**：公告事件因子仅被 `selectByFactors` 消费，A（AI 选股）不吃公告，
-  故 `--refresh` 只重算 B（候选池用 **≤ 上一交易日**的日K，point-in-time，不拿盘前实时快照）。
-  手动/盘后回补用 `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早一天，避免当日白天公告泄漏。
+- **盘前刷新重算 A、B 两条链路（修法 1）**：公告事件因子仅被 `selectByFactors` 消费（B）；A 虽不吃
+  公告，但其**个股资讯标题**窗口会随周末/长假变旧，故 `--refresh` 同时重算 A（用**最新资讯**；候选池 =
+  point-in-time 成交额池 `universe-amount-10.json`）与 B（候选池 = point-in-time 稳健池
+  `universe-stable.json`），均取 **≤ 上一交易日**的日K，**不拿盘前实时快照**。手动/盘后回补用
+  `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早一天，避免当日白天公告泄漏。
 
 ## 2. 数据可用性（决定各窗口能否真跑）
 

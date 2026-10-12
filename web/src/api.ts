@@ -126,8 +126,12 @@ export const fetchRecommend = (date?: string, chain: RecommendChain = 'dual', si
 export const fetchRecommendDates = (chain: RecommendChain = 'dual', signal?: AbortSignal) =>
   get<{ dates: string[] }>(`/api/recommend/dates${chain !== 'dual' ? `?chain=${chain}` : ''}`, signal)
 
-/** 模拟推荐持仓：全部链路 × 原始/AI 两套（服务端一次算全 + 缓存）。 */
-export const fetchPositions = (signal?: AbortSignal) => get<PositionsPayload>('/api/positions', signal)
+/**
+ * 模拟推荐持仓：全部链路 × 原始/AI 两套（服务端一次算全 + 缓存）。
+ * `asOf`（可选）= 回看某个过去交易日的模拟持仓；不传 = 最新（含盘中实时）。
+ */
+export const fetchPositions = (asOf?: string, signal?: AbortSignal) =>
+  get<PositionsPayload>(`/api/positions${asOf ? `?date=${encodeURIComponent(asOf)}` : ''}`, signal)
 
 export const searchFunds = (q: string, signal?: AbortSignal) =>
   get<{ items: { code: string; name: string; type: string | null }[] }>(

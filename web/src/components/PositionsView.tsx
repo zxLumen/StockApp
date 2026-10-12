@@ -17,24 +17,28 @@ const CHAINS: { key: PositionChain; label: string }[] = [
   { key: 'B', label: 'B 保守' },
 ]
 
-let posMem: PositionsPayload | null = null
-function posCacheGet(): PositionsPayload | null {
-  if (posMem) return posMem
+// 客户端缓存**按日期分桶**：'' = 最新，'YYYY-MM-DD' = 回看那天（历史结果不可变）。
+const POS_CACHE_KEY = 'zx-positions'
+const posMem = new Map<string, PositionsPayload>()
+function posCacheGet(key: string): PositionsPayload | null {
+  const hit = posMem.get(key)
+  if (hit) return hit
   try {
-    const raw = sessionStorage.getItem('zx-positions')
+    const raw = sessionStorage.getItem(`${POS_CACHE_KEY}:${key || 'latest'}`)
     if (raw) {
-      posMem = JSON.parse(raw) as PositionsPayload
-      return posMem
+      const v = JSON.parse(raw) as PositionsPayload
+      posMem.set(key, v)
+      return v
     }
   } catch {
     /* 忽略 */
   }
   return null
 }
-function posCacheSet(v: PositionsPayload) {
-  posMem = v
+function posCacheSet(key: string, v: PositionsPayload) {
+  posMem.set(key, v)
   try {
-    sessionStorage.setItem('zx-positions', JSON.stringify(v))
+    sessionStorage.setItem(`${POS_CACHE_KEY}:${key || 'latest'}`, JSON.stringify(v))
   } catch {
     /* 超限忽略 */
   }
@@ -47,22 +51,27 @@ export default function PositionsView({
 }) {
   const [chain, setChain] = useSessionState<PositionChain>('posChain', 'dual')
   const [mode, setMode] = useSessionState<'orig' | 'ai'>('posMode', 'ai')
-  const [data, setData] = useState<PositionsPayload | null>(() => posCacheGet())
-  const [loading, setLoading] = useState(() => !posCacheGet())
+  // 回看日期：'' = 最新；否则为某交易日的模拟持仓。
+  const [asOf, setAsOf] = useSessionState<string>('posAsOf', '')
+  const [data, setData] = useState<PositionsPayload | null>(() => posCacheGet(asOf))
+  const [loading, setLoading] = useState(() => !posCacheGet(asOf))
   const [err, setErr] = useState('')
 
   useEffect(() => {
     let alive = true
-    const hit = posCacheGet()
+    const hit = posCacheGet(asOf)
     if (hit) {
       setData(hit)
       setLoading(false)
+    } else {
+      setLoading(true)
     }
-    fetchPositions()
+    setErr('')
+    fetchPositions(asOf || undefined)
       .then((v) => {
         if (!alive) return
         setData(v)
-        posCacheSet(v)
+        posCacheSet(asOf, v)
       })
       .catch((e: unknown) => {
         if (!alive || hit) return
@@ -74,7 +83,7 @@ export default function PositionsView({
     return () => {
       alive = false
     }
-  }, [])
+  }, [asOf])
 
   const ch = data?.chains?.[chain] ?? null
   const m: PositionMode | null = ch ? ch[mode] : null
@@ -114,13 +123,35 @@ export default function PositionsView({
             </button>
           ))}
         </div>
+        <label className="pos-date">
+          <span className="dim small">回看</span>
+          <select
+            value={asOf}
+            onChange={(e) => setAsOf(e.target.value)}
+            aria-label="选择回看的交易日"
+            disabled={!data}
+          >
+            <option value="">最新</option>
+            {[...(data?.dates ?? [])].reverse().map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="dim small">
-          每只 ¥10,000 等权 · 从有推荐数据起累积{data?.asOf ? ` · 截至 ${data.asOf}` : ''}
+          每只 ¥10,000 等权 · 从有推荐数据起累积{data?.asOf ? ` · ${asOf ? '回看' : '截至'} ${data.asOf}` : ''}
         </span>
       </div>
 
       {err && <div className="note err">{err}</div>}
       {!data && loading && <div className="note">加载模拟持仓…</div>}
+      {asOf && data && (
+        <div className="note small">
+          历史回看 {data.asOf}：价格为<b>当日收盘价</b>；持仓 / AI 动态调整按当日状态重放
+          {data.actionsFaithful ? '' : '（当日 actions 快照缺失，AI 口径按最近快照近似）'}。
+        </div>
+      )}
 
       {m && (
         <>

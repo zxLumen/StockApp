@@ -20,6 +20,7 @@ import {
   bjDate,
   listRecommendDates,
   recommendTtlMs,
+  readActionsAsOf,
   BENCH_SECID,
   BENCH_NAME,
   CHAIN_SUBDIR,
@@ -30,6 +31,8 @@ import { addTradingDays, prevTradingDay, isTradingDay } from './trading-days.js'
 
 const ACTIONS_FILE = 'recommend-actions.json'
 const PER_STOCK = 10000
+/** 历史回看的结果不可变 → 用固定长 TTL 缓存（盘后 12h 同口径），避免访客切日期重复算。 */
+const HISTORY_TTL_MS = 12 * 3600_000
 
 /** 北京时间（UTC+8）的当天分钟数：判断是否已开盘（>=09:30）。 */
 function bjNowMinutes() {
@@ -47,32 +50,72 @@ export function sharesFor(price) {
 
 const round2 = (n) => (n == null || !Number.isFinite(Number(n)) ? null : Number(Number(n).toFixed(2)))
 
-/** 全部链路 × 两套口径（结果整体缓存：盘中 6min / 盘后长 TTL）。 */
-export async function buildPositionsAll(dataDir, { ttlMs = recommendTtlMs() } = {}) {
-  return cached('positions:all', ttlMs, () => computeAll(dataDir))
+/**
+ * 全部链路 × 两套口径（结果整体缓存：盘中 6min / 盘后长 TTL）。
+ *
+ * `asOf`（可选）：回看某个**过去交易日**的模拟持仓。
+ *   - 不传 / 等于今天 → 现行「最新」口径（含盘中实时估值）；
+ *   - 传过去某交易日 → 用该日的 **actions 快照** + 截至该日的推荐，重放当天的组合（收盘口径）。
+ * 历史结果不可变 → 按日期长 TTL 缓存。
+ */
+export async function buildPositionsAll(dataDir, { asOf, ttlMs } = {}) {
+  const today = bjDate()
+  if (!asOf || asOf >= today) {
+    return cached('positions:all', ttlMs ?? recommendTtlMs(), () => computeAll(dataDir))
+  }
+  return cached(`positions:all:${asOf}`, ttlMs ?? HISTORY_TTL_MS, () => computeAll(dataDir, { historical: asOf }))
 }
 
-async function computeAll(dataDir) {
-  const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
-  const actions = raw && raw.positions ? raw.positions : {}
+async function computeAll(dataDir, { historical = null } = {}) {
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
   const today = bjDate()
-  const lastBar = benchBars.length ? benchBars[benchBars.length - 1].time : today
-  // 盘中（已开盘）且当日日K还没出 → 用**实时价**给「今天」这一点估值：收盘后实时≈收盘，无缝；
-  // 盘前无今日 → 用最近收盘，不会幽灵。这样盘中曲线跟着动，且不引入盘前假点。
-  const useIntraday = today > lastBar && isTradingDay(today) && bjNowMinutes() >= 9 * 60 + 30
-  const valuationDate = useIntraday ? today : lastBar
+
+  let actions
+  let valuationDate
+  let useIntraday
+  let actionsAsOfDate = null
+  let actionsFaithful = true
+  if (historical) {
+    // 回看：绝不盘中、日期就钉在 asOf；actions 取该日快照（缺则退最近快照/当前，标不忠实）。
+    const snap = await readActionsAsOf(dataDir, historical)
+    actions = snap.positions
+    actionsAsOfDate = snap.asOf
+    actionsFaithful = snap.faithful
+    valuationDate = historical
+    useIntraday = false
+  } else {
+    const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
+    actions = raw && raw.positions ? raw.positions : {}
+    const lastBar = benchBars.length ? benchBars[benchBars.length - 1].time : today
+    // 盘中（已开盘）且当日日K还没出 → 用**实时价**给「今天」这一点估值：收盘后实时≈收盘，无缝；
+    // 盘前无今日 → 用最近收盘，不会幽灵。这样盘中曲线跟着动，且不引入盘前假点。
+    useIntraday = today > lastBar && isTradingDay(today) && bjNowMinutes() >= 9 * 60 + 30
+    valuationDate = useIntraday ? today : lastBar
+  }
+
   // 全局起点 = 所有链路里最早的买入日：三条曲线共用同一 x 轴。
   let globalStart = null
   for (const chain of ['dual', 'A', 'B']) {
     const s = await earliestBasis(dataDir, chain).catch(() => null)
     if (s && (!globalStart || s < globalStart)) globalStart = s
   }
+  // 可选回看日期：沪深300 有日K的交易日（从全局起点起）。历史回看复用同一份，避免 select 抖动。
+  const dates = benchBars
+    .map((b) => b.time)
+    .filter((t) => (!globalStart || t >= globalStart) && t <= today)
+    .sort()
   const chains = {}
   for (const chain of ['dual', 'A', 'B']) {
     chains[chain] = await computeChain(dataDir, chain, actions, benchBars, globalStart, valuationDate, useIntraday).catch(() => emptyChain())
   }
-  return { benchName: BENCH_NAME, asOf: valuationDate, chains }
+  return {
+    benchName: BENCH_NAME,
+    asOf: valuationDate,
+    dates,
+    actionsAsOf: actionsAsOfDate,
+    actionsFaithful,
+    chains,
+  }
 }
 
 /** 该链路最早一天的买入日（归一到交易日）。 */
@@ -107,6 +150,8 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
     // 新推荐：建仓锚在**生效日**（开买）；旧推荐：生成日收盘（归一到交易日，basisDate 可能恰逢假日）。
     const atOpen = entryAtOpen(p)
     const buyDate = atOpen ? entryIsoOf(p) || D : prevTradingDay(p.basisDate || D)
+    // 生效日还没到（如周五晚生成的周一推荐、或回看某个更早的日期）→ 当天尚未建仓，不计入。
+    if (buyDate > valuationDate) continue
     for (const s of p.top) {
       const origHold = Number(s.ai?.holdDays ?? s.holdDays)
       if (!s.secid || !Number.isFinite(origHold)) continue
