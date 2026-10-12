@@ -13,13 +13,18 @@ import { sinaKline } from './sina.js'
 // 一旦回测更早的月份就会没有回看窗口（computeFactors 直接返回 null）。
 const TTL_MS = 6 * 3600_000
 
-export async function cachedKline(secid, { dataDir = DATA_DIR, limit = 600, ttlMs = TTL_MS } = {}) {
+export async function cachedKline(secid, { dataDir = DATA_DIR, limit = 600, ttlMs = TTL_MS, minTime = null } = {}) {
   const file = path.join(dataDir, 'kline-cache', `${secid}.json`)
   try {
     const st = await fsp.stat(file)
-    if (Date.now() - st.mtimeMs < ttlMs) {
+    // minTime 模式（盘前刷新）：只要缓存已**覆盖到**该日（末根 ≥ minTime）就足够，
+    // 不受 TTL 约束 —— 上一交易日收盘那次拉的数据正是我们要的，盘前不必再穿透上游重拉。
+    // （缓存末根 > minTime，例如含当日半截 K，也 OK：调用方会再截断到 basisDate。）
+    const freshEnough = minTime == null ? Date.now() - st.mtimeMs < ttlMs : true
+    if (freshEnough) {
       const j = await readJson(file, null)
-      if (j?.bars?.length) return j
+      const last = j?.bars?.length ? j.bars[j.bars.length - 1]?.time : null
+      if (j?.bars?.length && (minTime == null || (last && last >= minTime))) return j
     }
   } catch {
     /* 无缓存，继续拉 */

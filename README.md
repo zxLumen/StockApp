@@ -99,11 +99,19 @@ A/B 对照数据 —— 判定「A 是不是背过历史行情」、日后重标
 `node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd`。
 
 **盘前刷新（`--refresh`）**：另一条 cron 在**交易日 09:00**（开盘前）跑
-`node scripts/recommend.js --refresh`，用**最新公告（含隔夜/周末）重算当天推荐并覆盖**原文件：
-价格基准仍取**上一交易日**收盘（`basisDate=prevTradingDay`），事件因子窗口末端延伸到运行日
-（纳入隔夜/周末公告，`lib/ann-factor.js` 的 `eventWindowDays`）。后置流程走「方案甲」——
-**替换**当天建仓（`replaceEntryPositions`：清旧仓→按新 top 重建，重派生臣服标记）+ 重跑
-`reconcileCross`，**不跑 `decideActions`**（持仓的延长/终止交给当晚收盘那次）。
+`node scripts/recommend.js --refresh`，用**最新公告（含隔夜/周末）重算当天推荐**。要点：
+
+- **只重算 B（客观多因子）链路** —— 公告事件因子只被 `selectByFactors` 消费，A（AI 选股）不吃公告，
+  重算 A 只是浪费额度且让 A 归档抖动。A 当天的产物保持收盘那次不动。
+- **候选池用 point-in-time**（`kline-cache/universe-stable.json` + **≤ 上一交易日**的日K，`poolFromUniverse`），
+  **不拿盘前实时快照**：开盘前新浪榜单 `trade/amount` 全为 0，直接用它会把整池误判成「停牌」→ 两条链路
+  一起空仓、刷新直接失败（2026-10-12 首次上线即踩此坑）。
+- 价格基准取**上一交易日**收盘（`basisDate=prevTradingDay`），事件窗口末端延伸到运行日
+  （纳入隔夜/周末公告，`lib/ann-factor.js` 的 `eventWindowDays`）。若把手动/回补挪到盘后，用
+  `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早的一天，避免当日白天公告造成未来信息泄漏。
+- 后置流程走「方案甲」——**替换**当天 B 的建仓（`replaceEntryPositions`：清旧仓→按新 top 重建，
+  重派生臣服标记；仅当当天选链为 B 时同时替换 dual）+ 重跑 `reconcileCross`，**不跑 `decideActions`**
+  （持仓的延长/终止交给当晚收盘那次）。
 
 > **数据划分（训练/验证/测试/评估、隐藏窗口）见 [`docs/DATA-SPLIT.md`](docs/DATA-SPLIT.md)** ——
 > 线上只展示 2026-10 起的前瞻，2026-03~09 是训练/验证样本故隐藏。改任何窗口都要同时

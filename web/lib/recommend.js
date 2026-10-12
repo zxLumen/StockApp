@@ -900,6 +900,76 @@ export async function runRecommendRegime(opts = {}) {
   return chosen
 }
 
+/**
+ * **盘前刷新**（交易日 09:00，`scripts/recommend.js --refresh`）：只重算**受公告影响的 B（factors）
+ * 链路**，池子用 point-in-time（调用方注入「≤ basisDate 的日K」组池 + 日K 迭代器），**不依赖盘前
+ * 实时快照**（开盘前新浪榜单 `trade/amount` 全为 0，会把整池误判为停牌，A/B 一起空仓 → 刷新失败）。
+ *
+ * 为什么不重算 A：`deps.event`（公告事件因子）只被 `selectByFactors` 消费，A 链路（AI 选股）不吃公告，
+ * 重算只会浪费 AI 额度、并让 A 归档无谓抖动。
+ *
+ * 落盘：
+ *   - 始终写 `recommend-factors-fwd/<生效日>.json`（B 前瞻归档，含 regime）；
+ *   - **仅当当天 tilt 选链为 B** 时，才覆盖 `recommend/<生效日>.json`（A 日保持 A 的收盘产物不动）。
+ *
+ * @returns {Promise<object>} payload（含 `regime.chain`），调用方据此决定替换哪些链路的建仓。
+ */
+export async function runRecommendRefresh(opts = {}) {
+  const {
+    dataDir,
+    cfg,
+    thr = tiltThreshold(),
+    finalPicks = SEL.finalPicks,
+    candPool = 30,
+    pool,
+    deps = {},
+    outSubdir = 'recommend',
+    objTarget = OBJECTIVE.target,
+    concurrency = 4,
+    dryRun = false,
+    onLog = () => {},
+  } = opts
+
+  const basisDate = deps.basisDate || bjDate()
+  const { tilt } = await resolveTilt(deps, basisDate)
+  const chain = pickChain(tilt, thr)
+  onLog(
+    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ 刷新 B（客观多因子，公告敏感）` +
+      (chain === 'B' ? '；当日选链为 B，将覆盖 recommend/' : '；当日选链为 A，A 不吃公告 → 只更 B 归档'),
+  )
+
+  // dryRun:true 让 runRecommendDaily 自己不落盘 —— 我们统一补上 regime 后再写，避免写出没有判据的中间态。
+  const payload = await runRecommendDaily({
+    dataDir,
+    cfg,
+    selectMode: 'factors',
+    // B 多解读一批（candPool）供交叉仲裁回填；top 仍是因子序前 finalPicks。
+    topCandidates: Math.max(candPool, finalPicks),
+    finalPicks,
+    objTarget,
+    concurrency,
+    outSubdir: FORWARD_B_DIR,
+    dryRun: true,
+    deps: { ...deps, pool: pool || (() => stablePool()) },
+    onLog: (m) => onLog(`[B] ${m}`),
+  })
+  payload.regime = { tilt: Number(tilt.toFixed(4)), thr, chain: 'B' }
+
+  if (!dryRun) {
+    await writeJson(path.join(dataDir, FORWARD_B_DIR, `${payload.date}.json`), payload)
+    onLog(`已写入 ${FORWARD_B_DIR}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
+    if (chain === 'B') {
+      await writeJson(path.join(dataDir, outSubdir, `${payload.date}.json`), payload)
+      onLog(`已写入 ${outSubdir}/${payload.date}.json（链路 B，tilt=${tilt.toFixed(2)}）`)
+    } else {
+      onLog(`当天选链为 A：${outSubdir}/${payload.date}.json 保持 A 的收盘产物不动`)
+    }
+  } else {
+    onLog(`（dry-run，未落盘）链路 B，tilt=${tilt.toFixed(2)}`)
+  }
+  return payload
+}
+
 /** 「推荐失效」表现：给定推荐日价与最新价，返回涨跌百分比；任一为空/为 0 则 null。 */
 export function pctFromPick(pickPrice, latestPrice) {
   // 注意 Number(null) === 0、Number('') === 0，会把「缺值」误当成 0 价格，

@@ -9,6 +9,7 @@ import {
   isSt,
   hasLimitUpStreak,
   lastAmplitude,
+  poolFromUniverse,
 } from '../lib/rank.js'
 
 test('secidOfSinaSymbol：沪深前缀 → 东财 secid', () => {
@@ -90,4 +91,35 @@ test('objectiveFilter：剔停牌/ST/连板/过热，按成交额取前 N', asyn
     kept.map((x) => x.code),
     ['000005', '000001'], // E(7e8) 在 A(5e8) 前（按成交额降序）
   )
+})
+
+test('poolFromUniverse：取 ≤ basisDate 的最后一根日K，amount = volume×close', async () => {
+  const universe = [
+    { secid: '0.000001', code: '000001', name: '甲' },
+    { secid: '0.000002', code: '000002', name: '乙' }, // 最后一根在基准日之后 → 用 ≤ basisDate 那根
+    { secid: '0.000003', code: '000003', name: '丙' }, // 无数据 → 剔
+  ]
+  const kline = async (secid) => {
+    if (secid === '0.000001') {
+      return {
+        bars: [
+          { time: '2026-10-08', close: 10, volume: 100, changePct: 1 },
+          { time: '2026-10-09', close: 11, volume: 200, changePct: 10 },
+        ],
+      }
+    }
+    if (secid === '0.000002') {
+      return { bars: [{ time: '2026-10-09', close: 5, volume: 10 }, { time: '2026-10-12', close: 6, volume: 99 }] }
+    }
+    return null
+  }
+  const pool = await poolFromUniverse(universe, { basisDate: '2026-10-09', kline })
+  // mapLimit 保序：丙被剔，剩甲、乙（顺序不变）
+  assert.deepEqual(pool.map((x) => x.code), ['000001', '000002'])
+  assert.equal(pool[0].price, 11)
+  assert.equal(pool[0].amount, 2200) // 11 × 200
+  assert.equal(pool[0].changePct, 10)
+  // 乙：基准日之后那根（10-12）不得入选 → 仍用 10-09 那根
+  assert.equal(pool[1].price, 5)
+  assert.equal(pool[1].amount, 50) // 5 × 10
 })

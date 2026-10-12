@@ -104,6 +104,42 @@ export async function aSharePool({ pages = 5, perPage = 100 } = {}) {
   return [...bySecid.values()]
 }
 
+/**
+ * **point-in-time 候选池**：由宇宙清单（如 `kline-cache/universe-stable.json`）+ 日K 组装，
+ * 每只取 **≤ basisDate 的最后一根**日K 作价格/成交额。**盘前刷新专用** —— 开盘前新浪榜单的
+ * `trade/amount` 全为 0，直接拿实时快照会把整池误判为「停牌/无价」，两条链路一起空仓。
+ *
+ * `amount = volume * close`：日K 没有成交额字段，这是能得到的最近似口径（与 `refresh-oct` 一致）。
+ * `kline(secid)` 需返回 `{ bars:[{time,close,volume,...}] }`；建议用 `cachedKline`（带 minTime 新鲜度）。
+ */
+export async function poolFromUniverse(list, { basisDate, kline, onLog = () => {} } = {}) {
+  if (!Array.isArray(list) || !list.length) return []
+  const out = []
+  await mapLimit(list, 12, async (s) => {
+    if (!s?.secid) return
+    let bars = null
+    try {
+      bars = (await kline(s.secid))?.bars || null
+    } catch {
+      bars = null
+    }
+    if (!bars || !bars.length) return
+    const at = [...bars].reverse().find((b) => b.time && b.time <= basisDate)
+    if (!at || at.close == null) return
+    out.push({
+      secid: s.secid,
+      code: String(s.code ?? ''),
+      name: String(s.name ?? ''),
+      price: at.close,
+      changePct: at.changePct ?? null,
+      amount: Number((((at.volume || 0) * at.close) || 0).toFixed(2)),
+      turnover: null,
+    })
+  })
+  onLog(`point-in-time 候选池：${list.length} 只宇宙 → ${out.length} 只有效（≤ ${basisDate}）`)
+  return out
+}
+
 /** 从日 K（升序）算近一月涨幅：最新收盘 / N 个交易日前收盘 − 1。 */
 export function monthChangeFromBars(bars, days = MONTH_TRADING_DAYS) {
   if (!Array.isArray(bars) || bars.length < 2) return null
