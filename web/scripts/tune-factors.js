@@ -1,7 +1,9 @@
 // 因子调参流水线：对同一批「每日特征」快速试多组权重，训练集=7月、验证集=8月。
 //   node scripts/tune-factors.js
-// 只做横截面选股（与 selectByFactors 一致：因子分降序取前 10）。行业分散在本地因东财
-// f127 不可用而失效，这里同样忽略。所有数据只用 ≤D 的日K，无未来数据。
+// 只做横截面选股（与 selectByFactors 一致：因子分降序取前 10）。**本脚本只调权重**，
+// 行业分散上限（maxPerIndustry）不在这里调：那属于「生产口径」，用
+// scripts/sweep-industry-cap.sh（backtest + eval-backtest）扫，行业来源见 lib/industry.js。
+// 所有数据只用 ≤D 的日K，无未来数据。
 import { DATA_DIR } from '../lib/scope.js'
 import { readJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'

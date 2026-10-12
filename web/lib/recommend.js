@@ -7,6 +7,7 @@ import { stockNews } from './news.js'
 import { sinaKline } from './sina.js'
 import { getQuotes } from './market.js'
 import { cached } from './http.js'
+import { industryOf, coarseSector, industryMapSize } from './industry.js'
 import { readJson, writeJson } from './store.js'
 import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars, ma20Deviation, stablePool, OBJECTIVE } from './rank.js'
 import { computeFactors, compositeScores, regimeTilt } from './factors.js'
@@ -377,29 +378,13 @@ export async function selectCandidates(cfg, pool, want, onLog = () => {}, { batc
   return picked.slice(0, want)
 }
 
-/** 东财个股行业（f127），带缓存；失败返回 '?'。 */
-const industryCache = new Map()
-export async function industryOf(secid, deps = {}) {
-  if (deps.industry) return deps.industry(secid)
-  if (industryCache.has(secid)) return industryCache.get(secid)
-  try {
-    const json = await cached(`ind:${secid}`, 24 * 60 * 60_000, () =>
-      fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f127`, {
-        headers: { Referer: 'https://quote.eastmoney.com/' },
-      }).then((r) => r.json()),
-    )
-    const v = json?.data?.f127 || '?'
-    industryCache.set(secid, v)
-    return v
-  } catch {
-    return '?'
-  }
-}
-
 /**
  * **多因子选股**（客观、可回测、无未来数据）：在候选池上算价量 + 点时财务因子 →
- * 截面 z-score 加权 → 行业分散（同行业 ≤ maxPerIndustry）→ 取 TopN。
+ * 截面 z-score 加权 → 行业分散（同一**一级大类** ≤ maxPerIndustry）→ 取 TopN。
  * AI 不参与选股，只负责后续解读。
+ *
+ * 分散上限作用在 `coarseSector()` 归并的大类上（东财细分行业太细，拦不住同板块扎堆）；
+ * 行业读本地冻结映射 `config/industry-map.json`，离线可复现（见 lib/industry.js）。
  *
  * `finance(secid)` 返回 `{ roeAnnual, bps }`（lib/finance.js 的 financeFactors），
  * 按评估日做点时取数；不传则只用价量因子（权重项 `q` 贡献 0）。
@@ -452,31 +437,32 @@ export async function selectByFactors(
     .sort((a, b) => b.factorScore - a.factorScore)
 
   // 不做行业分散（maxPerIndustry ≥ finalPicks）：直接取因子分前 N。
-  // 目的：① 结果确定（不依赖东财 f127 是否可用）；② 实证本池分散反而拖累。
+  // 目的：① 结果确定（不依赖行业源是否可用）；② 实证本池分散反而拖累。
   if (maxPerIndustry >= finalPicks) {
     onLog(`因子选股：${items.length} 只候选 → Top${finalPicks}（不做行业分散）`)
     return ranked.slice(0, finalPicks)
   }
 
-  const byInd = new Map()
+  const bySector = new Map()
   const picked = []
   const buf = []
   for (const x of ranked) {
     if (picked.length >= finalPicks) break
     const ind = await industryOf(x.secid, { industry })
-    const used = byInd.get(ind) || 0
+    const sector = coarseSector(ind)
+    const used = bySector.get(sector) || 0
     if (used < maxPerIndustry) {
-      byInd.set(ind, used + 1)
-      picked.push({ ...x, industry: ind })
+      bySector.set(sector, used + 1)
+      picked.push({ ...x, industry: ind, sector })
     } else {
-      buf.push({ ...x, industry: ind })
+      buf.push({ ...x, industry: ind, sector })
     }
   }
   for (const x of buf) {
     if (picked.length >= finalPicks) break
     picked.push(x)
   }
-  onLog(`因子选股：${items.length} 只候选 → Top${picked.length}（行业分散≤${maxPerIndustry}）`)
+  onLog(`因子选股：${items.length} 只候选 → Top${picked.length}（大类分散≤${maxPerIndustry}；行业映射 ${industryMapSize()} 只）`)
   return picked
 }
 
