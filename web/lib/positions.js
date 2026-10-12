@@ -57,13 +57,26 @@ const round2 = (n) => (n == null || !Number.isFinite(Number(n)) ? null : Number(
  *   - 不传 / 等于今天 → 现行「最新」口径（含盘中实时估值）；
  *   - 传过去某交易日 → 用该日的 **actions 快照** + 截至该日的推荐，重放当天的组合（收盘口径）。
  * 历史结果不可变 → 按日期长 TTL 缓存。
+ *
+ * 回看时「收益曲线」仍取**最新口径的完整曲线**（表格才是当日重放）：曲线不因回看而缩短，
+ * 前端在 `asOf` 处打点标出回看位置。
  */
 export async function buildPositionsAll(dataDir, { asOf, ttlMs } = {}) {
   const today = bjDate()
   if (!asOf || asOf >= today) {
     return cached('positions:all', ttlMs ?? recommendTtlMs(), () => computeAll(dataDir))
   }
-  return cached(`positions:all:${asOf}`, ttlMs ?? HISTORY_TTL_MS, () => computeAll(dataDir, { historical: asOf }))
+  return cached(`positions:all:${asOf}`, ttlMs ?? HISTORY_TTL_MS, async () => {
+    const hist = await computeAll(dataDir, { historical: asOf })
+    // 曲线保持「最新」完整口径（复用 latest 缓存）；回看点由前端标出。
+    const latest = await cached('positions:all', ttlMs ?? recommendTtlMs(), () => computeAll(dataDir)).catch(() => null)
+    if (latest) {
+      for (const chain of ['dual', 'A', 'B']) {
+        if (hist.chains[chain] && latest.chains[chain]) hist.chains[chain].equity = latest.chains[chain].equity
+      }
+    }
+    return hist
+  })
 }
 
 async function computeAll(dataDir, { historical = null } = {}) {

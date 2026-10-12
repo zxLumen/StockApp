@@ -28,12 +28,15 @@ test('buildPositionsAll：回看历史日用当日 actions 快照，且不把未
   const S0 = addTradingDays(B, 1) // 2026-10-09
   const asOf = '2026-10-09'
   const S1 = addTradingDays(B, 5) // 2026-10-15
+  const F = '2026-10-12' // 晚于 asOf 才生效
+  const L = bjDate() // 最新：写进日K，保证「最新」口径不走盘中实时行情（取最近收盘）
   assert.ok(S0 <= asOf && asOf < S1, '构造区间：S0 ≤ asOf < S1')
-  assert.ok(asOf < bjDate(), 'asOf 必须是过去日（否则走「最新」口径）')
+  assert.ok(asOf < L, 'asOf 必须是过去日（否则走「最新」口径）')
 
-  const bars = (dates) => dates.map((t, i) => ({ time: t, open: 10 + i, close: 10 + i }))
-  await writeJson(path.join(dir, 'kline-cache', `${SECID}.json`), { bars: bars([B, S0, asOf]) })
-  await writeJson(path.join(dir, 'kline-cache', `${BENCH}.json`), { bars: bars([B, asOf]) })
+  const bars = (dates) => [...new Set(dates)].map((t, i) => ({ time: t, open: 10 + i, close: 10 + i }))
+  await writeJson(path.join(dir, 'kline-cache', `${SECID}.json`), { bars: bars([B, S0, asOf, F, L]) })
+  await writeJson(path.join(dir, 'kline-cache', '1.600001.json'), { bars: bars([F, L]) })
+  await writeJson(path.join(dir, 'kline-cache', `${BENCH}.json`), { bars: bars([B, asOf, F, L]) })
 
   // 生效日 B 的推荐（开买开卖）。另放一条**更晚生效**的推荐，回看 asOf 时不能把它算进来。
   await writeJson(path.join(dir, 'recommend', `${B}.json`), {
@@ -44,7 +47,6 @@ test('buildPositionsAll：回看历史日用当日 actions 快照，且不把未
     pool: { size: 1 },
     top: [{ secid: SECID, code: CODE, name: '测试股', price: 10, ai: { holdDays: 1, buyScore: 88 } }],
   })
-  const F = '2026-10-12' // 晚于 asOf 才生效
   await writeJson(path.join(dir, 'recommend', `${F}.json`), {
     date: F,
     basisDate: asOf,
@@ -75,6 +77,18 @@ test('buildPositionsAll：回看历史日用当日 actions 快照，且不把未
   assert.equal(p.chains.dual.ai.summary.closedCount, 1)
   assert.equal(p.chains.dual.ai.summary.openCount, 0)
   assert.ok(p.dates.includes(B) && p.dates.includes(asOf))
+
+  // 收益曲线：回看 payload 取「最新」完整口径（不截断到 asOf），只有表格是当日重放。
+  const pLatest = await buildPositionsAll(dir, {})
+  assert.deepEqual(p.chains.dual.equity, pLatest.chains.dual.equity, '回看曲线与最新口径一致')
+  assert.ok(
+    p.chains.dual.equity.some((r) => r.date > asOf),
+    '回看曲线包含 asOf 之后的点（未截断到回看日）',
+  )
+  assert.ok(
+    pLatest.chains.dual.orig.summary.count > p.chains.dual.orig.summary.count,
+    '最新表格含 asOf 之后生效的推荐，回看表格不含',
+  )
 
   // 更早、且无快照的日子 → 回退当前 actions（标不忠实），5 天周期 → 仍持仓中
   const asOf2 = B

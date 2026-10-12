@@ -1,8 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { ColorType, LineSeries, LineStyle, createChart, type IChartApi, type Time } from 'lightweight-charts'
+import {
+  ColorType,
+  LineSeries,
+  LineStyle,
+  createChart,
+  createSeriesMarkers,
+  type IChartApi,
+  type SeriesMarker,
+  type Time,
+} from 'lightweight-charts'
 import { fetchPositions, type PositionsPayload } from '../api'
 import { useSessionState } from '../sessionState'
-import type { PositionChain, PositionClosed, PositionMode, PositionOpen, PositionTrade } from '../types'
+import type {
+  PositionChain,
+  PositionClosed,
+  PositionEquityPoint,
+  PositionMode,
+  PositionOpen,
+  PositionTrade,
+} from '../types'
+import DayCalendar from './DayCalendar'
 
 const pctStr = (n: number | null | undefined) => (n == null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(2)}%`)
 const money = (n: number | null | undefined) => (n == null ? '—' : `¥${Math.round(n).toLocaleString('zh-CN')}`)
@@ -123,25 +140,16 @@ export default function PositionsView({
             </button>
           ))}
         </div>
-        <label className="pos-date">
-          <span className="dim small">回看</span>
-          <select
-            value={asOf}
-            onChange={(e) => setAsOf(e.target.value)}
-            aria-label="选择回看的交易日"
-            disabled={!data}
-          >
-            <option value="">最新</option>
-            {[...(data?.dates ?? [])].reverse().map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-        </label>
         <span className="dim small">
           每只 ¥10,000 等权 · 从有推荐数据起累积{data?.asOf ? ` · ${asOf ? '回看' : '截至'} ${data.asOf}` : ''}
         </span>
+        <DayCalendar
+          dates={data?.dates ?? []}
+          value={asOf}
+          onChange={setAsOf}
+          latestValue=""
+          hint="有行情的交易日可点"
+        />
       </div>
 
       {err && <div className="note err">{err}</div>}
@@ -188,8 +196,9 @@ export default function PositionsView({
               <div className="pos-chart-title">
                 组合累计收益率 · 对照 {data?.benchName || '沪深300'}
                 <span className="dim small">（金额法：总盈亏/累计投入，与上方一致 · 同起点）</span>
+                {asOf && data?.asOf && <span className="dim small"> · 回看点 {data.asOf}</span>}
               </div>
-              <EquityChart equity={ch.equity} />
+              <EquityChart equity={ch.equity} markerDate={asOf} />
             </div>
           )}
 
@@ -375,12 +384,13 @@ function TradesTable({ trades }: { trades: PositionTrade[] }) {
   )
 }
 
-/** 三条线：原始组合 / AI动态组合 / 沪深300（累计收益率%，同起点）+ 悬浮浮窗（复用 K 线浮窗风格）。 */
-function EquityChart({ equity }: { equity: { date: string; orig: number | null; ai: number | null; bench: number | null }[] }) {
+/** 三条线：原始组合 / AI动态组合 / 沪深300（累计收益率%，同起点）+ 悬浮浮窗（复用 K 线浮窗风格）。
+ *  `markerDate`：回看日 —— 曲线始终是完整（最新口径）的，只在该日期处打点标出回看位置。 */
+function EquityChart({ equity, markerDate }: { equity: PositionEquityPoint[]; markerDate?: string }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const [tip, setTip] = useState<{ x: number; y: number; row: (typeof equity)[number] } | null>(null)
+  const [tip, setTip] = useState<{ x: number; y: number; row: PositionEquityPoint } | null>(null)
 
   useEffect(() => {
     const el = boxRef.current
@@ -413,6 +423,16 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
     sAi.setData(equity.filter((p) => p.ai != null).map((p) => ({ time: p.date as Time, value: p.ai as number })))
     sBench.setData(equity.filter((p) => p.bench != null).map((p) => ({ time: p.date as Time, value: p.bench as number })))
     const byDate = new Map(equity.map((p) => [p.date, p]))
+    // 回看点：在原始 / AI 两条曲线该日期的价位上打圆点，AI 线上标「回看」。
+    if (markerDate) {
+      const row = byDate.get(markerDate)
+      const at = (p: number | null, color: string, text?: string): SeriesMarker<Time> | null =>
+        p == null ? null : { time: markerDate as Time, position: 'atPriceMiddle', price: p, shape: 'circle', color, text, size: 2 }
+      const mOrig = row ? at(row.orig, '#4a8ef0') : null
+      const mAi = row ? at(row.ai, '#e8a33d', '回看') : null
+      if (mOrig) createSeriesMarkers(sOrig, [mOrig])
+      if (mAi) createSeriesMarkers(sAi, [mAi])
+    }
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time) {
         setTip(null)
@@ -428,7 +448,7 @@ function EquityChart({ equity }: { equity: { date: string; orig: number | null; 
       chart.remove()
       chartRef.current = null
     }
-  }, [equity])
+  }, [equity, markerDate])
 
   const boxW = wrapRef.current?.clientWidth ?? 0
   const tipW = 150

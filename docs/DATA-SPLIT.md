@@ -32,6 +32,8 @@
   point-in-time 成交额池 `universe-amount-10.json`）与 B（候选池 = point-in-time 稳健池
   `universe-stable.json`），均取 **≤ 上一交易日**的日K，**不拿盘前实时快照**。手动/盘后回补用
   `--event-day <YYYY-MM-DD>` 把事件窗口末端钉到更早一天，避免当日白天公告泄漏。
+- **持仓回看（`/api/positions?date=`）**：表格用当日 actions 快照 + 截至该日生效的推荐重放（PIT）。
+  页面上的**收益曲线**是纯展示，始终取最新口径的完整曲线、只在回看日打点标出，不参与决策，故不构成未来信息泄漏。
 
 ## 2. 数据可用性（决定各窗口能否真跑）
 

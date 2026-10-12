@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRecommend, fetchRecommendDates, type RecommendChain } from '../api'
 import { useSessionState } from '../sessionState'
 import type { RecommendPayload, RecommendStock } from '../types'
+import DayCalendar from './DayCalendar'
 
 // 每日推荐响应按 `chain:key` 缓存（内存 + sessionStorage），挂载先秒渲染再后台刷新。
 const recMem = new Map<string, RecommendPayload>()
@@ -78,7 +79,6 @@ const pctStr = (n: number | null | undefined) =>
 const signedPct = (n: number | null | undefined) =>
   n == null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const pad2 = (n: number) => String(n).padStart(2, '0')
 /** ISO 时间 → 北京时间「MM-DD HH:mm」（手算 UTC+8，不受浏览器时区影响）。 */
 const bjTime = (iso?: string | null) => {
@@ -87,22 +87,6 @@ const bjTime = (iso?: string | null) => {
   if (!Number.isFinite(ms)) return ''
   const d = new Date(ms + 8 * 3600_000)
   return `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`
-}
-const monthOf = (iso: string) => iso.slice(0, 7)
-const addMonth = (ym: string, delta: number) => {
-  const [y, m] = ym.split('-').map(Number)
-  const d = new Date(Date.UTC(y, m - 1 + delta, 1))
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`
-}
-/** 该月的日历格子：前置空格补齐到周日开头，后面是 YYYY-MM-DD。 */
-const monthCells = (ym: string): (string | null)[] => {
-  const [y, m] = ym.split('-').map(Number)
-  const firstWd = new Date(Date.UTC(y, m - 1, 1)).getUTCDay()
-  const days = new Date(Date.UTC(y, m, 0)).getUTCDate()
-  const cells: (string | null)[] = []
-  for (let i = 0; i < firstWd; i += 1) cells.push(null)
-  for (let d = 1; d <= days; d += 1) cells.push(`${ym}-${pad2(d)}`)
-  return cells
 }
 
 /** 当日推荐的整体盈亏：等权平均（每只票等权，不是按市值/金额加权）。
@@ -158,10 +142,6 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const [openCode, setOpenCode] = useState<string | null>(null)
   /** 「应卖出」卡片默认折叠，需要时展开。 */
   const [dueOpen, setDueOpen] = useState(false)
-  const [calOpen, setCalOpen] = useState(false)
-  const [calMonth, setCalMonth] = useState('')
-  /** 日历头部弹出的是「年 / 月」选择面板（'' = 未开、'year' | 'month'） */
-  const [calPick, setCalPick] = useState<'' | 'year' | 'month'>('')
   const dateRef = useRef('')
   const latestRef = useRef('')
   const pickRef = useRef<(d: string) => void>(() => {})
@@ -238,23 +218,12 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const pickDate = (d: string) => {
     setDate(d)
     setOpenCode(null)
-    setCalOpen(false)
-    setCalPick('')
     void load(d, chain)
   }
   pickRef.current = pickDate
+  // 无榜单分支的下拉需要判断选中日是否有榜；日历组件内部自行维护可点集合。
   const dateSet = new Set(dates)
   const summary = useMemo(() => pickSummary(data?.top), [data])
-
-  // 相邻榜单：dates 是降序（新→旧），所以「后一天/前一天」对应索引 -1 / +1。
-  // 只跳到**确实有榜单的日期**，跳过没有推荐的交易日（不落空）。
-  const curIdx = dates.indexOf(date)
-  const newerDate = curIdx > 0 ? dates[curIdx - 1] : null
-  const olderDate = curIdx >= 0 && curIdx < dates.length - 1 ? dates[curIdx + 1] : null
-
-  // 年月选择器：只列出**确实有榜单**的年份 / 月份，避免点进去是空的。
-  const years = useMemo(() => [...new Set(dates.map((d) => d.slice(0, 4)))].sort().reverse(), [dates])
-  const curYear = (calMonth || date || dates[0] || '').slice(0, 4)
 
   // 链路切换：双链路（按 regime 选中的那份）↔ A 激进（成交额池 + AI）↔ B 保守（稳健池 + 多因子）。
   const chainSwitch = (
@@ -316,162 +285,17 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
           {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
-          {data.generatedAt ? ` · 生成 ${bjTime(data.generatedAt)}` : ''}
-          {data.refreshedAt && bjTime(data.refreshedAt) !== bjTime(data.generatedAt)
-            ? ` · 最后刷新 ${bjTime(data.refreshedAt)}`
+          {data.generatedAt
+            ? ` · 生成 ${bjTime(data.generatedAt)} · 最后刷新 ${bjTime(data.refreshedAt || data.generatedAt)}`
             : ''}
         </span>
-        {dates.length > 0 && (
-          <div className="rec-dates">
-            <button
-              type="button"
-              className="rec-nav-btn"
-              disabled={!olderDate}
-              onClick={() => olderDate && pickDate(olderDate)}
-              title={olderDate ? `前一天（${olderDate}）` : '已经是最早一天'}
-              aria-label="前一天"
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              className="rec-date-btn"
-              onClick={() => {
-                setCalMonth(monthOf(date || dates[0]))
-                setCalPick('')
-                setCalOpen((o) => !o)
-              }}
-              aria-expanded={calOpen}
-            >
-              {date || '选择日期'} <span className="dim">▾</span>
-            </button>
-            <button
-              type="button"
-              className="rec-nav-btn"
-              disabled={!newerDate}
-              onClick={() => newerDate && pickDate(newerDate)}
-              title={newerDate ? `后一天（${newerDate}）` : '已经是最新一天'}
-              aria-label="后一天"
-            >
-              ›
-            </button>
-            {calOpen && (
-              <div className="rec-cal" role="dialog" aria-label="选择推荐日期">
-                <div className="rec-cal-head">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCalPick('')
-                      setCalMonth(addMonth(calMonth, -1))
-                    }}
-                    aria-label="上月"
-                  >
-                    ‹
-                  </button>
-                  <div className="rec-cal-title">
-                    <button
-                      type="button"
-                      className={`rec-cal-ym${calPick === 'year' ? ' is-open' : ''}`}
-                      onClick={() => setCalPick((p) => (p === 'year' ? '' : 'year'))}
-                      aria-label="选择年份"
-                    >
-                      {curYear} <span className="dim">年</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={`rec-cal-ym${calPick === 'month' ? ' is-open' : ''}`}
-                      onClick={() => setCalPick((p) => (p === 'month' ? '' : 'month'))}
-                      aria-label="选择月份"
-                    >
-                      {Number((calMonth || date || dates[0] || '').slice(5, 7))} <span className="dim">月</span>
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCalPick('')
-                      setCalMonth(addMonth(calMonth, 1))
-                    }}
-                    aria-label="下月"
-                  >
-                    ›
-                  </button>
-                </div>
-                {calPick === 'year' && (
-                  <div className="rec-cal-pick rec-cal-pick-year">
-                    {years.map((y) => (
-                      <button
-                        type="button"
-                        key={y}
-                        className={y === curYear ? 'is-sel' : ''}
-                        onClick={() => {
-                          // 切年时保留月份（若该年无该月，回落到该年有榜单的最近一月）
-                          const mm = (calMonth || '').slice(5, 7) || (date || dates[0] || '').slice(5, 7)
-                          const has = dates.some((d) => d.startsWith(`${y}-${mm}`))
-                          const fallback = dates.find((d) => d.startsWith(y))?.slice(0, 7)
-                          setCalMonth(has ? `${y}-${mm}` : fallback || `${y}-${mm}`)
-                          setCalPick('')
-                        }}
-                      >
-                        {y}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {calPick === 'month' && (
-                  <div className="rec-cal-pick rec-cal-pick-month">
-                    {Array.from({ length: 12 }, (_, i) => pad2(i + 1)).map((mm) => {
-                      const ym = `${curYear}-${mm}`
-                      const has = dates.some((d) => d.startsWith(ym))
-                      return (
-                        <button
-                          type="button"
-                          key={mm}
-                          className={ym === calMonth ? 'is-sel' : ''}
-                          disabled={!has}
-                          onClick={() => {
-                            setCalMonth(ym)
-                            setCalPick('')
-                          }}
-                        >
-                          {Number(mm)}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-                <div className="rec-cal-week">
-                  {WEEKDAYS.map((w) => (
-                    <span key={w}>{w}</span>
-                  ))}
-                </div>
-                <div className="rec-cal-grid">
-                  {monthCells(calMonth).map((d, i) =>
-                    d ? (
-                      <button
-                        type="button"
-                        key={d}
-                        className={`rec-cal-day${d === date ? ' is-sel' : ''}${dateSet.has(d) ? ' has' : ''}`}
-                        disabled={!dateSet.has(d)}
-                        onClick={() => pickDate(d)}
-                      >
-                        {Number(d.slice(8))}
-                      </button>
-                    ) : (
-                      <span key={`e${i}`} className="rec-cal-day is-empty" />
-                    ),
-                  )}
-                </div>
-                <div className="rec-cal-foot">
-                  <span className="dim">有榜单的日期可点</span>
-                  <button type="button" className="btn ghost" onClick={() => pickDate(dates[0])}>
-                    最新
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <DayCalendar
+          dates={dates}
+          value={date}
+          onChange={pickDate}
+          latestValue={dates[0] || ''}
+          hint="有榜单的日期可点"
+        />
       </div>
 
       {data.dueOn && data.dueOn.length > 0 && (
