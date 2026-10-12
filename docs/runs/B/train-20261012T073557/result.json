@@ -1,0 +1,38 @@
+{
+  "scheme": "B",
+  "stage": "train",
+  "version": "b-2024-train-abs+cap3",
+  "changed": { "select.maxPerIndustry": { "from": 99, "to": 3 } },
+  "objective": "为 B 链路选行业分散上限（maxPerIndustry），口径=生产管线（backtest --strategy factors --bare --pool stable + eval-backtest）。",
+  "windows": {
+    "train": "2024-04-17 ~ 2024-12-31（K线缓存自 2024-04-17 起）",
+    "val": "2025-01-01 ~ 2025-12-31",
+    "excluded": "2026（测试集，未参与本次选择）"
+  },
+  "industrySource": "config/industry-map.json（申万一级，31 类；scripts/build-industry-map.js 生成）",
+  "settlement": "T+10 等权、逐票固定持有；绝对收益为主指标，相对沪深300超额为辅",
+  "caveats": [
+    "宇宙用当前成分股回溯 → 含幸存者偏差（偏乐观）",
+    "训练段只有 9 个月、验证段 13 个月；各上限间差异多在噪声内",
+    "本表用于「cap 之间相对比较」，非对未来收益的估计"
+  ],
+  "caps": {
+    "99": {
+      "train": { "t10_abs": 0.98, "t10_excess": 0.56, "t10_worstMonth": -3.26, "win": 44 },
+      "val": { "t10_abs": 1.84, "t10_excess": 0.89, "t10_worstMonth": -5.88, "positiveExcessMonths": "6/13", "win": 52 }
+    },
+    "4": {
+      "train": { "t10_abs": 0.96, "t10_excess": 0.55, "t10_worstMonth": -3.26, "win": 43 },
+      "val": { "t10_abs": 1.88, "t10_excess": 0.92, "t10_worstMonth": -5.77, "positiveExcessMonths": "6/13", "win": 52 }
+    },
+    "3": {
+      "train": { "t10_abs": 0.92, "t10_excess": 0.50, "t10_worstMonth": -3.38, "win": 43 },
+      "val": { "t10_abs": 1.79, "t10_excess": 0.84, "t10_worstMonth": -5.59, "positiveExcessMonths": "6/13", "win": 52 }
+    },
+    "2": {
+      "train": { "t10_abs": 0.78, "t10_excess": 0.36, "t10_worstMonth": -3.74, "win": 42 },
+      "val": { "t10_abs": 1.73, "t10_excess": 0.78, "t10_worstMonth": -5.20, "positiveExcessMonths": "7/13", "win": 52 }
+    }
+  },
+  "decision": "取 3。4 与「关闭」几乎无差（上限≥4 基本不生效）；3 的验证段均值几乎不变（-0.05pp）而最差月略优于关闭（-5.59 vs -5.88），并把单一大类压到 ≤30%；2 虽有最好的最差月，但均值代价明显（训练 -0.20pp、胜率 -1~2pp），不取。"
+}

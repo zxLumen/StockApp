@@ -1,6 +1,6 @@
 {
   "_note": "推荐系统的可训练参数（『模型』）。由训练流水线产出；此处为引导值（等同旧代码常量）。改这里即可改策略，不必改代码。",
-  "version": "b-2024-train-abs",
+  "version": "b-2024-train-abs+cap3",
   "dualChain": {
     "thr": 0.6
   },
@@ -44,6 +44,6 @@
     "poolPages": 5,
     "topCandidates": 100,
     "finalPicks": 10,
-    "maxPerIndustry": 99
+    "maxPerIndustry": 3
   }
 }

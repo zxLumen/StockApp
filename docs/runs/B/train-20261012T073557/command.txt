@@ -1,0 +1,1 @@
+/home/ubuntu/Projects/StockApp/web/scripts/freeze-model.js --scheme B --stage train --select {"maxPerIndustry":3} --version b-2024-train-abs+cap3
