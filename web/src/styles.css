@@ -1889,6 +1889,14 @@ button.member-row:hover {
   background: rgba(232, 163, 61, 0.18);
   color: #e8b76a;
 }
+/* 「AI延长持有」面板：琥珀色左侧标识，与「应卖出」（同色系但语义相反）区分 */
+.rec-due-ext {
+  border-left-color: #e8a33d;
+  background: rgba(232, 163, 61, 0.05);
+}
+.rec-due-ext .rec-due-title {
+  color: #e8b76a;
+}
 .rec-list {
   list-style: none;
   margin: 0;

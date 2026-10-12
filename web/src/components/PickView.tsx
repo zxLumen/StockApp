@@ -142,6 +142,7 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const [openCode, setOpenCode] = useState<string | null>(null)
   /** 「应卖出」卡片默认折叠，需要时展开。 */
   const [dueOpen, setDueOpen] = useState(false)
+  const [extOpen, setExtOpen] = useState(false)
   const dateRef = useRef('')
   const latestRef = useRef('')
   const pickRef = useRef<(d: string) => void>(() => {})
@@ -354,6 +355,49 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
                         <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
                       </>
                     )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {data.extendedOn && data.extendedOn.length > 0 && (
+        <div className="rec-due rec-due-ext">
+          <button
+            type="button"
+            className="rec-due-head"
+            onClick={() => setExtOpen((o) => !o)}
+            aria-expanded={extOpen}
+          >
+            <span className="rec-due-title">⏳ {data.date} AI延长持有</span>
+            <span className="dim small">
+              AI 决定延长周期、继续持有 · 共 {data.extendedOn.length} 只
+            </span>
+            <span className="rec-due-caret">{extOpen ? '▴' : '▾'}</span>
+          </button>
+          {extOpen && (
+            <ul className="rec-due-list">
+              {data.extendedOn.map((d) => (
+                <li key={d.secid}>
+                  <button
+                    type="button"
+                    className="rec-due-item"
+                    onClick={() => onPick({ code: d.code, name: d.name, secid: d.secid })}
+                    title={`AI 于 ${d.decideDate} 决定延长持有${d.reason ? `：${d.reason}` : ''}`}
+                  >
+                    <span className="rec-due-name">{d.name}</span>
+                    <span className="dim small">{d.code}</span>
+                    <span className="rec-due-tag rec-due-tag-ext">延长 +{d.extendDays ?? 0}</span>
+                    <span className="rec-due-meta">
+                      推荐 {d.fromDate} · 持有 {d.holdDays ?? '—'} 日
+                      {d.baseHoldDays != null ? `（原 ${d.baseHoldDays} 日）` : ''}
+                      {d.decideDate ? ` · 决策 ${d.decideDate}` : ''}
+                      {d.times > 1 ? ` ×${d.times}` : ''}
+                    </span>
+                    <span className="rec-due-num">现价 {fmt(d.price)}</span>
+                    <span className={`rec-due-pct ${tone(d.sincePct)}`}>自推荐 {signedPct(d.sincePct)}</span>
                   </button>
                 </li>
               ))}

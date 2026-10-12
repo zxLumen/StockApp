@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { decideActions, dueOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, replaceEntryPositions, backfillEntryFlags, CHAIN_SUBDIR } from '../lib/recommend.js'
+import { decideActions, dueOn, extendOn, actionKey, nextTradingDay, exitMinHoldDays, reconcileCross, ensureEntryPositions, replaceEntryPositions, backfillEntryFlags, CHAIN_SUBDIR } from '../lib/recommend.js'
 import { addTradingDays } from '../lib/trading-days.js'
 import { readJson, writeJson } from '../lib/store.js'
 
@@ -269,6 +269,36 @@ test('dueOn：合并「周期到期」与「当日提前终止」两路，终止
   assert.equal(byCode.get('600519').terminated, false)
   assert.equal(byCode.get('000001').terminated, true)
   assert.equal(byCode.get('000001').exitPct, 10)
+})
+
+test('extendOn：延长决策的生效日（决策日下一交易日）命中，字段正确、链路隔离', async () => {
+  const dir = await tmp()
+  // 决策日 2026-09-30（节前）收盘延长 → 生效日 2026-10-08（节后首日，下一交易日）
+  await writeJson(path.join(dir, 'recommend-actions.json'), {
+    version: 1,
+    positions: {
+      [actionKey('dual', '2026-09-25', '600519')]: {
+        chain: 'dual', recDate: '2026-09-25', secid: '1.600519', code: '600519', name: '贵州茅台',
+        basisDate: '2026-09-25', pickPrice: 1500, baseHoldDays: 3, holdDays: 10, exited: false, exit: null,
+        log: [
+          { date: '2026-09-25', action: 'entry', holdDays: 3 },
+          { date: '2026-09-30', action: 'extend', holdDays: 10, price: 1600, reason: '趋势健康' },
+        ],
+      },
+    },
+  })
+  const hit = await extendOn(dir, '2026-10-08', { chain: 'dual' })
+  assert.equal(hit.length, 1)
+  assert.equal(hit[0].code, '600519')
+  assert.equal(hit[0].decideDate, '2026-09-30')
+  assert.equal(hit[0].holdDays, 10)
+  assert.equal(hit[0].baseHoldDays, 3)
+  assert.equal(hit[0].extendDays, 7)
+  assert.equal(hit[0].reason, '趋势健康')
+  // 生效日才提醒：决策当天、其他日、其他链路均不命中
+  assert.deepEqual(await extendOn(dir, '2026-09-30', { chain: 'dual' }), [])
+  assert.deepEqual(await extendOn(dir, '2026-10-09', { chain: 'dual' }), [])
+  assert.deepEqual(await extendOn(dir, '2026-10-08', { chain: 'B' }), [])
 })
 
 test('reconcileCross：交叉票 AI 二选一（keep 撤销终止 / sell 剔除并滚动回填）', async () => {

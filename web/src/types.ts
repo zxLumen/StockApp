@@ -199,6 +199,34 @@ export interface DueItem {
   extendDays?: number | null
 }
 
+/** 「本页生效日 AI 决定延长持有」的一条（服务端 extendOn 计算）。 */
+export interface ExtendItem {
+  secid: string
+  code: string
+  name: string
+  /** 延长决策日（决策当晚的交易日；生效日 = 其下一交易日 = 本页日） */
+  decideDate: string
+  /** 来源推荐的生效日 */
+  fromDate: string
+  basisDate: string
+  /** 来源推荐日基准价 */
+  pickPrice: number | null
+  /** 该次延长后的总持有交易日数 */
+  holdDays: number | null
+  /** 原始（AI 初次给出）周期 */
+  baseHoldDays: number | null
+  /** 累计延长交易日数（= holdDays − baseHoldDays） */
+  extendDays: number
+  /** 延长理由 */
+  reason?: string
+  /** 同票多仓且同日命中时的命中次数 */
+  times: number
+  /** 现价（服务端补） */
+  price?: number | null
+  /** 自推荐日基准价到现在的涨跌（%）（服务端补） */
+  sincePct?: number | null
+}
+
 export interface RecommendPayload {
   /** 推荐生效日（生成日的下一交易日） */
   date: string
@@ -219,6 +247,8 @@ export interface RecommendPayload {
   pool: { size: number; filtered?: number; candidates: number }
   /** 按历史推荐周期、到期日 = 本页生效日 的应卖出股票（服务端补） */
   dueOn?: DueItem[]
+  /** 本页生效日 AI 决定延长持有、可继续持有的股票（服务端补） */
+  extendedOn?: ExtendItem[]
   /** 「AI 动态调整盈亏」汇总（本链路本日，服务端补）：仅总计（终止+延长+未更改） */
   exits?: {
     total: {

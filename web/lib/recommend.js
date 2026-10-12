@@ -1222,6 +1222,57 @@ export async function dueOn(dataDir, targetDate, { chain = 'dual', lookbackDays 
   return [...byStock.values()].sort((a, b) => (a.fromDate < b.fromDate ? -1 : a.fromDate > b.fromDate ? 1 : 0))
 }
 
+/**
+ * 「按本页生效日，AI 决定延长持有」的股票（与 dueOn 的「提前终止」对称）。
+ *
+ * 延长决策在交易日 D 收盘产生（`pos.log` 里 `{date:D, action:'extend', holdDays, reason}`），
+ * **生效日** = 下一交易日 E（与 exit 的 `exit.date` 同口径，保证与「应卖出」同页出现）。
+ * 只收 `nextTradingDay(log.date) === targetDate` 的延长记录；同票多仓多次命中合并为一条，
+ * 取最早推荐日（持仓最久），命中次数记在 `times`。仅读 actions，不扫历史 payload。
+ */
+export async function extendOn(dataDir, targetDate, { chain = 'dual' } = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || ''))) return []
+  const actions = await readActions(dataDir)
+  const byStock = new Map()
+  for (const pos of Object.values(actions.positions)) {
+    if (pos.chain !== chain || !Array.isArray(pos.log)) continue
+    const base = Number(pos.baseHoldDays ?? pos.holdDays)
+    for (const l of pos.log) {
+      if (l?.action !== 'extend' || !l.date) continue
+      let eff
+      try {
+        eff = nextTradingDay(l.date)
+      } catch {
+        continue
+      }
+      if (eff !== targetDate) continue
+      const total = Number(l.holdDays ?? pos.holdDays)
+      const item = {
+        secid: pos.secid,
+        code: pos.code,
+        name: pos.name,
+        decideDate: l.date,
+        fromDate: pos.recDate,
+        basisDate: pos.basisDate,
+        pickPrice: pos.pickPrice ?? null,
+        holdDays: Number.isFinite(total) ? total : null,
+        baseHoldDays: Number.isFinite(base) ? base : null,
+        extendDays: Number.isFinite(total) && Number.isFinite(base) ? total - base : 0,
+        reason: String(l.reason || '').slice(0, 120),
+        times: 1,
+      }
+      const prev = byStock.get(item.secid)
+      if (!prev) {
+        byStock.set(item.secid, item)
+      } else {
+        prev.times += 1
+        if (item.fromDate < prev.fromDate) Object.assign(prev, item, { times: prev.times })
+      }
+    }
+  }
+  return [...byStock.values()].sort((a, b) => (a.fromDate < b.fromDate ? -1 : a.fromDate > b.fromDate ? 1 : 0))
+}
+
 /** 读某天（默认最新）的推荐文件；没有就返回 null。chain: dual（默认）| A | B。 */
 export async function loadRecommend(dataDir, date, chain = 'dual') {
   const sub = chainSubdir(chain)
@@ -1514,8 +1565,12 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
   }
 
   const due = await cached(`recDue:${chain}:${payload.date}`, ttlMs, () => dueOn(dataDir, payload.date, { chain }))
+  const ext = await cached(`recExt:${chain}:${payload.date}`, ttlMs, () => extendOn(dataDir, payload.date, { chain }))
   const dueSecids = [...new Set((due || []).map((d) => d.secid).filter(Boolean))]
-  const all = [...new Set([...payload.top.map((s) => s.secid), ...dueSecids, BENCH_SECID].filter(Boolean))]
+  const extSecids = [...new Set((ext || []).map((d) => d.secid).filter(Boolean))]
+  const all = [
+    ...new Set([...payload.top.map((s) => s.secid), ...dueSecids, ...extSecids, BENCH_SECID].filter(Boolean)),
+  ]
   let quotes = new Map()
   try {
     quotes = await cached(`recQuotes:${chain}:${payload.date}:${[...all].sort().join('+')}`, ttlMs, async () => {
@@ -1555,6 +1610,10 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
     const price = quotes.get(d.secid)?.price ?? null
     return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
   })
+  const extendedOnItems = (ext || []).map((d) => {
+    const price = quotes.get(d.secid)?.price ?? null
+    return { ...d, price, sincePct: pctFromPick(d.pickPrice, price) }
+  })
 
   // 「AI 动态调整盈亏」总计：每只的动态最终盈亏（终止→终止日；延长→延长后；其余→原始周期）。
   // done = 动态"已了结"（终止 / 延长后到期 / 自然到期）；total = 本日只数。
@@ -1587,7 +1646,7 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
     },
   }
   // signalLag 读时补算：旧文件没这个字段（新文件写盘时已带），保证前端始终能看到。
-  return { ...withPerf, top, dueOn: dueOnItems, exits, signalLag: signalLagOf(payload) }
+  return { ...withPerf, top, dueOn: dueOnItems, extendedOn: extendedOnItems, exits, signalLag: signalLagOf(payload) }
 }
 
 /** 动态持仓管理的 AI 提示（hold / extend / exit 三选一）。 */
