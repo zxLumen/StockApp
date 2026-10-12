@@ -28,6 +28,7 @@ import {
   recommendTtlMs,
   entryIsoOf,
   entryAtOpen,
+  signalLagOf,
   FORWARD_A_DIR,
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
@@ -245,6 +246,25 @@ test('entryIsoOf/entryAtOpen：新推荐锚生效日、旧推荐锚生成日', (
   const old = { date: '2026-10-08', basisDate: '2026-10-07' }
   assert.equal(entryIsoOf(old), '2026-10-07')
   assert.equal(entryAtOpen(old), false)
+})
+
+test('signalLagOf：长假后首日标 stale，平常日不标', () => {
+  assert.deepEqual(signalLagOf({ basisDate: '2026-10-07', date: '2026-10-08' }), {
+    calendarDays: 1,
+    closedDays: 0,
+    stale: false,
+  })
+  assert.deepEqual(signalLagOf({ basisDate: '2026-10-09', date: '2026-10-12' }), {
+    calendarDays: 3,
+    closedDays: 2,
+    stale: false,
+  }, '普通周末不算陈旧')
+  assert.deepEqual(signalLagOf({ basisDate: '2026-09-30', date: '2026-10-08' }), {
+    calendarDays: 8,
+    closedDays: 7,
+    stale: true,
+  }, '国庆长假归来首日')
+  assert.equal(signalLagOf({ date: '2026-10-08' }), null, '无 basisDate → null')
 })
 
 test('benchReturns：开买开卖用生效日开盘做基准、结束日开盘卖出', () => {

@@ -11,6 +11,7 @@ import { DATA_DIR } from '../lib/scope.js'
 import { readJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'
 import { regimeTilt } from '../lib/factors.js'
+import { tradingLag, STALE_CLOSED_DAYS } from '../lib/trading-days.js'
 
 const argv = process.argv.slice(2)
 const opt = (n, d) => {
@@ -77,14 +78,27 @@ async function main() {
     })
 
   const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN)
+  const n2 = (x) => (Number.isFinite(x) ? `${x > 0 ? '+' : ''}${x.toFixed(2)}` : ' NA ')
   const modes = [{ label: 'A only' }, { label: 'B only' }, ...THRS.map((t) => ({ label: `thr${t}`, thr: t }))]
-  const agg = modes.map((m) => ({ m, ex: [], rets: [], win: [], byMonth: new Map() }))
+  const agg = modes.map((m) => ({
+    m,
+    ex: [],
+    rets: [],
+    win: [],
+    byMonth: new Map(),
+    staleEx: [],
+    staleDays: [],
+    normEx: [],
+    normDays: [],
+  }))
 
   for (const f of files) {
     // 用文件的 basisDate 算 tilt（A、B 同日 basisDate 相同）
     const aData = await readJson(path.join(DATA_DIR, A, f), null)
     const basis = aData?.basisDate
     if (!basis) continue
+    // 节后首日：基日→生效日跨了长假（休市 ≥3 天），价格特征在入场时已陈旧。
+    const stale = (tradingLag(basis, f.slice(0, 10))?.closedDays ?? 0) >= STALE_CLOSED_DAYS
     // 前瞻归档里记了当天的 tilt，优先用它（regimeTilt 实现日后若变动，历史 tilt 不会跟着漂）；
     // 老回测目录没有 regime，回退到用当前实现重算。
     const tilt = aData?.regime?.tilt ?? regimeTilt(idxBars.filter((b) => b.time <= basis))
@@ -101,6 +115,15 @@ async function main() {
       a.win.push(avg(exs) > 0 ? 1 : 0)
       if (!a.byMonth.has(month)) a.byMonth.set(month, [])
       for (const e of exs) a.byMonth.get(month).push(e)
+      // 节后首日单独归档（逐票超额），与平常日分开看
+      const dayMean = avg(exs)
+      if (stale) {
+        a.staleDays.push(dayMean)
+        for (const e of exs) a.staleEx.push(e)
+      } else {
+        a.normDays.push(dayMean)
+        for (const e of exs) a.normEx.push(e)
+      }
     }
   }
 
@@ -115,6 +138,18 @@ async function main() {
       `${a.m.label.padEnd(8)} | ${avg(a.rets).toFixed(2).padStart(6)} | ${avg(a.ex).toFixed(2).padStart(6)} | ${(avg(a.win) * 100).toFixed(0).padStart(3)}% | ` +
         `${worst.toFixed(2).padStart(6)} | ${posM}/${byM.length} | ${byM.map(([m, xs]) => `${m.slice(5)} ${avg(xs).toFixed(2)}`).join('  ')}`,
     )
+  }
+
+  // 节后首日分档：长假归来首日价格特征取自节前最后交易日（休市 ≥3 天），信号入场时已陈旧。
+  // 单列出来回答「这些天是否更差」，不至于把它们混进平常日。
+  if (agg.some((a) => a.staleDays.length)) {
+    console.log('\n--- 节后首日 vs 平常日（各模式，逐票持有周期，均超额 %）---')
+    for (const a of agg) {
+      console.log(
+        `${a.m.label.padEnd(8)} | 节后首日 ${String(a.staleDays.length).padStart(2)} 天 均超额 ${n2(avg(a.staleEx))} | ` +
+          `平常日 ${String(a.normDays.length).padStart(3)} 天 均超额 ${n2(avg(a.normEx))}`,
+      )
+    }
   }
 }
 

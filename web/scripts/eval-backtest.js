@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DATA_DIR } from '../lib/scope.js'
 import { cachedKline } from '../lib/kline-cache.js'
+import { tradingLag, STALE_CLOSED_DAYS } from '../lib/trading-days.js'
 
 const argv = process.argv.slice(2)
 const opt = (n, d) => {
@@ -57,7 +58,9 @@ async function main() {
     const basis = data.basisDate
     if (!basis) continue
     const tops = data.top || []
-    const per = { file: f, basis, n: tops.length, ai: [], byHold: {}, fixed: {}, fixedEx: {} }
+    // 「节后首日」：基日→生效日跨了长假（休市 ≥3 天），价格特征在入场时已陈旧。
+    const stale = (tradingLag(basis, f.slice(0, 10))?.closedDays ?? 0) >= STALE_CLOSED_DAYS
+    const per = { file: f, basis, stale, n: tops.length, ai: [], byHold: {}, fixed: {}, fixedEx: {} }
 
     for (const t of tops) {
       const bars = await getBars(t.secid)
@@ -112,7 +115,7 @@ async function main() {
   for (const r of rows) {
     const t5 = r.fixed[5] || []
     console.log(
-      `${r.file.slice(0, 10)} ${r.basis} | ` +
+      `${r.file.slice(0, 10)} ${r.basis}${r.stale ? ' ⏳' : '  '} | ` +
         `${r.avgAi == null ? ' NA ' : r.avgAi.toFixed(1) + '%'} ` +
         `${r.winAi == null ? '' : (r.winAi * 100).toFixed(0) + '%'} ` +
         `${r.avgEx == null ? '' : (r.avgEx > 0 ? '+' : '') + r.avgEx.toFixed(1) + '%'} | ` +
@@ -164,6 +167,28 @@ async function main() {
         `月均范围 ${n2(Math.min(...exs.map(avg)))}% ~ ${n2(Math.max(...exs.map(avg)))}%`,
     )
     console.log('  ' + cells.map((x) => `${x.m.slice(5)} ${n2(avg(x.ex))}`).join(' | '))
+  }
+
+  // ── 节后首日分档 ────────────────────────────────────────────────────────
+  // 长假归来首个交易日：价格特征取自节前最后交易日（休市 ≥3 天），入场时信号已陈旧。
+  // 单列一档，回答「这些天是不是更差」，不至于把它们的表现混进平常日。
+  const nH = FIXED.includes(10) ? 10 : FIXED[0]
+  const staleRows = rows.filter((r) => r.stale)
+  if (staleRows.length) {
+    const bucket = (rs) => ({
+      days: rs.length,
+      abs: avg(rs.flatMap((r) => r.fixed[nH] || [])),
+      ex: avg(rs.flatMap((r) => r.fixedEx[nH] || [])),
+    })
+    const normRows = rows.filter((r) => !r.stale)
+    console.log(`\n=== 节后首日 vs 平常日（T+${nH}，相对沪深300）===`)
+    for (const [label, rs] of [
+      ['节后首日', staleRows],
+      ['平常日', normRows],
+    ]) {
+      const b = bucket(rs)
+      console.log(`${label} | ${String(b.days).padStart(3)} 天 | 均绝对 ${n2(b.abs)}% | 均超额 ${n2(b.ex)}%`)
+    }
   }
 
   // ── 稳健性提示 ──────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isTradingDay, nextTradingDay, prevTradingDay, prevTradingDayBefore, addTradingDays } from '../lib/trading-days.js'
+import { isTradingDay, nextTradingDay, prevTradingDay, prevTradingDayBefore, addTradingDays, tradingLag, STALE_CLOSED_DAYS } from '../lib/trading-days.js'
 
 test('isTradingDay：跳过周末与法定节假日', () => {
   assert.equal(isTradingDay('2026-10-08'), true)
@@ -33,4 +33,14 @@ test('addTradingDays：0 返回对齐后的交易日本身，跨国庆/中秋 n 
   assert.equal(addTradingDays('2026-09-28', 3), '2026-10-08')
   // basisDate 落在节假日 → 先回退到上一交易日再往后数
   assert.equal(addTradingDays('2026-10-01', 1), '2026-10-08')
+})
+
+test('tradingLag：基日→生效日的自然日/休市日（长假明显偏大）', () => {
+  assert.deepEqual(tradingLag('2026-10-07', '2026-10-08'), { calendarDays: 1, closedDays: 0 }, '平常日')
+  assert.deepEqual(tradingLag('2026-10-09', '2026-10-12'), { calendarDays: 3, closedDays: 2 }, '普通周末')
+  assert.deepEqual(tradingLag('2026-06-18', '2026-06-22'), { calendarDays: 4, closedDays: 3 }, '端午小长假')
+  assert.deepEqual(tradingLag('2026-09-30', '2026-10-08'), { calendarDays: 8, closedDays: 7 }, '国庆长假')
+  assert.deepEqual(tradingLag('2026-10-08', '2026-10-08'), { calendarDays: 0, closedDays: 0 }, '同日')
+  assert.deepEqual(tradingLag('', '2026-10-08'), { calendarDays: 0, closedDays: 0 }, '缺基日')
+  assert.equal(STALE_CLOSED_DAYS, 3)
 })

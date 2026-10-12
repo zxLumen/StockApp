@@ -102,3 +102,28 @@ export function addTradingDays(iso, n) {
   for (let i = 0; i < n; i += 1) d = nextTradingDay(d)
   return d
 }
+
+/**
+ * 「基日 → 生效日」的信号滞后：自然日数 + 区间内的**休市日**数（不含两端）。
+ *
+ * 用途：盘前刷新的价格基准恒为上一交易日收盘，所以长假归来首个交易日的推荐，
+ * 其特征都取自节前最后一个交易日（如 09-30 → 10-08：8 自然日、7 个休市日），
+ * 信号在入场时已经陈旧。评估与展示都要能看见这个滞后。
+ *
+ * 平常日 = 1 自然日 / 0 休市日；普通周末 = 3 / 2；三天小长假起 = 4 / 3。
+ */
+export function tradingLag(fromIso, toIso) {
+  if (!fromIso || !toIso || toIso <= fromIso) return { calendarDays: 0, closedDays: 0 }
+  let d = fromIso
+  let calendarDays = 0
+  let closedDays = 0
+  for (let i = 0; i < 400 && d < toIso; i += 1) {
+    d = addDays(d, 1)
+    calendarDays += 1
+    if (!isTradingDay(d)) closedDays += 1
+  }
+  return { calendarDays, closedDays }
+}
+
+/** 休市日 ≥ 此值视为「节后首日·信号陈旧」（普通周末是 2，三天小长假是 3）。 */
+export const STALE_CLOSED_DAYS = 3

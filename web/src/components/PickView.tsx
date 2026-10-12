@@ -285,6 +285,17 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
           {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}
           {data.basisDate ? ` · 基准 ${data.basisDate} 收盘` : ''}
+          {data.signalLag?.stale && (
+            <>
+              {' '}
+              <em
+                className="rec-stale"
+                title={`推荐的价格特征取自基日 ${data.basisDate}，与生效日 ${data.date} 相隔 ${data.signalLag.calendarDays} 个自然日（其中休市 ${data.signalLag.closedDays} 天）。长假归来首个交易日，信号在入场时已陈旧，谨慎参考。`}
+              >
+                ⏳ 节后首日 · 信号滞后 {data.signalLag.closedDays} 天
+              </em>
+            </>
+          )}
           {data.generatedAt
             ? ` · 生成 ${bjTime(data.generatedAt)} · 最后刷新 ${bjTime(data.refreshedAt || data.generatedAt)}`
             : ''}

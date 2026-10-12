@@ -14,7 +14,7 @@ import { computeFactors, compositeScores, regimeTilt } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
 import { tiltThreshold, selectConfig } from './model-config.js'
-import { nextTradingDay, addTradingDays, isTradingDay } from './trading-days.js'
+import { nextTradingDay, addTradingDays, isTradingDay, tradingLag, STALE_CLOSED_DAYS } from './trading-days.js'
 
 export { nextTradingDay }
 
@@ -802,6 +802,8 @@ export async function runRecommendDaily({
     entryAnchor: 'effective',
     generatedAt: new Date().toISOString(),
     basisDate,
+    // 基日→生效日的滞后（长假归来首日会偏大）；写盘留档，回测/前端都能据此标注「信号已陈旧」。
+    signalLag: signalLagOf({ basisDate, date: effective }),
     model: cfg.model,
     pool: { size: pool.length, filtered: filtered.length, candidates: scored.length },
     top,
@@ -837,6 +839,8 @@ export function forwardArchive({ payload, chain, tilt, thr }) {
     refreshedAt: payload.refreshedAt,
     refreshCount: payload.refreshCount,
     basisDate: payload.basisDate,
+    // 带上前瞻的信号滞后：长假后首日可据此在 A/B 对照里单独看（与 eval-backtest 同口径）。
+    signalLag: payload.signalLag ?? null,
     model: payload.model,
     pool: payload.pool,
     top: payload.top,
@@ -1250,6 +1254,17 @@ export async function loadRecommend(dataDir, date, chain = 'dual') {
 export const entryIsoOf = (payload) => (payload?.entryAnchor === 'effective' ? payload.date : payload.basisDate)
 export const entryAtOpen = (payload) => payload?.entryAnchor === 'effective'
 
+/**
+ * 推荐的「信号滞后」：基日 → 生效日的自然日/休市日，以及是否已达到「节后首日·信号陈旧」。
+ * 价格特征恒取 ≤ basisDate 的日K，所以长假归来首个交易日（如 09-30 → 10-08）会明显偏大。
+ * 无 basisDate（旧文件）或生效日 ≤ 基日 → null。
+ */
+export function signalLagOf(payload) {
+  const lag = tradingLag(payload?.basisDate, payload?.date)
+  if (!lag || (lag.calendarDays === 0 && lag.closedDays === 0)) return null
+  return { ...lag, stale: lag.closedDays >= STALE_CLOSED_DAYS }
+}
+
 /** 某日开盘价（用于"生效日开买"的基准价；取不到返回 null）。 */
 async function entryOpenOf(secid, iso) {
   if (!secid || !iso) return null
@@ -1571,7 +1586,8 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
       total: top.length,
     },
   }
-  return { ...withPerf, top, dueOn: dueOnItems, exits }
+  // signalLag 读时补算：旧文件没这个字段（新文件写盘时已带），保证前端始终能看到。
+  return { ...withPerf, top, dueOn: dueOnItems, exits, signalLag: signalLagOf(payload) }
 }
 
 /** 动态持仓管理的 AI 提示（hold / extend / exit 三选一）。 */

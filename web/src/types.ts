@@ -211,6 +211,8 @@ export interface RecommendPayload {
   entryAnchor?: 'effective'
   /** 基准价对应的日期（生成日收盘） */
   basisDate?: string
+  /** 「基日 → 生效日」的信号滞后：长假归来首日会明显偏大（信号在入场时已陈旧）。 */
+  signalLag?: { calendarDays: number; closedDays: number; stale: boolean } | null
   /** 对照基准名（如「沪深300」），服务端补 */
   benchName?: string
   model: string

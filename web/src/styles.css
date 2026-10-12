@@ -2079,6 +2079,17 @@ button.member-row:hover {
   background: rgba(0, 145, 255, 0.16);
   color: #8cc6ff;
 }
+/* 「节后首日·信号陈旧」徽章：基日距生效日跨了长假（休市 ≥3 天），价格特征在入场时已滞后 */
+.rec-stale {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(240, 180, 41, 0.16);
+  color: #f5c451;
+  white-space: nowrap;
+}
 /* 链路切换（推荐页）：双链路 ↔ B 保守，用于真实前瞻对照 */
 .rec-chain-switch {
   display: inline-flex;
