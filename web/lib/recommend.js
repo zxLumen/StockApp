@@ -1493,17 +1493,20 @@ export async function attachPerformance(
   const indexLive = indexQuote?.price ?? null
   const atOpen = entryAtOpen(payload)
   const entryIso = entryIsoOf(payload)
-  // 生效日=今天：日K还没这根，但实时快照已有今开 → 用它兜底（仅当天；历史日的今开早就在日K里）。
-  const isTodayEntry = atOpen && entryIso === bjDate()
+  // 行情源 09:30 后才会给「今天」的开盘/现价；盘前拿到的是上一交易日的隔夜快照（活不活见 todayQuoteLive）。
+  const live = todayQuoteLive()
+  // 生效日=今天：日K还没这根，但实时快照已有今开 → 用它兜底（仅当天**且已开盘**；历史日的今开早就在日K里）。
+  const isTodayEntry = atOpen && entryIso === bjDate() && live
+  const indexLiveNow = live ? indexLive : null
   const withPerf = await mapLimit(payload.top, 8, async (s) => {
     const q = quotes.get(s.secid)
     const holdDays = s.ai?.holdDays ?? null
-    const hr = await holdReturn(s.secid, entryIso, holdDays, q?.price, {
+    const hr = await holdReturn(s.secid, entryIso, holdDays, live ? q?.price : null, {
       atOpen,
       fallbackOpen: liveOpenOf(q, isTodayEntry),
     })
     const bench = benchBars.length
-      ? benchReturns(benchBars, entryIso, hr.holdEndDate, indexLive, {
+      ? benchReturns(benchBars, entryIso, hr.holdEndDate, indexLiveNow, {
           atOpen,
           fallbackOpen: liveOpenOf(indexQuote, isTodayEntry),
         })
@@ -1539,6 +1542,15 @@ function bjMinutes(d = new Date()) {
 export function isAshareSession(d = new Date()) {
   const m = bjMinutes(d)
   return isTradingDay(bjDate(d)) && m >= 9 * 60 + 15 && m <= 15 * 60 + 15
+}
+
+/**
+ * 今日行情是否已「落到今天」：A 股要 09:30 起（含收盘后）行情源才给当天的开盘/现价。
+ * 盘前（00:00–09:30）上游返回的仍是**上一交易日**的隔夜快照 —— 不能拿它当「生效日开盘/现价」，
+ * 否则「生效日=今天」的推荐会在开盘前凭空显示上一交易日的涨跌。与持仓页同一口径（都用 09:30）。
+ */
+export function todayQuoteLive(d = new Date()) {
+  return isTradingDay(bjDate(d)) && bjMinutes(d) >= 9 * 60 + 30
 }
 
 /**
@@ -1586,7 +1598,8 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
   // 额外信息（不影响 AI周期 与 holdPct）：终止→终止盈亏+实际持有天数；延长→延长后周期+盈亏。
   const entryIso = entryIsoOf(payload)
   const atOpen = entryAtOpen(payload)
-  const isTodayEntry = atOpen && entryIso === bjDate()
+  const live = todayQuoteLive()
+  const isTodayEntry = atOpen && entryIso === bjDate() && live
   const top = await mapLimit(withPerf.top, 8, async (s) => {
     const pos = posMap.get(s.code)
     if (!pos) return s
@@ -1597,7 +1610,7 @@ export async function enrichRecommend(dataDir, payload, { chain = 'dual', ttlMs 
     const base = pos.baseHoldDays ?? s.ai?.holdDays ?? null
     if (pos.holdDays != null && base != null && pos.holdDays > base) {
       const q = quotes.get(s.secid)
-      const hr = await holdReturn(s.secid, entryIso, pos.holdDays, q?.price, {
+      const hr = await holdReturn(s.secid, entryIso, pos.holdDays, live ? q?.price : null, {
         atOpen,
         fallbackOpen: liveOpenOf(q, isTodayEntry),
       })

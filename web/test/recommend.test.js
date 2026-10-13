@@ -25,6 +25,7 @@ import {
   stampRefresh,
   benchReturns,
   isAshareSession,
+  todayQuoteLive,
   recommendTtlMs,
   entryIsoOf,
   entryAtOpen,
@@ -495,4 +496,16 @@ test('isAshareSession / recommendTtlMs：盘中 6min、盘后 30min、非交易�
   assert.equal(isAshareSession(bj(10, 0, 10)), false, '周六')
   assert.equal(recommendTtlMs(bj(10, 0)), 6 * 60_000)
   assert.equal(recommendTtlMs(bj(20, 0)), 12 * 60 * 60_000)
+})
+
+// 「今日行情已生效」闸门：盘前不能拿隔夜快照当当天开盘/现价（否则生效日=今天的推荐会凭空涨跌）。
+test('todayQuoteLive：盘前（含午夜）不算活，09:30 起才算当天行情', () => {
+  // 2026-10-14 是交易日；用 UTC+8 换算构造北京时间。
+  const bj = (h, m, day = 14) => new Date(Date.UTC(2026, 9, day, h - 8, m))
+  assert.equal(todayQuoteLive(bj(0, 30)), false, '午夜后到开盘前行情还是隔夜快照')
+  assert.equal(todayQuoteLive(bj(9, 10)), false, '09:30 前不算')
+  assert.equal(todayQuoteLive(bj(9, 30)), true, '09:30 起行情属于当天')
+  assert.equal(todayQuoteLive(bj(10, 0)), true)
+  assert.equal(todayQuoteLive(bj(20, 0)), true, '收盘后行情仍是当天收盘')
+  assert.equal(todayQuoteLive(bj(10, 0, 17)), false, '周六没有当天行情')
 })
