@@ -31,11 +31,15 @@ if [ -z "${STOCK_DEPLOY_FETCHED:-}" ]; then
   echo "[stock-deploy] 取回脚本失败，沿用服务器上现有版本继续"
 fi
 
-IMAGE_TAG="${SSH_ORIGINAL_COMMAND:-latest}"
-STOCK_IMAGE="ghcr.io/zxlumen/stock-web:${IMAGE_TAG}"
+REQUESTED_TAG="${SSH_ORIGINAL_COMMAND:-latest}"
+REPO_IMAGE="ghcr.io/zxlumen/stock-web"
+STOCK_IMAGE="${REPO_IMAGE}:${REQUESTED_TAG}"
+# compose 统一用 latest：主站 deploy.sh 也是 STOCK_TAG=latest。两处 image 引用
+# 一致后，主站全量部署不会再因为 tag 字符串不同而无谓地重建 stock。
+COMPOSE_TAG="latest"
 cd "$(dirname "$0")" || exit 1
 
-echo "==> StockApp 部署 IMAGE_TAG=${IMAGE_TAG}"
+echo "==> StockApp 部署 请求 tag=${REQUESTED_TAG} → compose tag=${COMPOSE_TAG}"
 SUDO=""
 [[ "${EUID}" -eq 0 ]] || SUDO="sudo -n"
 
@@ -46,8 +50,11 @@ if ! ${SUDO} docker manifest inspect "${STOCK_IMAGE}" >/dev/null 2>&1; then
 fi
 
 # 只拉 stock、只重建 stock —— 不碰 app / caddy / 其它子应用。
-${SUDO} env STOCK_TAG="${IMAGE_TAG}" docker compose pull stock
-${SUDO} env STOCK_TAG="${IMAGE_TAG}" docker compose up -d stock
+# 拉 CI 指定的构建，并同步打上 latest：保证部署的就是本次构建，
+# 且 compose 里的 image 引用与主站一致（避免每次主站部署重建 stock）。
+${SUDO} docker pull "${STOCK_IMAGE}"
+${SUDO} docker tag "${STOCK_IMAGE}" "${REPO_IMAGE}:${COMPOSE_TAG}"
+${SUDO} env STOCK_TAG="${COMPOSE_TAG}" docker compose up -d stock
 
 ${SUDO} docker compose ps stock
-echo "[stock-deploy] 完成 IMAGE_TAG=${IMAGE_TAG}"
+echo "[stock-deploy] 完成 请求 tag=${REQUESTED_TAG} → compose tag=${COMPOSE_TAG}"
