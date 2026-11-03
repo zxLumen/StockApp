@@ -49,3 +49,9 @@ docker run --rm --user "$(id -u):$(id -g)" \
 - 训练/调参必须使用 `< 2026-10-01` 的数据（日K PIT 回测；现有 `tune-factors.js` 的 7/8 月窗口）。
 - 任何对快照的改动都要更新 `manifest.json` 并显式说明；`eval-holdout.js` 会校验 SHA-256。
 - 评估读**快照**，不读线上 `/data/recommend*`（线上会被每日刷新/追加，且 actions 会带入未来信息）。
+
+## 独立验证策略（Shadow）
+
+- 设计/定版依据：[STRATEGY-2026-11.md](./STRATEGY-2026-11.md)
+- 运行/停用：[SHADOW.md](./SHADOW.md)
+- 只写 `/data/shadow`，不改线上 `recommend*`；12 月评估。
