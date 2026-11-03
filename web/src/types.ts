@@ -1,5 +1,5 @@
 /** 顶级页签。`board` / `pick` 与沪深港 / 美股齐平，不是某个市场下的子页。 */
-export type Market = 'board' | 'pick' | 'positions' | 'cn' | 'us' | 'fund'
+export type Market = 'board' | 'pick' | 'positions' | 'lab' | 'cn' | 'us' | 'fund'
 export type BoardKind = 'industry' | 'concept'
 /** 中证一级行业（官方口径的 10 个，与同花顺分类无法互相映射，独立成类）。 */
 export type CsiBoardKind = 'csi'
@@ -453,4 +453,31 @@ export interface PositionsPayload {
   /** actions 是否来自**当日**快照（完全忠实）；`false` = 快照缺失，按当前/最近口径近似。 */
   actionsFaithful: boolean
   chains: Record<PositionChain, PositionsChain>
+}
+
+// ---- 策略实验室（只读）----
+export interface LabHoldRule { type: string; n?: number; pct?: number }
+export interface LabStrategy { id: string; source: string; hold: string; style: string; control?: boolean; note?: string; tilt?: number }
+export interface LabPick {
+  secid: string; code: string; name: string; price?: number | null; aiHoldDays?: number | null; holdDays?: number | null
+  sleeve?: string; style?: string; entryDate?: string | null; entryPrice?: number | null; exitDate?: string | null
+  exitPrice?: number | null; done?: boolean; status?: string; retPct?: number | null; benchPct?: number | null; excessPct?: number | null
+  shares?: number; avgCost?: number; lastPrice?: number | null; mv?: number | null; pnl?: number | null
+  sellDate?: string | null; sellPrice?: number | null; reason?: string
+}
+export interface LabSummary {
+  count: number; openCount: number; closedCount: number; invested: number; openCost: number
+  realized: number; unrealized: number; total: number; returnPct: number | null; winPct: number | null
+}
+export interface LabRecommend {
+  strategy: LabStrategy; date: string; basisDate: string | null; style: string; hold: LabHoldRule & { name: string }
+  top: LabPick[]; summary: { n: number; meanRet: number | null; meanExcess: number | null; win: number | null; pending: number }
+}
+export interface LabPositions {
+  asOf: string; dates: string[]; summary: LabSummary; open: LabPick[]; closed: LabPick[]
+  equity: { date: string; ret: number | null; bench: number | null }[]; benchName: string; strategy: LabStrategy
+}
+export interface LabLeaderboard {
+  asOf: string | null
+  items: { id: string; source: string; hold: string; control?: boolean; summary: LabSummary }[]
 }

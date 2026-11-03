@@ -25,6 +25,7 @@ import { fundHot, fundNavSeries, fundRank, FUND_RANK_SORTS } from './lib/fund.js
 import { marketNews, stockNews, newsScope } from './lib/news.js'
 import { loadRecommend, listRecommendDates, enrichRecommend, recommendTtlMs, isAshareSession } from './lib/recommend.js'
 import { buildPositionsAll } from './lib/positions.js'
+import { labStrategies, labRecommend, labPositions, labLeaderboard } from './lib/lab.js'
 import { prevTradingDay } from './lib/trading-days.js'
 import { readJson, writeJson } from './lib/store.js'
 import { DATA_DIR, resolveScope, cookieHeader, ownerToken } from './lib/scope.js'
@@ -264,6 +265,12 @@ route('GET', /^\/api\/positions$/, async (ctx) => {
   const asOf = /^\d{4}-\d{2}-\d{2}$/.test(date) ? prevTradingDay(date) : undefined
   return buildPositionsAll(DATA_DIR, { asOf })
 })
+
+// ---- 策略实验室（只读；线上 A/B/dual 不受影响）----
+route('GET', /^\/api\/lab\/strategies$/, async () => labStrategies())
+route('GET', /^\/api\/lab\/recommend$/, async (ctx) => labRecommend(ctx.url.searchParams.get('strategy') || '', ctx.url.searchParams.get('date') || ''))
+route('GET', /^\/api\/lab\/positions$/, async (ctx) => labPositions(ctx.url.searchParams.get('strategy') || '', ctx.url.searchParams.get('date') || ''))
+route('GET', /^\/api\/lab\/leaderboard$/, async (ctx) => labLeaderboard(ctx.url.searchParams.get('date') || ''))
 
 route('GET', /^\/api\/watchlist$/, async (ctx) => ({ items: await loadWatchlist(ctx.scope.scopeKey) }))
 

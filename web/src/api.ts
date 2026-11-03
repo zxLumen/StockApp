@@ -16,6 +16,11 @@ import type {
   RecommendPayload,
   SearchItem,
   WatchItem,
+  LabHoldRule,
+  LabLeaderboard,
+  LabPositions,
+  LabRecommend,
+  LabStrategy,
 } from './types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -330,3 +335,15 @@ export function interpret(
 }
 
 export type { Bar, Board, FundItem, Kline, NewsItem, PositionsPayload, Quote, RecommendPayload, SearchItem, WatchItem }
+// ---- 策略实验室 ----
+export const fetchLabStrategies = (signal?: AbortSignal) =>
+  get<{ name: string; strategies: LabStrategy[]; holdRules: Record<string, LabHoldRule>; dates: string[]; forwardWindow: { from: string; to: string } }>(
+    '/api/lab/strategies',
+    signal,
+  )
+export const fetchLabRecommend = (strategy: string, date?: string, signal?: AbortSignal) =>
+  get<LabRecommend | null>(`/api/lab/recommend?strategy=${encodeURIComponent(strategy)}${date ? `&date=${encodeURIComponent(date)}` : ''}`, signal)
+export const fetchLabPositions = (strategy: string, date?: string, signal?: AbortSignal) =>
+  get<LabPositions | null>(`/api/lab/positions?strategy=${encodeURIComponent(strategy)}${date ? `&date=${encodeURIComponent(date)}` : ''}`, signal)
+export const fetchLabLeaderboard = (date?: string, signal?: AbortSignal) =>
+  get<LabLeaderboard>(`/api/lab/leaderboard${date ? `?date=${encodeURIComponent(date)}` : ''}`, signal)

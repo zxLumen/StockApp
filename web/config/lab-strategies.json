@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "name": "strategies-2026-11",
+  "forwardWindow": {
+    "from": "2026-11-04",
+    "to": "2026-12-05"
+  },
+  "note": "选股来源 = 线上 A/B/dual 的每日归档（shadow 快照）；持有规则在评估时逐票应用。线上策略不动，本表只定义候选。",
+  "sources": {
+    "A": "shadow/A",
+    "B": "shadow/B",
+    "dual": "shadow/dual",
+    "Btuned": "shadow/Btuned"
+  },
+  "holdRules": {
+    "fixed5": {
+      "type": "fixed",
+      "n": 5
+    },
+    "fixed10": {
+      "type": "fixed",
+      "n": 10
+    },
+    "fixed20": {
+      "type": "fixed",
+      "n": 20
+    },
+    "fixed30": {
+      "type": "fixed",
+      "n": 30
+    },
+    "llm": {
+      "type": "llm"
+    },
+    "trail10": {
+      "type": "trail",
+      "pct": 10
+    },
+    "trail12": {
+      "type": "trail",
+      "pct": 12
+    }
+  },
+  "strategies": [
+    {
+      "id": "A-fixed10",
+      "source": "A",
+      "hold": "fixed10",
+      "style": "沪深300"
+    },
+    {
+      "id": "A-fixed20",
+      "source": "A",
+      "hold": "fixed20",
+      "style": "沪深300"
+    },
+    {
+      "id": "A-fixed30",
+      "source": "A",
+      "hold": "fixed30",
+      "style": "沪深300"
+    },
+    {
+      "id": "A-llm",
+      "source": "A",
+      "hold": "llm",
+      "style": "沪深300"
+    },
+    {
+      "id": "A-trail10",
+      "source": "A",
+      "hold": "trail10",
+      "style": "沪深300"
+    },
+    {
+      "id": "A-trail12",
+      "source": "A",
+      "hold": "trail12",
+      "style": "沪深300"
+    },
+    {
+      "id": "B-fixed5",
+      "source": "B",
+      "hold": "fixed5",
+      "style": "创业板指"
+    },
+    {
+      "id": "B-fixed10",
+      "source": "B",
+      "hold": "fixed10",
+      "style": "创业板指"
+    },
+    {
+      "id": "B-fixed20",
+      "source": "B",
+      "hold": "fixed20",
+      "style": "创业板指"
+    },
+    {
+      "id": "B-fixed30",
+      "source": "B",
+      "hold": "fixed30",
+      "style": "创业板指"
+    },
+    {
+      "id": "B-llm",
+      "source": "B",
+      "hold": "llm",
+      "style": "创业板指"
+    },
+    {
+      "id": "B-trail10",
+      "source": "B",
+      "hold": "trail10",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-fixed10",
+      "source": "dual",
+      "hold": "fixed10",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-fixed20",
+      "source": "dual",
+      "hold": "fixed20",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-llm",
+      "source": "dual",
+      "hold": "llm",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-trail10",
+      "source": "dual",
+      "hold": "trail10",
+      "style": "创业板指"
+    },
+    {
+      "id": "blend50-fixed20",
+      "source": "blend50",
+      "hold": "fixed20",
+      "style": "创业板指"
+    },
+    {
+      "id": "blend50-trail10",
+      "source": "blend50",
+      "hold": "trail10",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-t05-fixed20",
+      "source": "dual-tilt",
+      "tilt": 0.5,
+      "hold": "fixed20",
+      "style": "创业板指"
+    },
+    {
+      "id": "dual-t07-fixed20",
+      "source": "dual-tilt",
+      "tilt": 0.7,
+      "hold": "fixed20",
+      "style": "创业板指"
+    },
+    {
+      "id": "live-A",
+      "source": "A",
+      "hold": "llm",
+      "style": "沪深300",
+      "control": true,
+      "note": "线上 A 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+    },
+    {
+      "id": "live-B",
+      "source": "B",
+      "hold": "llm",
+      "style": "创业板指",
+      "control": true,
+      "note": "线上 B 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+    },
+    {
+      "id": "live-dual",
+      "source": "dual",
+      "hold": "llm",
+      "style": "创业板指",
+      "control": true,
+      "note": "线上 dual 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+    },
+    {
+      "id": "Btuned-fixed10",
+      "source": "Btuned",
+      "hold": "fixed10",
+      "style": "沪深300",
+      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
+    },
+    {
+      "id": "Btuned-fixed20",
+      "source": "Btuned",
+      "hold": "fixed20",
+      "style": "沪深300",
+      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
+    },
+    {
+      "id": "Btuned-trail10",
+      "source": "Btuned",
+      "hold": "trail10",
+      "style": "沪深300",
+      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
+    }
+  ]
+}
