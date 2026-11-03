@@ -1,0 +1,440 @@
+{
+  "cutoff": "2026-10-01",
+  "purpose": "holdout-only; never use for training/tuning",
+  "createdAt": "2026-11-04",
+  "source": "docker-stock-1:/data/{recommend,recommend-ai-fwd,recommend-factors-fwd,actions-archive}",
+  "files": [
+    {
+      "chain": "dual",
+      "date": "2026-10-08",
+      "path": "research/holdout/forward/dual/2026-10-08.json",
+      "bytes": 91776,
+      "sha256": "f40ff9d81cdc7a9d58eaa3d5d0f0aa8b6eddec8355394a6ce94d2e331ec50bcc"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-09",
+      "path": "research/holdout/forward/dual/2026-10-09.json",
+      "bytes": 91758,
+      "sha256": "afc9d02f8c81ac9ebc89da7a3d5027aa0c46f72f96f843f43065f1cd3065140a"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-12",
+      "path": "research/holdout/forward/dual/2026-10-12.json",
+      "bytes": 89990,
+      "sha256": "9badbb02cfbb4b7ee7b8c1cfaa524c951a25210f92005f32d037280b9dcb215f"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-13",
+      "path": "research/holdout/forward/dual/2026-10-13.json",
+      "bytes": 97476,
+      "sha256": "6c11cb9f9e0e5c7b18a857f66362b36ef744c05581e38e0827d84550a483cdc6"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-14",
+      "path": "research/holdout/forward/dual/2026-10-14.json",
+      "bytes": 97344,
+      "sha256": "c4e0dfd757df7793e662df09325c5ecc85a27c4398d2463e9e27cf0a1bec24be"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-15",
+      "path": "research/holdout/forward/dual/2026-10-15.json",
+      "bytes": 97744,
+      "sha256": "13086652e67235a773656cdeee49c440b42425a3da7ec69b083ddf2f504e481d"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-16",
+      "path": "research/holdout/forward/dual/2026-10-16.json",
+      "bytes": 97788,
+      "sha256": "6ec89fb75cc75b200a7d08a62a13d49c1879c5808ad3419413cf58ef537df399"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-19",
+      "path": "research/holdout/forward/dual/2026-10-19.json",
+      "bytes": 97103,
+      "sha256": "acad1cc768d5010418695765dd363797aca441c536009b95f68c0ba4d56b4368"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-20",
+      "path": "research/holdout/forward/dual/2026-10-20.json",
+      "bytes": 96565,
+      "sha256": "77d6ef4fe766a3eed6eb8955cf57f8b2fa1ed51ec0fd57357009f5a1b43e6622"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-21",
+      "path": "research/holdout/forward/dual/2026-10-21.json",
+      "bytes": 94445,
+      "sha256": "cabf2ab1fb0abdb15f2cfb571c8a7f5042b6886ad60b213ebe7985ed6ee15dca"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-22",
+      "path": "research/holdout/forward/dual/2026-10-22.json",
+      "bytes": 94282,
+      "sha256": "745d63f954480dd01ecc6daddfdcd8471e0eb059d109ad5a47d8eeb22f38652b"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-23",
+      "path": "research/holdout/forward/dual/2026-10-23.json",
+      "bytes": 92637,
+      "sha256": "cd5a45367bc7646d510e1504d581d871c8476d00dd485afa7e82a14c9600a92f"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-26",
+      "path": "research/holdout/forward/dual/2026-10-26.json",
+      "bytes": 95128,
+      "sha256": "1be1a72dbe2c72ec7b1c716f81f5fb2c6f165817ae45da71f463c05b46c84789"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-27",
+      "path": "research/holdout/forward/dual/2026-10-27.json",
+      "bytes": 94232,
+      "sha256": "fc35362681b045d9dc85c1c34b438dbd2a560065133934c2514c48bdcec7a979"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-28",
+      "path": "research/holdout/forward/dual/2026-10-28.json",
+      "bytes": 93415,
+      "sha256": "7a78c1026c6f7821ae922f920782525a276244a6b9b100a446ad7c4083268654"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-29",
+      "path": "research/holdout/forward/dual/2026-10-29.json",
+      "bytes": 93734,
+      "sha256": "0ab56f39cea15bb4f46d69c29a7424d3661436c9211ea2952934d13e87983dcf"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-10-30",
+      "path": "research/holdout/forward/dual/2026-10-30.json",
+      "bytes": 92574,
+      "sha256": "2944936aacafa159acc58ceff2b0d896a58e41eff273533e76078660009c986a"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-11-02",
+      "path": "research/holdout/forward/dual/2026-11-02.json",
+      "bytes": 93222,
+      "sha256": "5e994eee2c6bb81034de683080221e9e37647476c8b7e42d8432d7304076f74d"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-11-03",
+      "path": "research/holdout/forward/dual/2026-11-03.json",
+      "bytes": 93221,
+      "sha256": "c3026efa78049836f306e2216cdfae32e159a9ff4d445f34a2fa2c84b20d00bd"
+    },
+    {
+      "chain": "dual",
+      "date": "2026-11-04",
+      "path": "research/holdout/forward/dual/2026-11-04.json",
+      "bytes": 96832,
+      "sha256": "76efeb16236cba68dd9790a856676fc35c00c92f6c5c3c00e25e4276df7eff98"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-08",
+      "path": "research/holdout/forward/A/2026-10-08.json",
+      "bytes": 18260,
+      "sha256": "3b5a1edacf57d886f3969e9516cc83de100d41eada87533a08f600067a22e9eb"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-09",
+      "path": "research/holdout/forward/A/2026-10-09.json",
+      "bytes": 18433,
+      "sha256": "cbd4a9d6a97e595d24145d7b989f1a3b887e263adceac9686b4011fdd4c85ba4"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-12",
+      "path": "research/holdout/forward/A/2026-10-12.json",
+      "bytes": 17941,
+      "sha256": "7d8ada18663887cda6c0884f245c837e90ef0d55c35180e5d0d5c3827ccef38a"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-13",
+      "path": "research/holdout/forward/A/2026-10-13.json",
+      "bytes": 17821,
+      "sha256": "0679db6c4ecadcd954bc0a2cd95ef3f4c836752c0ba39320060bc1671e8d3987"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-14",
+      "path": "research/holdout/forward/A/2026-10-14.json",
+      "bytes": 18110,
+      "sha256": "3c3df120fe304f47e4f6220644af7d65a6e14404c977af140f525b896064c9af"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-15",
+      "path": "research/holdout/forward/A/2026-10-15.json",
+      "bytes": 18116,
+      "sha256": "64b3e5336695e25abac6c174a885a0933aa6a586ebc2beacad40ae394ea4445d"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-16",
+      "path": "research/holdout/forward/A/2026-10-16.json",
+      "bytes": 18152,
+      "sha256": "21661e959b399628d6031189316ec9aa46f6c07510fb3fc8d9b84ae6939e1f7c"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-19",
+      "path": "research/holdout/forward/A/2026-10-19.json",
+      "bytes": 17677,
+      "sha256": "25f84a9585b6a95e90330c5a670ead0338e3ed65dbaff32a28a8681ce28af0a1"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-20",
+      "path": "research/holdout/forward/A/2026-10-20.json",
+      "bytes": 17838,
+      "sha256": "d1609d94c0781516677b1f3f9336268466062819b35946bbed68823aadc864fe"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-21",
+      "path": "research/holdout/forward/A/2026-10-21.json",
+      "bytes": 16974,
+      "sha256": "dcef9664c0ac89780af77327ec5ca2f29ccf5938a73b76871dd1b7b57aeffa0d"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-22",
+      "path": "research/holdout/forward/A/2026-10-22.json",
+      "bytes": 17094,
+      "sha256": "29984f1dc9e491b92b321d74e60d22c0e7995f3747714facbc9573103cb0fbfc"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-23",
+      "path": "research/holdout/forward/A/2026-10-23.json",
+      "bytes": 16723,
+      "sha256": "f0ec4d5747e25a9fdbf40b8698068451648cbf5a1494cd243c23290f73360068"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-26",
+      "path": "research/holdout/forward/A/2026-10-26.json",
+      "bytes": 18064,
+      "sha256": "f627d825ce4eb6d56df1480b8569c1ac8c1b21bbaf4f00c6d21861fc372062be"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-27",
+      "path": "research/holdout/forward/A/2026-10-27.json",
+      "bytes": 17169,
+      "sha256": "39fa20859bb80a68001cacb8fe66790d98623487d21dc2689d8e1b8aae125aa7"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-28",
+      "path": "research/holdout/forward/A/2026-10-28.json",
+      "bytes": 17508,
+      "sha256": "f889ba9c2b9099503d1385e0c7f47416e372aa49cf2d384b680ca9f64eeaf464"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-29",
+      "path": "research/holdout/forward/A/2026-10-29.json",
+      "bytes": 16638,
+      "sha256": "013e3d6efbd735901d95457bf61edb6c0b0f6c27567580413b0f09b6c9228b8b"
+    },
+    {
+      "chain": "A",
+      "date": "2026-10-30",
+      "path": "research/holdout/forward/A/2026-10-30.json",
+      "bytes": 17487,
+      "sha256": "844356c10a33d0cd2801ab0cc06ed71907a8be224fba8adcbf9f022d93b8ca24"
+    },
+    {
+      "chain": "A",
+      "date": "2026-11-02",
+      "path": "research/holdout/forward/A/2026-11-02.json",
+      "bytes": 16886,
+      "sha256": "f5b12524158daa301dbd0d39d19ff883fc63a3e0300000780c7305dc8d39e8a0"
+    },
+    {
+      "chain": "A",
+      "date": "2026-11-03",
+      "path": "research/holdout/forward/A/2026-11-03.json",
+      "bytes": 17032,
+      "sha256": "38a390f3edaa587f1260041da225ab9a523fb48918969f34e4d6a835f86b7bb9"
+    },
+    {
+      "chain": "A",
+      "date": "2026-11-04",
+      "path": "research/holdout/forward/A/2026-11-04.json",
+      "bytes": 18146,
+      "sha256": "79dc6694d7232959b0107bdaf2fb649e55234af44e73d964492e958011080527"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-08",
+      "path": "research/holdout/forward/B/2026-10-08.json",
+      "bytes": 91776,
+      "sha256": "f40ff9d81cdc7a9d58eaa3d5d0f0aa8b6eddec8355394a6ce94d2e331ec50bcc"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-09",
+      "path": "research/holdout/forward/B/2026-10-09.json",
+      "bytes": 91758,
+      "sha256": "afc9d02f8c81ac9ebc89da7a3d5027aa0c46f72f96f843f43065f1cd3065140a"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-12",
+      "path": "research/holdout/forward/B/2026-10-12.json",
+      "bytes": 23784,
+      "sha256": "087ba4dffbd64bcb634e775f132785d4e3d3315292bdedde90057d7882400a0c"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-13",
+      "path": "research/holdout/forward/B/2026-10-13.json",
+      "bytes": 25948,
+      "sha256": "e947e21fa165b687ce01f0bcb4da3e9d1de2b3f594e566ed5b2266994e6ccf77"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-14",
+      "path": "research/holdout/forward/B/2026-10-14.json",
+      "bytes": 25863,
+      "sha256": "43a80b883c66a52f6e3ff0a12b3cab3784d8f2a0eeb3b042f2e3f6f83473ed78"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-15",
+      "path": "research/holdout/forward/B/2026-10-15.json",
+      "bytes": 26395,
+      "sha256": "0cb78e10f446514fd2ce0a8cbdf51c4c3841d6d725b08042ec36261deeb08f45"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-16",
+      "path": "research/holdout/forward/B/2026-10-16.json",
+      "bytes": 26253,
+      "sha256": "f8eaee7da2ef75e17b6e6c5d3c4ba2c2f68110fdb78338d6b02e74e42435f4f2"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-19",
+      "path": "research/holdout/forward/B/2026-10-19.json",
+      "bytes": 26251,
+      "sha256": "98d31fb62f0aac5cef7f0b450f8ac1ee11a7ec4b3a5bb0d4c510805c87a23466"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-20",
+      "path": "research/holdout/forward/B/2026-10-20.json",
+      "bytes": 26081,
+      "sha256": "a1afef44e905ea173a644226a05321d1c94d514cc5d28fddca8f1c72ffcd0276"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-21",
+      "path": "research/holdout/forward/B/2026-10-21.json",
+      "bytes": 25400,
+      "sha256": "ea9a5ae1fcf4c9fb1b7a0a23e691f260a1e54fbb1d1dc7fc56033fcb8c515f34"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-22",
+      "path": "research/holdout/forward/B/2026-10-22.json",
+      "bytes": 25284,
+      "sha256": "0f178b07d183bd0b2ed9e079d7f9cf2c2ebd7e48e186aec5ea78471c3ced813b"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-23",
+      "path": "research/holdout/forward/B/2026-10-23.json",
+      "bytes": 24676,
+      "sha256": "19ab4f4efdbaa01b8c8227e1ca7debd655ff5c4955b1a44f427303931378cbef"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-26",
+      "path": "research/holdout/forward/B/2026-10-26.json",
+      "bytes": 25775,
+      "sha256": "bee274348777ce788d2374bc8ea2f135669624fe8a22acfcfaccfbbbc6c49508"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-27",
+      "path": "research/holdout/forward/B/2026-10-27.json",
+      "bytes": 25455,
+      "sha256": "e2e5e071909441601267652c4797b601cb28cac9e5cb11b519a61cd29d4cf6a9"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-28",
+      "path": "research/holdout/forward/B/2026-10-28.json",
+      "bytes": 24866,
+      "sha256": "74204efe1802d071c7e5a884a92848e3708195dc58cdbaceacdbbd9e2d2c8821"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-29",
+      "path": "research/holdout/forward/B/2026-10-29.json",
+      "bytes": 25001,
+      "sha256": "9ebfe2f43cc1ff22109f88e8599a88090c3390fb9b4aea6c05905f28de01e7b6"
+    },
+    {
+      "chain": "B",
+      "date": "2026-10-30",
+      "path": "research/holdout/forward/B/2026-10-30.json",
+      "bytes": 24778,
+      "sha256": "6dd3e2783c32e9c24f7904e327d6197adbec167e59b5504105567b55b56d6f10"
+    },
+    {
+      "chain": "B",
+      "date": "2026-11-02",
+      "path": "research/holdout/forward/B/2026-11-02.json",
+      "bytes": 25050,
+      "sha256": "89744bc858706436c69ce27db71e1b51897805f21e217d0e330702758a84735c"
+    },
+    {
+      "chain": "B",
+      "date": "2026-11-03",
+      "path": "research/holdout/forward/B/2026-11-03.json",
+      "bytes": 24739,
+      "sha256": "84165e80548eac7b93943f5872e0cb00f969a922d8c68203db297575d1fd75f5"
+    },
+    {
+      "chain": "B",
+      "date": "2026-11-04",
+      "path": "research/holdout/forward/B/2026-11-04.json",
+      "bytes": 25855,
+      "sha256": "2ec51a37ce4bf10381a6cf3ad881a388fed56ba11632b3eed30ccddb5969e8a4"
+    }
+  ],
+  "actions": [
+    {
+      "path": "research/holdout/actions/2026-10-30.json",
+      "bytes": 623762,
+      "sha256": "b8e6bd962665e61f67d2c3f526b862c0ec70a8872f9e38c08d091c1af44c792f"
+    }
+  ],
+  "benchmarks": {
+    "path": "research/holdout/benchmarks.json",
+    "bytes": 13175,
+    "sha256": "6c1dc20cc25b6e3d71fec84c79e1657cb7ee400990b1ffa3f5e4746f3e7be05b"
+  }
+}
