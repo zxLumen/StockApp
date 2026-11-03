@@ -41,7 +41,7 @@ const loadShadow = (src, date) => {
   if (!fs.existsSync(p)) return null
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
 }
-function resolvePicks(st, date) {
+async function resolvePicks(st, date) {
   const src = st.source
   if (['A', 'B', 'dual', 'Btuned'].includes(src)) {
     const p = loadShadow(REG.sources[src], date)
@@ -60,6 +60,49 @@ function resolvePicks(st, date) {
     const tilt = Number(a.regime?.tilt ?? b.regime?.tilt ?? 0)
     const useA = tilt >= Number(st.tilt)
     return { picks: (useA ? a : b).top.map((x) => ({ ...x, sleeve: useA ? 'A' : 'B', style: useA ? '沪深300' : '创业板指' })), basisDate: a.basisDate || null, style: useA ? '沪深300' : '创业板指' }
+  }
+  // A-filtered：LLM A + 收盘>MA20 且 20日动量>0（确定性过滤，无训练）
+  if (src === 'A-f') {
+    const a = loadShadow(REG.sources.A, date)
+    if (!a?.top?.length) return null
+    const basis = a.basisDate || date
+    const kept = []
+    for (const p of a.top) {
+      const bs = await barsOf(p.secid)
+      const i = findLe(bs, basis)
+      if (i < 20) continue
+      const closes = bs.slice(i - 19, i + 1).map((x) => px(x, 'close')).filter((v) => v != null)
+      if (closes.length < 20) continue
+      const close = closes[closes.length - 1]
+      const ma20 = closes.reduce((x, y) => x + y, 0) / closes.length
+      const prev = px(bs[i - 20], 'close')
+      const mom20 = prev ? close / prev - 1 : null
+      if (close > ma20 && mom20 != null && mom20 > 0) kept.push({ ...p, sleeve: 'A', style: '沪深300' })
+    }
+    return kept.length ? { picks: kept, basisDate: a.basisDate || null, style: '沪深300' } : null
+  }
+  // dual-voltarget：沪深300 vs 创业板 20日波动率，低波一侧优先（确定性）
+  if (src === 'voltarget') {
+    const a = loadShadow(REG.sources.A, date)
+    const b = loadShadow(REG.sources.B, date)
+    if (!a?.top?.length || !b?.top?.length) return null
+    const basis = a.basisDate || date
+    const volOf = async (secid) => {
+      const bs = await barsOf(secid)
+      const i = findLe(bs, basis)
+      if (i < 21) return null
+      const rs = []
+      for (let k = i - 19; k <= i; k += 1) {
+        const c = px(bs[k], 'close')
+        const p0 = px(bs[k - 1], 'close')
+        if (c && p0) rs.push(c / p0 - 1)
+      }
+      return rs.length ? Math.sqrt(rs.reduce((s0, r) => s0 + r * r, 0) / rs.length) : null
+    }
+    const va = await volOf('1.000300')
+    const vb = await volOf('0.399006')
+    const useA = va != null && vb != null ? va <= vb : false
+    return { picks: (useA ? a : b).top.map((x) => ({ ...x, sleeve: useA ? 'A' : 'B', style: useA ? '沪深300' : '创业板指' })), basisDate: basis, style: useA ? '沪深300' : '创业板指' }
   }
   return null
 }
@@ -109,7 +152,7 @@ export async function labRecommend(id, date) {
   const key = `rec:${id}:${d}`
   const hit = memoGet(key)
   if (hit) return hit
-  const r = resolvePicks(st, d)
+  const r = await resolvePicks(st, d)
   if (!r) return null
   const rule = REG.holdRules[st.hold]
   const top = (await Promise.all(r.picks.map((p) => applyPick(p, rule, d)))).filter(Boolean)

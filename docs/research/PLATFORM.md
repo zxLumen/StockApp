@@ -24,6 +24,8 @@ A / B / dual    +     A-fixed20 / B-fixed20 / dual-fixed20 / blend50 / dual-t05 
 | A | fixed10/20/30、llm、trail10/12 | LLM 选股；对比不同退出 |
 | B | fixed5/10/20/30、llm、trail10 | 线上因子选股；对比不同持有 |
 | **Btuned** | fixed10/20、trail10 | **新 B 选股**：低波+上影线权重；Top10 偏低波大盘（与线上 B 不同） |
+| A-f | fixed20、trail10 | LLM A + 收盘>MA20 且 20日动量>0（确定性过滤；今日 10/10 全过，未拉开差异） |
+| voltarget | fixed20、trail10 | 沪深300/创业板 20日波动率择链（确定性；今日选 A） |
 | dual | fixed10/20、llm、trail10 | 线上 regime 的选股 + 不同持有 |
 | blend50 | fixed20、trail10 | A/B 各 50%，不押 regime |
 | dual-tilt | 0.5 / 0.7 + fixed20 | 换 regime 阈值 |

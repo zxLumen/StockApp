@@ -208,6 +208,34 @@
       "hold": "trail10",
       "style": "沪深300",
       "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
+    },
+    {
+      "id": "A-f-fixed20",
+      "source": "A-f",
+      "hold": "fixed20",
+      "style": "沪深300",
+      "note": "LLM A + 收盘>MA20 且 20日动量>0"
+    },
+    {
+      "id": "A-f-trail10",
+      "source": "A-f",
+      "hold": "trail10",
+      "style": "沪深300",
+      "note": "LLM A + MA20/动量过滤 + 移动止盈"
+    },
+    {
+      "id": "vt-fixed20",
+      "source": "voltarget",
+      "hold": "fixed20",
+      "style": "沪深300",
+      "note": "沪深300/创业板 20日波动率择链"
+    },
+    {
+      "id": "vt-trail10",
+      "source": "voltarget",
+      "hold": "trail10",
+      "style": "沪深300",
+      "note": "波动率择链 + 移动止盈"
     }
   ]
 }

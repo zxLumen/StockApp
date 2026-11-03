@@ -84,10 +84,49 @@ async function oneTrade(pick, styleName, rule) {
   return { ret, bret, excess: bret == null ? null : ret - bret, done, date: pick.date }
 }
 
-function picksFor(st, date) {
+async function picksFor(st, date) {
   if (['A', 'B', 'dual', 'Btuned'].includes(st.source)) {
     const p = loadShadow(reg.sources[st.source], date)
     return p?.top?.length ? { picks: p.top.map((t) => ({ ...t, date })), style: st.style } : null
+  }
+  if (st.source === 'A-f') {
+    const a = loadShadow(reg.sources.A, date)
+    if (!a?.top?.length) return null
+    const basis = a.basisDate || date
+    const kept = []
+    for (const p of a.top) {
+      const bs = await bars(p.secid)
+      const i = findLe(bs, basis)
+      if (i < 20) continue
+      const closes = bs.slice(i - 19, i + 1).map((x) => px(x, 'close')).filter((v) => v != null)
+      if (closes.length < 20) continue
+      const close = closes[closes.length - 1]
+      const ma20 = mean(closes)
+      const prev = px(bs[i - 20], 'close')
+      const mom20 = prev ? close / prev - 1 : null
+      if (close > ma20 && mom20 != null && mom20 > 0) kept.push({ ...p, date })
+    }
+    return kept.length ? { picks: kept, style: '沪深300' } : null
+  }
+  if (st.source === 'voltarget') {
+    const a = loadShadow(reg.sources.A, date)
+    const b = loadShadow(reg.sources.B, date)
+    if (!a?.top?.length || !b?.top?.length) return null
+    const basis = a.basisDate || date
+    const volOf = async (name) => {
+      const sb = await styleBars(name)
+      const i = findLe(sb, basis)
+      if (i < 21) return null
+      const rs = []
+      for (let k = i - 19; k <= i; k += 1) {
+        const c = px(sb[k], 'close'); const p0 = px(sb[k - 1], 'close')
+        if (c && p0) rs.push(c / p0 - 1)
+      }
+      return rs.length ? Math.sqrt(rs.reduce((s0, r) => s0 + r * r, 0) / rs.length) : null
+    }
+    const va = await volOf('沪深300'); const vb = await volOf('创业板指')
+    const useA = va != null && vb != null ? va <= vb : false
+    return { picks: (useA ? a : b).top.map((x) => ({ ...x, date })), style: useA ? '沪深300' : '创业板指' }
   }
   if (st.source === 'blend50') {
     const a = loadShadow(reg.sources.A, date)
@@ -113,7 +152,7 @@ for (const st of reg.strategies) {
   const trades = []
   const days = []
   for (const d of dates) {
-    const got = picksFor(st, d)
+    const got = await picksFor(st, d)
     if (!got) continue
     if (got.blend) {
       const ta = (await Promise.all(got.a.map((x) => oneTrade(x, '沪深300', rule)))).filter(Boolean)
