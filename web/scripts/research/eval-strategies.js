@@ -85,7 +85,7 @@ async function oneTrade(pick, styleName, rule) {
 }
 
 function picksFor(st, date) {
-  if (st.source === 'A' || st.source === 'B' || st.source === 'dual') {
+  if (['A', 'B', 'dual', 'Btuned'].includes(st.source)) {
     const p = loadShadow(reg.sources[st.source], date)
     return p?.top?.length ? { picks: p.top.map((t) => ({ ...t, date })), style: st.style } : null
   }

@@ -16,7 +16,7 @@ test('research/strategies：注册表结构合法', () => {
     assert.ok(!ids.has(s.id), `重复 id: ${s.id}`)
     ids.add(s.id)
     assert.ok(r.holdRules[s.hold], `未知 hold: ${s.hold}`)
-    assert.ok(['A', 'B', 'dual', 'blend50', 'dual-tilt'].includes(s.source), `未知 source: ${s.source}`)
+    assert.ok(['A', 'B', 'dual', 'blend50', 'dual-tilt', 'Btuned'].includes(s.source), `未知 source: ${s.source}`)
     assert.ok(['fixed', 'llm', 'trail'].includes(r.holdRules[s.hold].type))
   }
 })
