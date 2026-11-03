@@ -10,6 +10,7 @@
 3. **[FINDINGS-2026-11-04.md](./FINDINGS-2026-11-04.md)** —— 本期真实 holdout 的结论
 
 其他：
+- [PLATFORM.md](./PLATFORM.md) —— 多策略平台（20 候选 + 3 对照，12 月排行榜）
 - [TUNING-PROTOCOL.md](./TUNING-PROTOCOL.md) —— 训练/验证/holdout 的划分与 walk-forward 规则
 - [TOOLING.md](./TOOLING.md) —— 工具调研（Qlib/vectorbt/QuantStats/…）与 sidecar 方案
 - [RUN-2026-11-04.md](./RUN-2026-11-04.md) —— 由脚本生成的逐日明细

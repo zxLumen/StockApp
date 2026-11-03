@@ -2,9 +2,9 @@
 
 ## 是什么
 
-- 保留**线上选股**（A/B/dual 同一份 top10），只把**持有期**改为 **T+20**；不跑 AI 提前退出。
+- 记录**线上 A/B/dual 的每日 top10 快照**；持有规则（fixed/trail/llm）由 `research/configs/strategies-2026-11.json` 在评估时逐票应用，不再固定 T+20。
 - 写独立目录 `/data/shadow/{A,B,dual}/<生效日>.json`；**绝不写** `recommend*` / `recommend-actions.json`。
-- 线上策略、cron、参数、输出完全不变；shadow 是纯旁路。
+- 线上策略、cron、参数、输出完全不变；shadow 是纯旁路。候选策略清单见 [PLATFORM.md](./PLATFORM.md)。
 
 ## 运行
 
@@ -30,4 +30,4 @@ shadow 的买入价是**生效日开盘**。18:30 的版本在开盘前已知，
 
 ## 12 月评估
 
-见 [`STRATEGY-2026-11.md`](./STRATEGY-2026-11.md) 第 5 节；评估脚本待 12 月按同一 `metrics.js` 口径补。
+跑 `web/scripts/research/eval-strategies.js`，见 [PLATFORM.md](./PLATFORM.md) 第 5 节。

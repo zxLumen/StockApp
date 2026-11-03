@@ -52,9 +52,10 @@ if (!DRY) {
     `${JSON.stringify(
       {
         candidate: NAME,
-        holdDays: HOLD,
-        rule: '保留线上选股（A/B/dual 同 top），固定 T+20 持有；不跑 AI 提前退出',
-        basis: 'pre-holdout val/test: A T+20 2.38/4.72 excess; B T+20 2.04/1.53; see docs/research/STRATEGY-2026-11.md',
+        holdDays: null,
+        registry: 'strategies-2026-11',
+        rule: 'source snapshot for strategies-2026-11; holds applied at evaluation',
+        basis: 'multi-strategy platform; see docs/research/PLATFORM.md and research/configs/strategies-2026-11.json',
         updatedAt: new Date().toISOString(),
       },
       null,
@@ -79,7 +80,10 @@ for (const [chain, dir] of Object.entries(DIRS)) {
     holdDays: HOLD,
     source: `${dir}/${date}.json`,
     sourceChain: p.regime?.chain || null,
-    rule: 'live selection + fixed T+20; no AI early exit',
+    regime: p.regime || null,
+    holdDays: null,
+    registry: 'strategies-2026-11',
+    rule: 'source snapshot for strategies-2026-11; holds applied at evaluation',
     generatedAt: new Date().toISOString(),
     top: p.top.map((t) => ({
       secid: t.secid,
