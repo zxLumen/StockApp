@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchLabLeaderboard, fetchLabPositions, fetchLabRecommend, fetchLabStrategies } from '../api'
-import type { LabLeaderboard, LabPositions, LabRecommend, LabStrategy } from '../types'
+import type { LabLeaderboard, LabMeta, LabPositions, LabRecommend, LabStrategy } from '../types'
 
 const money = (v: number | null | undefined) =>
   v == null ? '—' : `${v < 0 ? '-' : ''}¥${Math.abs(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
@@ -28,13 +28,7 @@ function Spark({ data }: { data: { date: string; ret: number | null; bench: numb
 }
 
 export default function LabView({ onPick }: { onPick: (s: { code: string; name: string; secid: string }) => void }) {
-  const [meta, setMeta] = useState<{
-    name: string
-    strategies: LabStrategy[]
-    holdRules: Record<string, { type: string; n?: number; pct?: number }>
-    dates: string[]
-    forwardWindow: { from: string; to: string }
-  } | null>(null)
+  const [meta, setMeta] = useState<LabMeta | null>(null)
   const [id, setId] = useState('')
   const [date, setDate] = useState('')
   const [tab, setTab] = useState<'rec' | 'pos' | 'rank'>('rec')
@@ -48,7 +42,7 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
       .then((m) => {
         setMeta(m)
         setId(m.strategies.find((s) => !s.control)?.id || m.strategies[0]?.id || '')
-        setDate(m.dates.at(-1) || '')
+        setDate(m.defaultDate || m.dates.at(-1) || '')
       })
       .catch((e) => setErr(e.message))
   }, [])

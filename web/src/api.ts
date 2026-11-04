@@ -16,11 +16,10 @@ import type {
   RecommendPayload,
   SearchItem,
   WatchItem,
-  LabHoldRule,
   LabLeaderboard,
+  LabMeta,
   LabPositions,
   LabRecommend,
-  LabStrategy,
 } from './types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -337,7 +336,7 @@ export function interpret(
 export type { Bar, Board, FundItem, Kline, NewsItem, PositionsPayload, Quote, RecommendPayload, SearchItem, WatchItem }
 // ---- 策略实验室 ----
 export const fetchLabStrategies = (signal?: AbortSignal) =>
-  get<{ name: string; strategies: LabStrategy[]; holdRules: Record<string, LabHoldRule>; dates: string[]; forwardWindow: { from: string; to: string } }>(
+  get<LabMeta>(
     '/api/lab/strategies',
     signal,
   )

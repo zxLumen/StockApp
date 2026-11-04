@@ -477,6 +477,7 @@ export interface LabPositions {
   asOf: string; dates: string[]; summary: LabSummary; open: LabPick[]; closed: LabPick[]
   equity: { date: string; ret: number | null; bench: number | null }[]; benchName: string; strategy: LabStrategy
 }
+export interface LabMeta { name: string; strategies: LabStrategy[]; holdRules: Record<string, LabHoldRule>; dates: string[]; defaultDate: string; forwardWindow: { from: string; to: string } }
 export interface LabLeaderboard {
   asOf: string | null
   items: { id: string; source: string; hold: string; control?: boolean; summary: LabSummary }[]

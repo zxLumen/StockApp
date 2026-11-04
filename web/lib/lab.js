@@ -35,7 +35,12 @@ export function labDates() {
   return [...set].sort()
 }
 export function labStrategies() {
-  return { name: REG.name, forwardWindow: REG.forwardWindow, holdRules: REG.holdRules, strategies: REG.strategies, dates: labDates() }
+  const dates = labDates()
+  const bj = new Date(Date.now() + 8 * 3600_000)
+  const today = bj.toISOString().slice(0, 10)
+  // 默认落在「今天」；没有今天的快照才回退到最近一个 <= 今天的日期（避免默认到明天、全显示待开盘）
+  const defaultDate = dates.includes(today) ? today : dates.filter((d) => d <= today).at(-1) || dates.at(-1) || ''
+  return { name: REG.name, forwardWindow: REG.forwardWindow, holdRules: REG.holdRules, strategies: REG.strategies, dates, defaultDate }
 }
 const loadShadow = (src, date) => {
   const p = path.join(DATA_DIR, src, `${date}.json`)
