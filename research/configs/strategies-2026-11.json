@@ -1,22 +1,17 @@
 {
   "version": 1,
-  "name": "strategies-2026-11",
+  "name": "lab-2026-11",
   "forwardWindow": {
-    "from": "2026-11-04",
+    "from": "2026-11-05",
     "to": "2026-12-05"
   },
-  "note": "选股来源 = 线上 A/B/dual 的每日归档（shadow 快照）；持有规则在评估时逐票应用。线上策略不动，本表只定义候选。",
+  "note": "独立选股（不读线上）；线上 A/B/dual 只作为 12 月报告的对照，不进入实验室页面。",
   "sources": {
-    "A": "shadow/A",
-    "B": "shadow/B",
-    "dual": "shadow/dual",
-    "Btuned": "shadow/Btuned"
+    "labA": "lab/A",
+    "labB": "lab/B",
+    "labB2": "shadow/Btuned"
   },
   "holdRules": {
-    "fixed5": {
-      "type": "fixed",
-      "n": 5
-    },
     "fixed10": {
       "type": "fixed",
       "n": 10
@@ -25,217 +20,66 @@
       "type": "fixed",
       "n": 20
     },
-    "fixed30": {
-      "type": "fixed",
-      "n": 30
-    },
-    "llm": {
-      "type": "llm"
-    },
     "trail10": {
       "type": "trail",
       "pct": 10
     },
-    "trail12": {
-      "type": "trail",
-      "pct": 12
+    "llm": {
+      "type": "llm"
     }
   },
   "strategies": [
     {
-      "id": "A-fixed10",
-      "source": "A",
-      "hold": "fixed10",
-      "style": "沪深300"
-    },
-    {
-      "id": "A-fixed20",
-      "source": "A",
+      "id": "labA-fixed20",
+      "source": "labA",
       "hold": "fixed20",
-      "style": "沪深300"
-    },
-    {
-      "id": "A-fixed30",
-      "source": "A",
-      "hold": "fixed30",
-      "style": "沪深300"
-    },
-    {
-      "id": "A-llm",
-      "source": "A",
-      "hold": "llm",
-      "style": "沪深300"
-    },
-    {
-      "id": "A-trail10",
-      "source": "A",
-      "hold": "trail10",
-      "style": "沪深300"
-    },
-    {
-      "id": "A-trail12",
-      "source": "A",
-      "hold": "trail12",
-      "style": "沪深300"
-    },
-    {
-      "id": "B-fixed5",
-      "source": "B",
-      "hold": "fixed5",
-      "style": "创业板指"
-    },
-    {
-      "id": "B-fixed10",
-      "source": "B",
-      "hold": "fixed10",
-      "style": "创业板指"
-    },
-    {
-      "id": "B-fixed20",
-      "source": "B",
-      "hold": "fixed20",
-      "style": "创业板指"
-    },
-    {
-      "id": "B-fixed30",
-      "source": "B",
-      "hold": "fixed30",
-      "style": "创业板指"
-    },
-    {
-      "id": "B-llm",
-      "source": "B",
-      "hold": "llm",
-      "style": "创业板指"
-    },
-    {
-      "id": "B-trail10",
-      "source": "B",
-      "hold": "trail10",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-fixed10",
-      "source": "dual",
-      "hold": "fixed10",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-fixed20",
-      "source": "dual",
-      "hold": "fixed20",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-llm",
-      "source": "dual",
-      "hold": "llm",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-trail10",
-      "source": "dual",
-      "hold": "trail10",
-      "style": "创业板指"
-    },
-    {
-      "id": "blend50-fixed20",
-      "source": "blend50",
-      "hold": "fixed20",
-      "style": "创业板指"
-    },
-    {
-      "id": "blend50-trail10",
-      "source": "blend50",
-      "hold": "trail10",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-t05-fixed20",
-      "source": "dual-tilt",
-      "tilt": 0.5,
-      "hold": "fixed20",
-      "style": "创业板指"
-    },
-    {
-      "id": "dual-t07-fixed20",
-      "source": "dual-tilt",
-      "tilt": 0.7,
-      "hold": "fixed20",
-      "style": "创业板指"
-    },
-    {
-      "id": "live-A",
-      "source": "A",
-      "hold": "llm",
       "style": "沪深300",
-      "control": true,
-      "note": "线上 A 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+      "note": "沪深300 质量/低波/价值"
     },
     {
-      "id": "live-B",
-      "source": "B",
-      "hold": "llm",
+      "id": "labA-trail10",
+      "source": "labA",
+      "hold": "trail10",
+      "style": "沪深300"
+    },
+    {
+      "id": "labB-fixed20",
+      "source": "labB",
+      "hold": "fixed20",
       "style": "创业板指",
-      "control": true,
-      "note": "线上 B 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+      "note": "稳健池动量"
     },
     {
-      "id": "live-dual",
-      "source": "dual",
-      "hold": "llm",
+      "id": "labB-trail10",
+      "source": "labB",
+      "hold": "trail10",
+      "style": "创业板指"
+    },
+    {
+      "id": "labB2-fixed20",
+      "source": "labB2",
+      "hold": "fixed20",
       "style": "创业板指",
-      "control": true,
-      "note": "线上 dual 的近似对照（用 aiHoldDays；AI 提前终止未完全复刻）"
+      "note": "稳健池低波+上影线"
     },
     {
-      "id": "Btuned-fixed10",
-      "source": "Btuned",
-      "hold": "fixed10",
-      "style": "沪深300",
-      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
-    },
-    {
-      "id": "Btuned-fixed20",
-      "source": "Btuned",
-      "hold": "fixed20",
-      "style": "沪深300",
-      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
-    },
-    {
-      "id": "Btuned-trail10",
-      "source": "Btuned",
+      "id": "labB2-trail10",
+      "source": "labB2",
       "hold": "trail10",
-      "style": "沪深300",
-      "note": "新 B 选股：lowVol .3 + upShadow .4；无行业上限"
+      "style": "创业板指"
     },
     {
-      "id": "A-f-fixed20",
-      "source": "A-f",
+      "id": "labDual-fixed20",
+      "source": "labDual",
       "hold": "fixed20",
-      "style": "沪深300",
-      "note": "LLM A + 收盘>MA20 且 20日动量>0"
+      "style": "创业板指",
+      "note": "labA+labB 各 50%"
     },
     {
-      "id": "A-f-trail10",
-      "source": "A-f",
+      "id": "labDual-trail10",
+      "source": "labDual",
       "hold": "trail10",
-      "style": "沪深300",
-      "note": "LLM A + MA20/动量过滤 + 移动止盈"
-    },
-    {
-      "id": "vt-fixed20",
-      "source": "voltarget",
-      "hold": "fixed20",
-      "style": "沪深300",
-      "note": "沪深300/创业板 20日波动率择链"
-    },
-    {
-      "id": "vt-trail10",
-      "source": "voltarget",
-      "hold": "trail10",
-      "style": "沪深300",
-      "note": "波动率择链 + 移动止盈"
+      "style": "创业板指"
     }
   ]
 }

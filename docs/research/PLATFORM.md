@@ -29,7 +29,7 @@ A / B / dual    +     A-fixed20 / B-fixed20 / dual-fixed20 / blend50 / dual-t05 
 | dual | fixed10/20、llm、trail10 | 线上 regime 的选股 + 不同持有 |
 | blend50 | fixed20、trail10 | A/B 各 50%，不押 regime |
 | dual-tilt | 0.5 / 0.7 + fixed20 | 换 regime 阈值 |
-| live-A/B/dual | llm | **近似对照**（未完全复刻 AI 提前终止） |
+| live-A/B/dual | llm | **仅 12 月报告对照**，不进实验室 |
 
 > 不是 6 个；是按“选股 × 持有 × 组合”展开的 20 个候选 + 3 个对照。12 月可继续加。
 

@@ -16,6 +16,12 @@ const FROM = opt('--from', '0000-00-00')
 const TO = opt('--to', '9999-99-99')
 const OUT = opt('--out', path.join(REPO, 'docs/research/LEADERBOARD.md'))
 const reg = JSON.parse(fs.readFileSync(REG, 'utf8'))
+const LIVE = { A: 'recommend-ai-fwd', B: 'recommend-factors-fwd', dual: 'recommend' }
+const CONTROLS = [
+  { id: 'live-A', source: 'A', hold: 'llm', style: '沪深300', control: true },
+  { id: 'live-B', source: 'B', hold: 'llm', style: '创业板指', control: true },
+  { id: 'live-dual', source: 'dual', hold: 'llm', style: '创业板指', control: true },
+]
 const pct = (x) => (x == null || !Number.isFinite(x) ? '—' : `${(x * 100).toFixed(2)}%`)
 const num = (x, d = 2) => (x == null || !Number.isFinite(x) ? '—' : x.toFixed(d))
 
@@ -85,68 +91,25 @@ async function oneTrade(pick, styleName, rule) {
 }
 
 async function picksFor(st, date) {
-  if (['A', 'B', 'dual', 'Btuned'].includes(st.source)) {
+  if (['labA', 'labB', 'labB2'].includes(st.source)) {
     const p = loadShadow(reg.sources[st.source], date)
-    return p?.top?.length ? { picks: p.top.map((t) => ({ ...t, date })), style: st.style } : null
+    return p?.top?.length ? { picks: p.top.map((x) => ({ ...x, date })), style: st.style } : null
   }
-  if (st.source === 'A-f') {
-    const a = loadShadow(reg.sources.A, date)
-    if (!a?.top?.length) return null
-    const basis = a.basisDate || date
-    const kept = []
-    for (const p of a.top) {
-      const bs = await bars(p.secid)
-      const i = findLe(bs, basis)
-      if (i < 20) continue
-      const closes = bs.slice(i - 19, i + 1).map((x) => px(x, 'close')).filter((v) => v != null)
-      if (closes.length < 20) continue
-      const close = closes[closes.length - 1]
-      const ma20 = mean(closes)
-      const prev = px(bs[i - 20], 'close')
-      const mom20 = prev ? close / prev - 1 : null
-      if (close > ma20 && mom20 != null && mom20 > 0) kept.push({ ...p, date })
-    }
-    return kept.length ? { picks: kept, style: '沪深300' } : null
-  }
-  if (st.source === 'voltarget') {
-    const a = loadShadow(reg.sources.A, date)
-    const b = loadShadow(reg.sources.B, date)
+  if (st.source === 'labDual') {
+    const a = loadShadow(reg.sources.labA, date)
+    const b = loadShadow(reg.sources.labB, date)
     if (!a?.top?.length || !b?.top?.length) return null
-    const basis = a.basisDate || date
-    const volOf = async (name) => {
-      const sb = await styleBars(name)
-      const i = findLe(sb, basis)
-      if (i < 21) return null
-      const rs = []
-      for (let k = i - 19; k <= i; k += 1) {
-        const c = px(sb[k], 'close'); const p0 = px(sb[k - 1], 'close')
-        if (c && p0) rs.push(c / p0 - 1)
-      }
-      return rs.length ? Math.sqrt(rs.reduce((s0, r) => s0 + r * r, 0) / rs.length) : null
-    }
-    const va = await volOf('沪深300'); const vb = await volOf('创业板指')
-    const useA = va != null && vb != null ? va <= vb : false
-    return { picks: (useA ? a : b).top.map((x) => ({ ...x, date })), style: useA ? '沪深300' : '创业板指' }
+    return { blend: true, a: a.top.map((x) => ({ ...x, date })), b: b.top.map((x) => ({ ...x, date })) }
   }
-  if (st.source === 'blend50') {
-    const a = loadShadow(reg.sources.A, date)
-    const b = loadShadow(reg.sources.B, date)
-    if (!a?.top?.length || !b?.top?.length) return null
-    return { blend: true, a: a.top.map((t) => ({ ...t, date })), b: b.top.map((t) => ({ ...t, date })) }
-  }
-  if (st.source === 'dual-tilt') {
-    const a = loadShadow(reg.sources.A, date)
-    const b = loadShadow(reg.sources.B, date)
-    if (!a?.top?.length || !b?.top?.length) return null
-    const tilt = Number(a.regime?.tilt ?? b.regime?.tilt ?? 0)
-    const useA = tilt >= st.tilt
-    return { picks: (useA ? a : b).top.map((t) => ({ ...t, date })), style: useA ? '沪深300' : '创业板指' }
+  if (st.control && LIVE[st.source]) {
+    const p = loadShadow(LIVE[st.source], date)
+    return p?.top?.length ? { picks: p.top.map((x) => ({ ...x, date })), style: st.style } : null
   }
   return null
 }
 
 const results = []
-for (const st of reg.strategies) {
+for (const st of [...reg.strategies, ...CONTROLS]) {
   const rule = reg.holdRules[st.hold]
   if (!rule) continue
   const trades = []

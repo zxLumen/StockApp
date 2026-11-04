@@ -12,8 +12,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REG_PATH = process.env.LAB_REGISTRY || path.join(__dirname, '../config/lab-strategies.json')
 const REG = JSON.parse(fs.readFileSync(REG_PATH, 'utf8'))
 const STYLE_SECID = { 沪深300: '1.000300', 创业板指: '0.399006', 中证1000: '1.000852' }
-// 线上归档：shadow 还没跑（19:30 前）时，实验室直接读线上，避免“11-05 没出来”。
-const LIVE = { A: 'recommend-ai-fwd', B: 'recommend-factors-fwd', dual: 'recommend' }
 const TTL = 5 * 60_000
 const MEMO = new Map()
 const memoGet = (k) => { const v = MEMO.get(k); return v && Date.now() - v.t < TTL ? v.v : null }
@@ -30,10 +28,14 @@ const emptySummary = () => ({ count: 0, openCount: 0, closedCount: 0, invested: 
 export function labDates() {
   const set = new Set()
   const start = REG.forwardWindow?.from || '0000-00-00'
-  for (const src of [...Object.values(REG.sources), ...Object.values(LIVE)]) {
+  for (const src of Object.values(REG.sources)) {
     const dir = path.join(DATA_DIR, src)
     if (!fs.existsSync(dir)) continue
-    for (const f of fs.readdirSync(dir)) if (/^\d{4}-\d{2}-\d{2}\.json$/.test(f)) { const d = f.slice(0, 10); if (d >= start) set.add(d) }
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^\d{4}-\d{2}-\d{2}\.json$/.test(f)) continue
+      const d = f.slice(0, 10)
+      if (d >= start) set.add(d)
+    }
   }
   return [...set].sort()
 }
@@ -50,70 +52,26 @@ const loadShadow = (src, date) => {
   if (!fs.existsSync(p)) return null
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null }
 }
-// 先读 shadow 冻结快照；没有该日期时回退到线上归档（A/B/dual 同一份选股）。
-const loadSource = (src, date) => loadShadow(REG.sources[src], date) || (LIVE[src] ? loadShadow(LIVE[src], date) : null)
 async function resolvePicks(st, date) {
   const src = st.source
-  if (['A', 'B', 'dual', 'Btuned'].includes(src)) {
-    const p = loadSource(src, date)
-    return p?.top?.length ? { picks: p.top.map((x) => ({ ...x, sleeve: src, style: st.style || '沪深300' })), basisDate: p.basisDate || null, style: st.style || '沪深300' } : null
+  if (['labA', 'labB', 'labB2'].includes(src)) {
+    const p = loadShadow(REG.sources[src], date)
+    if (!p?.top?.length) return null
+    const style = st.style || (src === 'labA' ? '沪深300' : '创业板指')
+    return { picks: p.top.map((x) => ({ ...x, sleeve: src, style })), basisDate: p.basisDate || null, style }
   }
-  if (src === 'blend50') {
-    const a = loadSource('A', date)
-    const b = loadSource('B', date)
+  if (src === 'labDual') {
+    const a = loadShadow(REG.sources.labA, date)
+    const b = loadShadow(REG.sources.labB, date)
     if (!a?.top?.length || !b?.top?.length) return null
-    return { picks: [...a.top.map((x) => ({ ...x, sleeve: 'A', style: '沪深300' })), ...b.top.map((x) => ({ ...x, sleeve: 'B', style: '创业板指' }))], basisDate: a.basisDate || null, style: '创业板指' }
-  }
-  if (src === 'dual-tilt') {
-    const a = loadSource('A', date)
-    const b = loadSource('B', date)
-    if (!a?.top?.length || !b?.top?.length) return null
-    const tilt = Number(a.regime?.tilt ?? b.regime?.tilt ?? 0)
-    const useA = tilt >= Number(st.tilt)
-    return { picks: (useA ? a : b).top.map((x) => ({ ...x, sleeve: useA ? 'A' : 'B', style: useA ? '沪深300' : '创业板指' })), basisDate: a.basisDate || null, style: useA ? '沪深300' : '创业板指' }
-  }
-  // A-filtered：LLM A + 收盘>MA20 且 20日动量>0（确定性过滤，无训练）
-  if (src === 'A-f') {
-    const a = loadSource('A', date)
-    if (!a?.top?.length) return null
-    const basis = a.basisDate || date
-    const kept = []
-    for (const p of a.top) {
-      const bs = await barsOf(p.secid)
-      const i = findLe(bs, basis)
-      if (i < 20) continue
-      const closes = bs.slice(i - 19, i + 1).map((x) => px(x, 'close')).filter((v) => v != null)
-      if (closes.length < 20) continue
-      const close = closes[closes.length - 1]
-      const ma20 = closes.reduce((x, y) => x + y, 0) / closes.length
-      const prev = px(bs[i - 20], 'close')
-      const mom20 = prev ? close / prev - 1 : null
-      if (close > ma20 && mom20 != null && mom20 > 0) kept.push({ ...p, sleeve: 'A', style: '沪深300' })
+    return {
+      picks: [
+        ...a.top.map((x) => ({ ...x, sleeve: 'labA', style: '沪深300' })),
+        ...b.top.map((x) => ({ ...x, sleeve: 'labB', style: '创业板指' })),
+      ],
+      basisDate: a.basisDate || null,
+      style: '创业板指',
     }
-    return kept.length ? { picks: kept, basisDate: a.basisDate || null, style: '沪深300' } : null
-  }
-  // dual-voltarget：沪深300 vs 创业板 20日波动率，低波一侧优先（确定性）
-  if (src === 'voltarget') {
-    const a = loadSource('A', date)
-    const b = loadSource('B', date)
-    if (!a?.top?.length || !b?.top?.length) return null
-    const basis = a.basisDate || date
-    const volOf = async (secid) => {
-      const bs = await barsOf(secid)
-      const i = findLe(bs, basis)
-      if (i < 21) return null
-      const rs = []
-      for (let k = i - 19; k <= i; k += 1) {
-        const c = px(bs[k], 'close')
-        const p0 = px(bs[k - 1], 'close')
-        if (c && p0) rs.push(c / p0 - 1)
-      }
-      return rs.length ? Math.sqrt(rs.reduce((s0, r) => s0 + r * r, 0) / rs.length) : null
-    }
-    const va = await volOf('1.000300')
-    const vb = await volOf('0.399006')
-    const useA = va != null && vb != null ? va <= vb : false
-    return { picks: (useA ? a : b).top.map((x) => ({ ...x, sleeve: useA ? 'A' : 'B', style: useA ? '沪深300' : '创业板指' })), basisDate: basis, style: useA ? '沪深300' : '创业板指' }
   }
   return null
 }
