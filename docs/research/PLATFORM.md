@@ -85,3 +85,6 @@ A / B / dual    +     A-fixed20 / B-fixed20 / dual-fixed20 / blend50 / dual-t05 
 - 不用 2026-10-08~11-04 的 holdout 训练/选规则。
 - 不用 2026-11-04~12-05 的前瞻结果回头改策略再重评同一段。
 - 线上 `recommend*`、cron、`model.json` 不动；shadow 只写 `/data/shadow`。
+
+
+> 11-04 是 backfill：选股只用 ≤11-03 的数据，11-04 开盘建仓；11-05 起才是真正的盘前前瞻。
