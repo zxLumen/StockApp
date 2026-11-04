@@ -306,15 +306,15 @@ const reviewUser = (candidates, finalPicks) =>
  * `reasoning_content`，而它与正文共用 max_tokens —— 推荐这种「一次要几十次调用」的
  * 批处理下，思考预算吃光就意味着正文恒为空 / 被截断。统一对所有端点关思考。
  */
-async function chatOnce(cfg, messages) {
-  // 带重试：批处理下网络瞬时失败（fetch failed / 超时 / 断流）与限流（429）很常见，
-  // 重试可避免「选股批次失败 → 退化成交额兜底」污染回测（2025 年 5 月起即因此全空）。
-  // 只对网络/限流类重试，鉴权/参数类直接抛。限流退避更长。
+async function chatOnce(cfg, messages, { maxTokens = cfg.maxTokens } = {}) {
+  // 网络/限流重试；**另外**遇到 token 截断（finish_reason=length）自动把 maxTokens
+  // 翻倍重试（最高 8192），不要直接把半截 JSON 抛给上层。
   const maxTries = 5
+  let tokens = maxTokens
   for (let i = 1; ; i += 1) {
     try {
       const result = await streamChat({
-        config: cfg,
+        config: { ...cfg, maxTokens: tokens },
         messages,
         sessionId: crypto.randomUUID(),
         noThinking: true,
@@ -322,6 +322,11 @@ async function chatOnce(cfg, messages) {
       return result.text
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      const truncated = /token 上限|截断|finish_reason=length/i.test(msg)
+      if (truncated && tokens < 8192) {
+        tokens = Math.min(8192, tokens * 2)
+        continue
+      }
       const rateLimited = /429|usage limit|rate limit|too many requests/i.test(msg)
       const retriable =
         rateLimited || /fetch failed|超时|网络|中断|ECONN|ETIMEDOUT|socket|other side closed|50[234]/i.test(msg)
@@ -1822,12 +1827,18 @@ export async function decideActions(
     const decide =
       deps.decide ||
       (async (rs) => {
-        const text = await chatOnce(cfg, [
-          { role: 'system', content: exitSystem(hintChain, stopLossPct, minHoldDays) },
-          { role: 'user', content: exitUser(rs, { chain: hintChain, stopLossPct, minHoldDays }) },
-        ])
-        const arr = parseJsonLoose(text)?.decisions
-        return Array.isArray(arr) ? arr : []
+        // A 链可能有 100+ 活跃仓；一次输出所有决策会超 token。按 25 只分批，合并决策。
+        const out = []
+        for (let i = 0; i < rs.length; i += 25) {
+          const part = rs.slice(i, i + 25)
+          const text = await chatOnce(cfg, [
+            { role: 'system', content: exitSystem(hintChain, stopLossPct, minHoldDays) },
+            { role: 'user', content: exitUser(part, { chain: hintChain, stopLossPct, minHoldDays }) },
+          ])
+          const arr = parseJsonLoose(text)?.decisions
+          if (Array.isArray(arr)) out.push(...arr)
+        }
+        return out
       })
     const arr = await decide(rows)
     if (Array.isArray(arr)) decisions = new Map(arr.filter((x) => x && x.id).map((x) => [String(x.id), x]))
