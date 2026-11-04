@@ -151,7 +151,7 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
             <div className="pos-cell"><span className="pos-k">累计投入</span><b>{money(pos.summary.invested)}</b><span className="dim small">持仓 {pos.summary.openCount} · 了结 {pos.summary.closedCount}</span></div>
             <div className="pos-cell"><span className="pos-k">累计盈亏</span><b className={tone(pos.summary.total)}>{money(pos.summary.total)}</b><span className="dim small">已实现 {money(pos.summary.realized)}</span></div>
             <div className="pos-cell"><span className="pos-k">浮动盈亏</span><b className={tone(pos.summary.unrealized)}>{money(pos.summary.unrealized)}</b><span className="dim small">持仓成本 {money(pos.summary.openCost)}</span></div>
-            <div className="pos-cell"><span className="pos-k">收益率</span><b className={tone(pos.summary.returnPct)}>{pct(pos.summary.returnPct)}</b><span className="dim small">胜率 {pos.summary.winPct == null ? '—' : `${pos.summary.winPct}%`}</span></div>
+            <div className="pos-cell"><span className="pos-k">收益率</span><b className={tone(pos.summary.returnPct)}>{pct(pos.summary.returnPct)}</b><span className="dim small">胜率 {pos.summary.winPct == null ? '—' : `${Math.round(pos.summary.winPct * 100)}%`}</span></div>
           </div>
           <div className="lab-note">模拟持仓 · 截至 {pos.asOf} · 金额法（总盈亏/累计投入） · 对照 {pos.benchName}</div>
           <Spark data={pos.equity} />

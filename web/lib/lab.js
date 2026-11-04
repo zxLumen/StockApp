@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cachedKline } from './kline-cache.js'
 import { sharesFor } from './positions.js'
+import { getQuotes } from './market.js'
 import { DATA_DIR } from './scope.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -106,11 +107,22 @@ async function resolvePicks(st, date) {
   }
   return null
 }
-async function applyPick(p, rule, date) {
+async function applyPick(p, rule, date, opt = {}) {
   const bs = await barsOf(p.secid)
   if (!bs.length) return null
   const ei = findGe(bs, date)
-  if (ei < 0) return { ...p, entryDate: date, entryPrice: null, exitDate: null, exitPrice: null, holdDays: null, done: false, status: '待开盘', retPct: null, benchPct: null, excessPct: null }
+  // 当天：日K还没这根 → 用实时「今开/现价」兜底（与线上持仓同口径）；非当天不拿别的价充数。
+  if (ei < 0) {
+    if (opt.useQuote && Number(opt.quote?.open) > 0) {
+      const entry = Number(opt.quote.open)
+      const latest = Number(opt.quote.price) || entry
+      const hold = rule.type === 'llm' ? Math.max(1, Number(p.aiHoldDays ?? 10)) : rule.n ?? null
+      const bret = opt.indexQuote && Number(opt.indexQuote.open) > 0 ? Number(opt.indexQuote.price) / Number(opt.indexQuote.open) - 1 : null
+      const ret = latest / entry - 1
+      return { ...p, entryDate: date, entryPrice: round2(entry), exitDate: null, exitPrice: null, holdDays: hold, done: false, status: '持有中', retPct: pct(ret), benchPct: pct(bret), excessPct: pct(bret == null ? null : ret - bret), latestPrice: latest }
+    }
+    return { ...p, entryDate: date, entryPrice: null, exitDate: null, exitPrice: null, holdDays: null, done: false, status: '待开盘', retPct: null, benchPct: null, excessPct: null }
+  }
   const entry = px(bs[ei], 'open') ?? px(bs[ei], 'close')
   if (!entry) return null
   let exitBar = bs[bs.length - 1]
@@ -142,7 +154,7 @@ async function applyPick(p, rule, date) {
     const bx = exitKind === 'open' ? px(sb[bj], 'open') ?? px(sb[bj], 'close') : px(sb[bj], 'close')
     if (be && bx) bret = bx / be - 1
   }
-  return { ...p, entryDate: date, entryPrice: round2(entry), exitDate: exitBar.time, exitPrice: round2(exit), holdDays: hold, done, status: done ? (rule.type === 'trail' ? '已触发' : '已了结') : '持有中', retPct: pct(ret), benchPct: pct(bret), excessPct: pct(bret == null ? null : ret - bret) }
+  return { ...p, entryDate: date, entryPrice: round2(entry), exitDate: exitBar.time, exitPrice: round2(exit), holdDays: hold, done, status: done ? (rule.type === 'trail' ? '已触发' : '已了结') : '持有中', retPct: pct(ret), benchPct: pct(bret), excessPct: pct(bret == null ? null : ret - bret), latestPrice: opt.useQuote ? Number(opt.quote?.price) || null : null }
 }
 export async function labRecommend(id, date) {
   const st = REG.strategies.find((s) => s.id === id)
@@ -155,7 +167,20 @@ export async function labRecommend(id, date) {
   const r = await resolvePicks(st, d)
   if (!r) return null
   const rule = REG.holdRules[st.hold]
-  const top = (await Promise.all(r.picks.map((p) => applyPick(p, rule, d)))).filter(Boolean)
+  const bj = new Date(Date.now() + 8 * 3600_000)
+  const today = bj.toISOString().slice(0, 10)
+  const mins = bj.getUTCHours() * 60 + bj.getUTCMinutes()
+  const useQuote = d === today && mins >= 9 * 60 + 30
+  const qmap = new Map()
+  if (useQuote) {
+    try {
+      const q = await getQuotes([...new Set([...r.picks.map((p) => p.secid), ...Object.values(STYLE_SECID)])])
+      for (const x of q.items || []) qmap.set(x.secid, x)
+    } catch {
+      /* 行情挂了退回日K/待开盘 */
+    }
+  }
+  const top = (await Promise.all(r.picks.map((p) => applyPick(p, rule, d, { useQuote, quote: qmap.get(p.secid), indexQuote: qmap.get(STYLE_SECID[p.style] || '1.000300') })))).filter(Boolean)
   const rets = top.map((p) => p.retPct).filter((v) => v != null)
   const exs = top.map((p) => p.excessPct).filter((v) => v != null)
   return memoSet(key, {
@@ -198,7 +223,7 @@ export async function labPositions(id, asOf) {
     } else {
       const bs = await barsOf(l.secid)
       const i = findLe(bs, end)
-      const last = i >= 0 ? px(bs[i], 'close') : null
+      const last = l.latestPrice != null ? l.latestPrice : i >= 0 ? px(bs[i], 'close') : null
       const pnl = last != null ? round2(l.shares * (last - l.entryPrice)) : null
       if (pnl != null) unrealized += pnl
       openCost += l.shares * l.entryPrice
@@ -223,7 +248,7 @@ export async function labPositions(id, asOf) {
       else {
         const bs = await barsOf(l.secid)
         const i = findLe(bs, d)
-        const c = i >= 0 ? px(bs[i], 'close') : null
+        const c = d === end && l.latestPrice != null ? l.latestPrice : i >= 0 ? px(bs[i], 'close') : null
         if (c != null) un += l.shares * (c - l.entryPrice)
       }
     }
