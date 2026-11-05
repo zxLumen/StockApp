@@ -11,8 +11,8 @@
  * 曲线用金额法（逐日 (已实现+浮动)/累计投入）——其和与成本口径无关，故不受本口径影响。
  */
 import path from 'node:path'
+import fsp from 'node:fs/promises'
 import { readJson } from './store.js'
-import { cached } from './http.js'
 import { cachedKline } from './kline-cache.js'
 import { mapLimit } from './rank.js'
 import { getQuotes } from './market.js'
@@ -40,6 +40,52 @@ function bjNowMinutes() {
   return bj.getUTCHours() * 60 + bj.getUTCMinutes()
 }
 
+/**
+ * 持仓结果缓存：key 固定（all / hist:<date>），但**带数据指纹**。
+ * 推荐、actions 或 K 线目录一旦更新，指纹变化 → 立即重算；
+ * 避免盘后 12h TTL 把「K 线还没刷全时算出的错误账本」冻住一整天。
+ */
+const POS_MEMO = new Map()
+
+async function positionsFingerprint(dataDir) {
+  const targets = ['recommend', 'recommend-ai-fwd', 'recommend-factors-fwd', 'kline-cache', ACTIONS_FILE]
+  const parts = []
+  for (const t of targets) {
+    try {
+      const st = await fsp.stat(path.join(dataDir, t))
+      parts.push(`${t}:${st.mtimeMs}`)
+    } catch {
+      parts.push(`${t}:0`)
+    }
+  }
+  return parts.join('|')
+}
+
+async function cachedPositions(key, ttlMs, fingerprint, producer) {
+  const hit = POS_MEMO.get(key)
+  const now = Date.now()
+  if (hit) {
+    if (hit.inflight) return hit.inflight
+    if (hit.fingerprint === fingerprint && now - hit.at < ttlMs) return hit.value
+  }
+  const inflight = (async () => {
+    try {
+      const value = await producer()
+      POS_MEMO.set(key, { at: Date.now(), fingerprint, value })
+      return value
+    } catch (err) {
+      // 上游抖动时宁可给旧数据，也不要整页空白。
+      if (hit && hit.value !== undefined) {
+        POS_MEMO.set(key, { at: Date.now(), fingerprint, value: hit.value })
+        return hit.value
+      }
+      throw err
+    }
+  })()
+  POS_MEMO.set(key, { at: hit?.at ?? 0, fingerprint: hit?.fingerprint, value: hit?.value, inflight })
+  return inflight
+}
+
 /** 目标成本 1 万，**股数一律取整**：低价股整手（100 股/手）；一手就超 1 万的高价股取整股。 */
 export function sharesFor(price) {
   const p = Number(price)
@@ -63,13 +109,14 @@ const round2 = (n) => (n == null || !Number.isFinite(Number(n)) ? null : Number(
  */
 export async function buildPositionsAll(dataDir, { asOf, ttlMs } = {}) {
   const today = bjDate()
+  const fingerprint = await positionsFingerprint(dataDir)
   if (!asOf || asOf >= today) {
-    return cached('positions:all', ttlMs ?? recommendTtlMs(), () => computeAll(dataDir))
+    return cachedPositions('all', ttlMs ?? recommendTtlMs(), fingerprint, () => computeAll(dataDir))
   }
-  return cached(`positions:all:${asOf}`, ttlMs ?? HISTORY_TTL_MS, async () => {
+  return cachedPositions(`hist:${asOf}`, ttlMs ?? HISTORY_TTL_MS, fingerprint, async () => {
     const hist = await computeAll(dataDir, { historical: asOf })
     // 曲线保持「最新」完整口径（复用 latest 缓存）；回看点由前端标出。
-    const latest = await cached('positions:all', ttlMs ?? recommendTtlMs(), () => computeAll(dataDir)).catch(() => null)
+    const latest = await cachedPositions('all', ttlMs ?? recommendTtlMs(), fingerprint, () => computeAll(dataDir)).catch(() => null)
     if (latest) {
       for (const chain of ['dual', 'A', 'B']) {
         if (hist.chains[chain] && latest.chains[chain]) hist.chains[chain].equity = latest.chains[chain].equity
@@ -82,6 +129,11 @@ export async function buildPositionsAll(dataDir, { asOf, ttlMs } = {}) {
 async function computeAll(dataDir, { historical = null } = {}) {
   const benchBars = (await cachedKline(BENCH_SECID).catch(() => null))?.bars || []
   const today = bjDate()
+  const nowMin = bjNowMinutes()
+  const lastBarRaw = benchBars.length ? benchBars[benchBars.length - 1].time : today
+  const lastCompleted = benchBars.filter((b) => b.time < today).at(-1)?.time ?? lastBarRaw
+  // 数据源在开盘前可能已经写入「今天」的占位 K 线（开/收盘≈昨收），不能当已完成。
+  const lastBar = lastBarRaw === today && nowMin < 9 * 60 + 30 ? lastCompleted : lastBarRaw
 
   let actions
   let valuationDate
@@ -99,10 +151,9 @@ async function computeAll(dataDir, { historical = null } = {}) {
   } else {
     const raw = await readJson(path.join(dataDir, ACTIONS_FILE), null)
     actions = raw && raw.positions ? raw.positions : {}
-    const lastBar = benchBars.length ? benchBars[benchBars.length - 1].time : today
     // 盘中（已开盘）且当日日K还没出 → 用**实时价**给「今天」这一点估值：收盘后实时≈收盘，无缝；
     // 盘前无今日 → 用最近收盘，不会幽灵。这样盘中曲线跟着动，且不引入盘前假点。
-    useIntraday = today > lastBar && isTradingDay(today) && bjNowMinutes() >= 9 * 60 + 30
+    useIntraday = today > lastBar && isTradingDay(today) && nowMin >= 9 * 60 + 30
     valuationDate = useIntraday ? today : lastBar
   }
 
@@ -113,17 +164,19 @@ async function computeAll(dataDir, { historical = null } = {}) {
     if (s && (!globalStart || s < globalStart)) globalStart = s
   }
   // 可选回看日期：沪深300 有日K的交易日（从全局起点起）。历史回看复用同一份，避免选择器抖动。
+  // 盘前同样排除「今天」的占位 K 线，避免日历/曲线出现假点。
+  const calendarEnd = lastBarRaw === today && nowMin < 9 * 60 + 30 ? lastCompleted : today
   const dates = benchBars
     .map((b) => b.time)
-    .filter((t) => (!globalStart || t >= globalStart) && t <= today)
+    .filter((t) => (!globalStart || t >= globalStart) && t <= calendarEnd)
     .sort()
   // 盘中/收盘后日K还没更新到当天时，曲线已用实时价补出「今天」这一点 —— 故把 today 也列进来，
   // 保证日历与曲线末点一致（latest / historical 用同一份，切日期时不会忽隐忽现）。
   const lastBench = benchBars.length ? benchBars[benchBars.length - 1].time : null
   if (
     isTradingDay(today) &&
+    nowMin >= 9 * 60 + 30 &&
     (!lastBench || today > lastBench) &&
-    bjNowMinutes() >= 9 * 60 + 30 &&
     !dates.includes(today)
   ) {
     dates.push(today)
@@ -152,7 +205,7 @@ async function earliestBasis(dataDir, chain) {
 }
 
 function emptyChain() {
-  return { orig: emptyMode(), ai: emptyMode(), equity: [] }
+  return { orig: emptyMode(), ai: emptyMode(), equity: [], pricing: { approxBuys: 0, droppedBuys: 0 } }
 }
 function emptyMode() {
   return { summary: emptySummary(), open: [], closed: [], trades: [] }
@@ -189,6 +242,7 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
         buyDate,
         atOpen,
         buyPrice: atOpen ? null : Number(s.price),
+        snapshotPrice: Number(s.price) || null,
         origHold,
         pos: actions[`${chain}:${D}:${s.code}`] || null,
       })
@@ -231,18 +285,42 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
     }
   }
   // 开买开卖：回填 atOpen 的买入价（生效日开盘）。生效日当天日K还没这根（新浪日K盘中不含当日），
-  // 用实时「今开」兜底；两者都取不到（还没开盘 / 无该日）才丢弃该笔。
+  // 用实时「今开」兜底；仍取不到时**不能丢掉整笔历史**（否则曲线会整段归零）：
+  // 依次退当日收盘 → 最近收盘 → 推荐快照价，并计入 pricing.approxBuys。
   const todayBj = bjDate()
+  let approxBuys = 0
+  let droppedBuys = 0
   for (let i = buys.length - 1; i >= 0; i -= 1) {
     const b = buys[i]
     if (!b.atOpen) continue
     let px = openOn(b.secid, b.buyDate)
-    if (!(Number.isFinite(px) && px > 0) && b.buyDate === todayBj) {
+    let exact = Number.isFinite(px) && px > 0
+    if (!exact && b.buyDate === todayBj) {
       const o = Number(liveMap.get(b.secid)?.open)
-      if (Number.isFinite(o) && o > 0) px = o
+      if (Number.isFinite(o) && o > 0) {
+        px = o
+        exact = true
+      }
+    }
+    if (!exact) {
+      const c = closeOn(b.secid, b.buyDate)
+      if (Number.isFinite(c) && c > 0) px = c
+    }
+    if (!(Number.isFinite(px) && px > 0)) {
+      const lc = lastClose.get(b.secid)?.close
+      if (Number.isFinite(lc) && lc > 0) px = lc
+    }
+    if (!(Number.isFinite(px) && px > 0)) {
+      const sp = Number(b.snapshotPrice)
+      if (Number.isFinite(sp) && sp > 0) px = sp
     }
     b.buyPrice = px
-    if (!Number.isFinite(b.buyPrice) || b.buyPrice <= 0) buys.splice(i, 1)
+    if (!Number.isFinite(b.buyPrice) || b.buyPrice <= 0) {
+      buys.splice(i, 1)
+      droppedBuys += 1
+    } else if (!exact) {
+      approxBuys += 1
+    }
   }
   if (!buys.length) return emptyChain()
   const livePrice = (secid) =>
@@ -266,6 +344,8 @@ async function computeChain(dataDir, chain, actions, benchBars, globalStart, val
     orig: { summary: o.summary, open: o.open, closed: o.closed, trades: o.trades },
     ai: { summary: a.summary, open: a.open, closed: a.closed, trades: a.trades },
     equity,
+    // 供排查：开盘价缺失时用近似价补了多少笔、彻底无价丢弃了多少笔（正常应为 0）。
+    pricing: { approxBuys, droppedBuys },
   }
 }
 
