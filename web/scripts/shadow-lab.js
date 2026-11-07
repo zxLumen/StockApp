@@ -13,15 +13,24 @@ const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] :
 const FORCE = argv.includes('--force')
 const SOURCE = opt('--source', 'labB')
 const log = (m) => console.log(`[lab] ${m}`)
-const liveDates = fs.readdirSync(path.join(DATA, 'recommend')).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort()
-const date = opt('--date', '') || liveDates.at(-1)
+const liveDates = fs.readdirSync(path.join(DATA, 'recommend'))
+  .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+  .map((f) => f.slice(0, 10))
+  .sort()
+const date = (opt('--date', '') || liveDates.at(-1) || '').replace(/\.json$/, '')
 if (!date) { log('没有线上生效日'); process.exit(0) }
 const live = JSON.parse(fs.readFileSync(path.join(DATA, 'recommend', `${date}.json`), 'utf8'))
 const basisDate = live.basisDate || date
 const outFile = path.join(DATA, 'lab', SOURCE === 'labA' ? 'A' : 'B', `${date}.json`)
 if (fs.existsSync(outFile) && !FORCE) { log(`已存在 ${outFile}，跳过`); process.exit(0) }
-const kline = (sid) => cachedKline(sid)
-const idxBars = ((await cachedKline('1.000300')).bars || []).filter((b) => b.time <= basisDate)
+// 回填/补跑按冻结缓存算：ttlMs 极大 → 不回源拉「今天」的行情。
+// 再统一截断到 basisDate，保证候选池/初筛/因子都只看到生效日之前的数据（严格 point-in-time）。
+const kline = async (sid) => {
+  const k = await cachedKline(sid, { ttlMs: Number.MAX_SAFE_INTEGER })
+  if (!k?.bars) return k
+  return { ...k, bars: k.bars.filter((b) => b.time && b.time <= basisDate) }
+}
+const idxBars = (await kline('1.000300')).bars || []
 const idxClose = new Map(idxBars.map((b) => [b.time, b.close]))
 const Z = Object.fromEntries(Object.keys(DEFAULT_WEIGHTS).map((k) => [k, 0]))
 
@@ -33,7 +42,7 @@ async function select({ universe, weights, useFinance }) {
     const cut = bars.filter((b) => b.time <= basisDate)
     if (cut.length < 21) return null
     let fin = null
-    if (useFinance) { try { fin = await financeFactors(c.secid, basisDate, { dataDir: DATA }) } catch { fin = null } }
+    if (useFinance) { try { fin = await financeFactors(c.secid, basisDate, { dataDir: DATA, ttlMs: Number.MAX_SAFE_INTEGER }) } catch { fin = null } }
     const feat = computeFactors(cut, idxClose, fin)
     return feat ? { ...c, feat } : null
   })
