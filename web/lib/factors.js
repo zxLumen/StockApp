@@ -227,22 +227,44 @@ export const FACTOR_WEIGHTS = DEFAULT_WEIGHTS
  * 走强（普涨/上行）→ tilt 大，把反转权重挪给动量/相对强度，保住上涨弹性；
  * 走弱/震荡 → tilt→0，回到反转策略。
  * 阈值与斜率是**先验设定**（不按月份拟合），后续只用 2026 训练/验证窗检验。
+ *
+ * 注意：`tilt=0` 有两种完全不同的来源 ——
+ *   - `below-lo`：数据齐全、只是行情确实弱（合法，2026-10 的 20/20 天就是这种）；
+ *   - `no-bars` / `insufficient` / `bad-close` / `bad-range`：数据质量问题。
+ * 旧实现把两者都静默返回 0，导致「缺指数 K 线」长期无法与「弱市」区分。需要诊断信息时用
+ * `regimeTiltDetail`；`regimeTilt` 保持原来的数字返回，避免改动调用方。
  */
-export function regimeTilt(idxBars) {
-  if (!Array.isArray(idxBars) || idxBars.length < 21) return 0
+export function regimeTiltDetail(idxBars) {
+  const empty = (reason) => ({ tilt: 0, reason, raw: null, mom20: null, above: null, n: 0 })
+  if (!Array.isArray(idxBars) || idxBars.length === 0) return empty('no-bars')
   const n = idxBars.length
+  if (n < 21) return { ...empty('insufficient'), n }
   const closes = idxBars.map((b) => b.close)
-  if (closes.some((c) => c == null)) return 0
-  const c20 = closes[n - 21]
-  const mom20 = c20 ? closes[n - 1] / c20 - 1 : 0 // 近20日指数涨幅
-  const ma20 = closes.slice(n - 20).reduce((a, b) => a + b, 0) / 20
-  const above = ma20 ? closes[n - 1] / ma20 - 1 : 0 // 高于 MA20 的幅度
+  if (closes.some((c) => c == null || !Number.isFinite(Number(c)))) return { ...empty('bad-close'), n }
+  const c20 = Number(closes[n - 21])
+  const last = Number(closes[n - 1])
+  const mom20 = c20 ? last / c20 - 1 : 0 // 近20日指数涨幅
+  const ma20 = closes.slice(n - 20).reduce((a, b) => a + Number(b), 0) / 20
+  const above = ma20 ? last / ma20 - 1 : 0 // 高于 MA20 的幅度
   const raw = mom20 + above // 合成强度
   // 线性映射到 [0,1]：强度 ≤ lo → 0；≥ hi → 1。阈值可经 env 覆盖做稳健性检验。
   const { lo, hi } = tiltRange()
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+    return { tilt: 0, reason: 'bad-range', raw, mom20, above, n, lo, hi }
+  }
   const t = (raw - lo) / (hi - lo)
-  return Math.max(0, Math.min(1, t))
+  const tilt = Math.max(0, Math.min(1, t))
+  const reason = raw <= lo ? 'below-lo' : raw >= hi ? 'above-hi' : 'ok'
+  return { tilt, reason, raw, mom20, above, n, lo, hi }
 }
+
+export function regimeTilt(idxBars) {
+  return regimeTiltDetail(idxBars).tilt
+}
+
+/** 这些 reason 才是真的「数据质量异常」；`below-lo` 是合法弱市，不应告警。 */
+export const TILT_DATA_ISSUES = new Set(['no-bars', 'insufficient', 'bad-close', 'bad-range'])
+export const isTiltDataIssue = (reason) => TILT_DATA_ISSUES.has(reason)
 
 /**
  * 给定「原始因子值」的横截面数组，算每只的综合分（截面 z-score 加权）。

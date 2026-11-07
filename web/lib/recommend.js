@@ -10,7 +10,7 @@ import { cached } from './http.js'
 import { industryOf, coarseSector, industryMapSize } from './industry.js'
 import { readJson, writeJson } from './store.js'
 import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars, ma20Deviation, stablePool, OBJECTIVE } from './rank.js'
-import { computeFactors, compositeScores, regimeTilt } from './factors.js'
+import { computeFactors, compositeScores, regimeTiltDetail, isTiltDataIssue } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
 import { tiltThreshold, selectConfig } from './model-config.js'
@@ -553,26 +553,42 @@ export async function selectTop10(cfg, scored, finalPicks = 10, onLog = () => {}
  */
 export async function resolveTilt(deps = {}, basisDate) {
   let idxBars = []
+  let diag = { tilt: 0, reason: 'no-bars' }
   try {
     const rawIdx = deps.indexBars
       ? deps.indexBars
       : ((await cachedKline(BENCH_SECID).catch(() => null))?.bars || [])
     idxBars = Array.isArray(rawIdx) ? rawIdx.filter((b) => b.time <= basisDate) : []
+    diag = regimeTiltDetail(idxBars)
   } catch {
     idxBars = []
+    diag = { tilt: 0, reason: 'no-bars' }
   }
-  return { tilt: Number.isFinite(deps.tilt) ? deps.tilt : regimeTilt(idxBars), idxBars }
+  // 显式注入（回测/调参/单测）不属于数据质量问题，单独标记。
+  const explicit = Number.isFinite(deps.tilt)
+  const tilt = explicit ? deps.tilt : diag.tilt
+  return {
+    tilt,
+    idxBars,
+    // 数据质量守卫：调用方可据此区分「弱市合法 0」与「缺 K 线/窗口不足/坏收盘价」。
+    tiltDiag: { ...diag, tilt, reason: explicit ? 'explicit' : diag.reason },
+  }
 }
 
 /**
  * regime 双链路择链：**逐日**看 tilt 决定走 A 还是 B（不是按月）。
- *   tilt >= thr → 'A'：成交额池 + AI 初筛 + 买入评分（激进，强涨市弹性足）
- *   tilt <  thr → 'B'：稳健池 + 客观多因子（保守，跌市/震荡市更稳）
+ *   tilt >= thr → 'B'：稳健池 + 客观多因子（实测高 beta 1.30~1.53，强市进攻）
+ *   tilt <  thr → 'A'：成交额池 + AI 初筛 + 买入评分（实测低 beta 0.62 / -0.87，弱市防御）
+ *
+ * 2026-11-07 修正：旧实现把两条链路的角色写反了。`docs/runs/DUAL-GATE-2026-11-07.md`
+ * 实测 20 天（10-09~11-05）A 超额 +0.78%、B 超额 -4.63%；按旧映射 tilt 恒 0 → 始终选 B，
+ * 等于弱市天天满仓高 beta。角色按实测 beta 对调，阈值与选股逻辑不动。
+ * 拿不到 tilt / 阈值非法 → 走 A（低 beta 防御），不在数据缺失时赌高 beta。
  * 纯函数（无 IO），供单测与调用方共用。
  */
 export function pickChain(tilt, thr) {
-  if (!Number.isFinite(tilt) || !Number.isFinite(thr)) return 'B'
-  return tilt >= thr ? 'A' : 'B'
+  if (!Number.isFinite(tilt) || !Number.isFinite(thr)) return 'A'
+  return tilt >= thr ? 'B' : 'A'
 }
 
 /**
@@ -656,8 +672,11 @@ export async function runRecommendDaily({
   if (!pool.length) throw new Error('候选池为空（新浪成分接口没返回数据）')
 
   // 市场状态（regime）：口径集中在 resolveTilt，双链路与单链路必须一致。
-  const { tilt, idxBars: idxBarsForRegime } = await resolveTilt(deps, basisDate)
+  const { tilt, idxBars: idxBarsForRegime, tiltDiag } = await resolveTilt(deps, basisDate)
   if (selectMode === 'factors') onLog(`市场状态 tilt=${tilt.toFixed(2)}（0=纯反转，1=强动量）`)
+  if (isTiltDataIssue(tiltDiag.reason)) {
+    onLog(`⚠ tilt 数据质量异常（${tiltDiag.reason}），按 0 处理（走防御 A）`)
+  }
 
   // ① 客观初筛：只用方向中性的规则把 500 压到 objTarget（默认 200），方向交给模型。
   // regime 自适应偏离上限：跌市收紧（15%，避追高）、涨市放宽（40%，纳入强势领涨股）。
@@ -866,11 +885,11 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
 /**
  * regime **双链路**每日推荐：两条链路都跑，再按当日 tilt 选一份落盘。
  *
- *   tilt >= thr → A 链路（激进）：成交额池（aSharePool）+ AI 初筛 100 + 买入评分 Top10
- *   tilt <  thr → B 链路（保守）：稳健池（stablePool）+ 客观多因子 Top10
+ *   tilt >= thr → B 链路（进攻）：稳健池（stablePool）+ 客观多因子 Top10，实测高 beta
+ *   tilt <  thr → A 链路（防御）：成交额池（aSharePool）+ AI 初筛 100 + 买入评分 Top10，实测低 beta
  *
- * 择链口径与回测评估 `scripts/eval-ab-combo.js --thr 0.6` 完全一致（逐日 tilt，非按月），
- * 2024-09 / 2025-08 / 2025-09 / 2026 各窗均按此口径验过。
+ * 择链口径与回测评估 `scripts/eval-ab-combo.js` 完全一致（逐日 tilt，非按月）。
+ * 2026-11-07 按实测 beta 对调了 A/B 角色（见 pickChain），阈值与选股逻辑未动。
  *
  * 两条都用 dryRun 跑 —— 复用 runRecommendDaily 的全部选股逻辑而不复制一份，
  * 只有**被选中的**那份写进 outSubdir（所以前端读法完全不变）。
@@ -879,7 +898,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  * 顺序执行 A 再 B（不并发）：上游东财/新浪按 IP 限流，并发翻倍容易踩熔断。
  *
  * @param {object} opts 透传给 runRecommendDaily（dataDir/cfg/concurrency/deps/dryRun 等）
- * @param {number} [opts.thr=0.6] tilt 阈值，≥ 走 A
+ * @param {number} [opts.thr=0.6] tilt 阈值，≥ 走 B（进攻）
  * @param {number} [opts.poolPages=5] A 链路成交额池页数（每页 100 → 500 只）
  * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
  */
@@ -887,12 +906,15 @@ export async function runRecommendRegime(opts = {}) {
   const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, candPool = 30, deps = {}, onLog = () => {} } = opts
 
   const basisDate = deps.basisDate || bjDate()
-  const { tilt } = await resolveTilt(deps, basisDate)
+  const { tilt, tiltDiag } = await resolveTilt(deps, basisDate)
   const chain = pickChain(tilt, thr)
   const useA = chain === 'A'
   onLog(
-    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ ${useA ? 'A 链路：成交额池 + AI 选股（激进）' : 'B 链路：稳健池 + 客观因子（保守）'}`,
+    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ ${useA ? 'A 链路：成交额池 + AI 选股（防御/低 beta）' : 'B 链路：稳健池 + 客观因子（进攻/高 beta）'}`,
   )
+  if (isTiltDataIssue(tiltDiag.reason)) {
+    onLog(`⚠ tilt 数据质量异常（${tiltDiag.reason}），按 0 处理（走防御 A）`)
+  }
 
   // A 注入成交额池；B 必须把 pool 显式打回 undefined，否则会继承 A 的注入。
   // 单条链路失败不阻断整体：cron 每天必须出排行，哪怕只剩一条链路可用。
@@ -999,13 +1021,16 @@ export async function runRecommendRefresh(opts = {}) {
   } = opts
 
   const basisDate = deps.basisDate || bjDate()
-  const { tilt } = await resolveTilt(deps, basisDate)
+  const { tilt, tiltDiag } = await resolveTilt(deps, basisDate)
   const intended = pickChain(tilt, thr)
   const useA = intended === 'A'
   onLog(
     `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ 盘前刷新 A、B 两条链路` +
       `（选中 ${intended}，将覆盖 ${outSubdir}/）`,
   )
+  if (isTiltDataIssue(tiltDiag.reason)) {
+    onLog(`⚠ tilt 数据质量异常（${tiltDiag.reason}），按 0 处理（走防御 A）`)
+  }
 
   // 与 runRecommendRegime 同构：两条都跑（顺序，不并发——上游按 IP 限流），哪条挂了不阻断另一条。
   // dryRun:true 让 runRecommendDaily 自己不落盘 —— 我们统一补上 regime / 刷新章后再写，避免中间态。
@@ -1799,7 +1824,7 @@ export async function decideActions(
     onLog(`[${chain}] 无活跃持仓`)
     return { decided: 0, changed: 0 }
   }
-  // 提示词链路上下文：单一链路直接用它；混链则优先给 B（更保守）的说明。
+  // 提示词链路上下文：单一链路直接用它；混链则优先给 B 的说明。
   const effChains = [...new Set(active.map((a) => a.effChain).filter(Boolean))]
   const hintChain = effChains.length === 1 ? effChains[0] : effChains.includes('B') ? 'B' : effChains[0] || ''
   const secids = [...new Set(active.map((a) => a.secid))]

@@ -14,6 +14,7 @@ import {
   pctFromPick,
   selectTop10,
   pickChain,
+  resolveTilt,
   resolveChainPayload,
   runRecommendRefresh,
   actionKey,
@@ -34,20 +35,21 @@ import {
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
 
-test('pickChain：逐日 tilt 门控（≥阈值走 A 激进链路，否则走 B 保守链路）', () => {
-  // 阈值 0.6 的实际分界：2024-09 实测 tilt 只取 0.00 / 1.00 两端。
-  assert.equal(pickChain(1.0, 0.6), 'A')
-  assert.equal(pickChain(0.6, 0.6), 'A', '边界含等号')
-  assert.equal(pickChain(0.59, 0.6), 'B')
-  assert.equal(pickChain(0.0, 0.6), 'B')
+test('pickChain：逐日 tilt 门控（≥阈值走 B 进攻链路，否则走 A 防御链路）', () => {
+  // 2026-11-07 按实测 beta 对调角色：B 高 beta(1.30~1.53) 用于强市，A 低 beta(0.62/-0.87) 用于弱市。
+  assert.equal(pickChain(1.0, 0.6), 'B')
+  assert.equal(pickChain(0.6, 0.6), 'B', '边界含等号')
+  assert.equal(pickChain(0.59, 0.6), 'A')
+  assert.equal(pickChain(0.0, 0.6), 'A', '弱市 → 防御 A（旧实现错误地走了高 beta B）')
   // 中间值同样按阈值切（37% 的交易日落在这段）。
-  assert.equal(pickChain(0.41, 0.6), 'B')
-  assert.equal(pickChain(0.66, 0.6), 'A')
+  assert.equal(pickChain(0.41, 0.6), 'A')
+  assert.equal(pickChain(0.66, 0.6), 'B')
   // 阈值可配（日后用真实前瞻数据重标定）。
-  assert.equal(pickChain(0.41, 0.3), 'A')
-  // 拿不到 tilt / 阈值非法 → 保守走 B，绝不因为数据缺失去赌激进链路。
-  assert.equal(pickChain(NaN, 0.6), 'B')
-  assert.equal(pickChain(1.0, NaN), 'B')
+  assert.equal(pickChain(0.41, 0.3), 'B')
+  // 拿不到 tilt / 阈值非法 → 走低 beta 的 A，不在数据缺失时赌高 beta。
+  assert.equal(pickChain(NaN, 0.6), 'A')
+  assert.equal(pickChain(null, 0.6), 'A')
+  assert.equal(pickChain(1.0, NaN), 'A')
 })
 
 test('resolveChainPayload：优先落 tilt 选中的那条；那条挂了退回另一条；全挂返回 null', () => {
@@ -402,8 +404,8 @@ test('runRecommendRefresh：A/B 两条都重算、两条归档都写；A 日也�
     dataDir: dir,
     cfg: {},
     thr: 0.6,
-    // tilt=0.9 ≥ 0.6 → 选 A（修法 1 的核心：A 也要吃最新资讯）
-    deps: { basisDate: basis, tilt: 0.9 },
+    // tilt=0.0 < 0.6 → 选 A（弱市防御；修法 1 的核心：A 也要吃最新资讯）
+    deps: { basisDate: basis, tilt: 0.0 },
     poolA: () => [],
     pool: () => [],
     runDaily: fakeRun,
@@ -432,7 +434,7 @@ test('runRecommendRefresh：A/B 两条都重算、两条归档都写；A 日也�
 test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回另一条并记 fellBack', async () => {
   const date = '2026-10-12'
   const basis = '2026-10-09'
-  // B 日：tilt=0.0 < 0.6 → 选 B，dual 应被 B 覆盖
+  // B 日：tilt=0.9 ≥ 0.6 → 选 B（强市进攻），dual 应被 B 覆盖
   const dirB = await mkWritable(date, basis, 'B')
   const fakeRun = async (o) => ({
     date,
@@ -446,7 +448,7 @@ test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回
     dataDir: dirB,
     cfg: {},
     thr: 0.6,
-    deps: { basisDate: basis, tilt: 0.0 },
+    deps: { basisDate: basis, tilt: 0.9 },
     poolA: () => [],
     pool: () => [],
     runDaily: fakeRun,
@@ -473,7 +475,7 @@ test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回
     dataDir: dirF,
     cfg: {},
     thr: 0.6,
-    deps: { basisDate: basis, tilt: 0.9 },
+    deps: { basisDate: basis, tilt: 0.0 },
     poolA: () => [],
     pool: () => [],
     runDaily: flaky,

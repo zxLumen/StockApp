@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { computeFactors, zscore, compositeScores, regimeTilt } from '../lib/factors.js'
+import { computeFactors, zscore, compositeScores, regimeTilt, regimeTiltDetail, isTiltDataIssue } from '../lib/factors.js'
 
 const bar = (close, volume = 1000) => ({ time: '2026-01-01', open: close, high: close, low: close, close, volume })
 
@@ -85,6 +85,35 @@ test('regimeTilt：指数走强 → 高 tilt；走弱 → 0；不足 21 根 → 
   assert.equal(regimeTilt(idxSeq(100).slice(0, 10)), 0, '不足 21 根')
   assert.ok(regimeTilt(idxSeq(112)) > 0.9, '大涨应接近 1')
   assert.equal(regimeTilt(idxSeq(90)), 0, '大跌应归 0')
+})
+
+test('regimeTiltDetail：涨/跌/震荡三组 tilt 不是常数，且能区分「合法弱市 0」与数据质量异常', () => {
+  // 涨：最后 112 vs 20 日均值 ~100 → tilt=1
+  const up = regimeTiltDetail(idxSeq(112))
+  // 跌：最后 90 → 低于 lo，合法弱市归 0（不是缺数据）
+  const down = regimeTiltDetail(idxSeq(90))
+  // 震荡：围绕 100 小幅波动，最终略高于均线 → 中间值
+  const choppy = Array.from({ length: 40 }, (_, i) =>
+    idxBar(`2026-02-${String(i + 1).padStart(2, '0')}`, 100 + Math.sin(i) + i * 0.005),
+  )
+  const mid = regimeTiltDetail(choppy)
+  const vals = [up.tilt, down.tilt, mid.tilt]
+  assert.ok(up.tilt > 0.9, '上涨应接近 1')
+  assert.equal(down.tilt, 0, '下跌归 0')
+  assert.equal(down.reason, 'below-lo', '弱市是合法 0，不能报成缺数据')
+  assert.ok(mid.tilt > 0 && mid.tilt < 1, `震荡应在 (0,1)，实际 ${mid.tilt}`)
+  assert.ok(new Set(vals).size >= 2, '三组 tilt 不能是同一个常数')
+
+  // 真·数据质量问题必须与弱市区分开
+  assert.equal(regimeTiltDetail(null).reason, 'no-bars')
+  assert.equal(regimeTiltDetail([]).reason, 'no-bars')
+  assert.equal(regimeTiltDetail(idxSeq(100).slice(0, 10)).reason, 'insufficient')
+  const bad = idxSeq(112)
+  bad[3] = { ...bad[3], close: null }
+  assert.equal(regimeTiltDetail(bad).reason, 'bad-close')
+  assert.equal(isTiltDataIssue('below-lo'), false, '弱市不告警')
+  assert.equal(isTiltDataIssue('insufficient'), true, '缺窗口要告警')
+  assert.equal(isTiltDataIssue('no-bars'), true, '缺指数 K 线要告警')
 })
 
 test('regimeTilt：tilt>0 把反转权重挪给动量（上涨股得分抬升）', () => {

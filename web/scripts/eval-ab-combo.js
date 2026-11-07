@@ -3,7 +3,7 @@
 //   node scripts/eval-ab-combo.js --a recommend-ai-ab --b recommend-factors-ab --from ... --to ... [--thr 0.5]
 //   # 真实前瞻（每天双链路各归档一份，见 lib/recommend.js 的 runRecommendRegime）：
 //   node scripts/eval-ab-combo.js --a recommend-ai-fwd --b recommend-factors-fwd
-// 规则：tilt >= thr → 用 A（上涨市）；否则用 B（下跌/震荡市）。
+// 规则：统一走 pickChain —— tilt >= thr → B（进攻/高 beta）；否则 A（防御/低 beta）。
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -11,6 +11,7 @@ import { DATA_DIR } from '../lib/scope.js'
 import { readJson } from '../lib/store.js'
 import { cachedKline } from '../lib/kline-cache.js'
 import { regimeTilt } from '../lib/factors.js'
+import { pickChain } from '../lib/recommend.js'
 import { tradingLag, STALE_CLOSED_DAYS } from '../lib/trading-days.js'
 
 const argv = process.argv.slice(2)
@@ -107,7 +108,7 @@ async function main() {
     if (!exA || !exB) continue
     const month = basis.slice(0, 7)
     for (const a of agg) {
-      const useA = a.m.label === 'A only' ? true : a.m.label === 'B only' ? false : tilt >= a.m.thr
+      const useA = a.m.label === 'A only' ? true : a.m.label === 'B only' ? false : pickChain(tilt, a.m.thr) === 'A'
       const exs = useA ? exA.exs : exB.exs
       const rs = useA ? exA.rets : exB.rets
       for (const e of exs) a.ex.push(e)
