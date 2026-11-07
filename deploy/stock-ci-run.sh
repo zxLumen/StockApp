@@ -37,7 +37,11 @@ STOCK_IMAGE="${REPO_IMAGE}:${REQUESTED_TAG}"
 # compose 统一用 latest：主站 deploy.sh 也是 STOCK_TAG=latest。两处 image 引用
 # 一致后，主站全量部署不会再因为 tag 字符串不同而无谓地重建 stock。
 COMPOSE_TAG="latest"
-cd "$(dirname "$0")" || exit 1
+# ⚠️ compose 工程不在本仓：stock 服务定义在 zxLumen-Blog/docker/docker-compose.yml，
+# 容器名 docker-stock-1。此前 `cd $(dirname $0)` 进 StockApp/deploy 后 compose 报
+# "no configuration file provided"，导致 CI 的 deploy job 连续失败（11-04 / 11-05 / 11-07）。
+COMPOSE_DIR="${STOCK_COMPOSE_DIR:-/home/ubuntu/zxLumen-Blog/docker}"
+cd "${COMPOSE_DIR}" || exit 1
 
 echo "==> StockApp 部署 请求 tag=${REQUESTED_TAG} → compose tag=${COMPOSE_TAG}"
 SUDO=""
