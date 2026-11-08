@@ -53,6 +53,41 @@ if ! ${SUDO} docker manifest inspect "${STOCK_IMAGE}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# ── 回滚点：在重建之前，把「当前正在运行的 stock 镜像」打上时间戳 tag ──
+# 必须放在 compose up 之前，否则拿到的是刚部署的新镜像。取不到运行中的容器
+# （首次部署 / 容器名变了）只打日志跳过，绝不中断部署。
+ROLLBACK_KEEP="${ROLLBACK_KEEP:-3}"
+STOCK_CONTAINER="${STOCK_CONTAINER:-docker-stock-1}"
+# 容器不存在时 inspect 非 0，必须 `|| true`，否则 pipefail + set -e 会直接中断部署
+CURRENT_IMAGE_ID="$(${SUDO} docker inspect --format '{{.State.Running}} {{.Image}}' "${STOCK_CONTAINER}" 2>/dev/null \
+  | awk '$1 == "true" {print $2}' || true)"
+if [ -z "${CURRENT_IMAGE_ID}" ]; then
+  # 容器名兜底：按 compose 服务名找当前容器
+  RUNNING_CID="$(${SUDO} docker compose ps -q stock 2>/dev/null || true)"
+  if [ -n "${RUNNING_CID}" ]; then
+    CURRENT_IMAGE_ID="$(${SUDO} docker inspect --format '{{.Image}}' "${RUNNING_CID}" 2>/dev/null || true)"
+  fi
+fi
+
+if [ -n "${CURRENT_IMAGE_ID}" ]; then
+  ROLLBACK_TAG="rollback-$(date +%Y%m%d-%H%M%S)"
+  if ${SUDO} docker tag "${CURRENT_IMAGE_ID}" "${REPO_IMAGE}:${ROLLBACK_TAG}"; then
+    echo "[stock-deploy] 回滚点 ${REPO_IMAGE}:${ROLLBACK_TAG} ← ${CURRENT_IMAGE_ID}"
+    # 时间戳格式可按字典序倒排 = 新旧，只保留最近 ROLLBACK_KEEP 个
+    OLD_ROLLBACK_TAGS="$(${SUDO} docker images --format '{{.Repository}}:{{.Tag}}' "${REPO_IMAGE}" 2>/dev/null \
+      | grep -E "^${REPO_IMAGE}:rollback-[0-9]{8}(-[0-9]{6})?$" | sort -r | tail -n +$((ROLLBACK_KEEP + 1)) || true)"
+    while IFS= read -r old_tag; do
+      [ -n "${old_tag}" ] || continue
+      ${SUDO} docker rmi "${old_tag}" >/dev/null 2>&1 || true
+      echo "[stock-deploy] 清理旧回滚点 ${old_tag}"
+    done <<< "${OLD_ROLLBACK_TAGS}"
+  else
+    echo "[stock-deploy] 打回滚 tag 失败，继续部署"
+  fi
+else
+  echo "[stock-deploy] 未找到运行中的 ${STOCK_CONTAINER}，跳过回滚 tag"
+fi
+
 # 只拉 stock、只重建 stock —— 不碰 app / caddy / 其它子应用。
 # 拉 CI 指定的构建，并同步打上 latest：保证部署的就是本次构建，
 # 且 compose 里的 image 引用与主站一致（避免每次主站部署重建 stock）。
