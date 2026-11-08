@@ -1,3 +1,4 @@
+# CI deploy verification 2026-11-08: comment-only change, no runtime impact.
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY web/package.json web/package-lock.json ./
