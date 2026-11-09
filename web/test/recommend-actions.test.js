@@ -389,6 +389,110 @@ test('reconcileCross：门卫——入口已批准(entryApproved)的仓不参与
   assert.equal(actions.positions[actionKey('dual', '2026-10-08', 'X')].exited, true, '门卫：不翻转仓位状态')
 })
 
+// ── decideActions 默认分批：批间容错 + 失败批 5 只重试 ──────────────────────────
+const batchCodes = (n) => Array.from({ length: n }, (_, i) => String(600000 + i))
+const batchTop = (n) => batchCodes(n).map((code, i) => recTop(`1.${code}`, code, `票${i + 1}`, 1500, 10))
+
+async function seedBatch(dir, n, date = '2026-10-08') {
+  await fsp.mkdir(path.join(dir, CHAIN_SUBDIR.A), { recursive: true })
+  await writeJson(path.join(dir, CHAIN_SUBDIR.A, `${date}.json`), {
+    date,
+    basisDate: date,
+    top: batchTop(n),
+    regime: { chain: 'A' },
+  })
+}
+
+/** 假 chatOnce：按本批代码决定是否抛错，并返回 extend 决策（便于断言哪些批真正落地）。 */
+function batchChatStub(shouldFail, calls = []) {
+  return async (_cfg, messages) => {
+    const user = messages[1].content
+    const ids = [...user.matchAll(/id=([^｜]+)｜/g)].map((m) => m[1])
+    const codes = ids.map((id) => id.split(':').pop())
+    calls.push(codes)
+    if (shouldFail(codes)) throw new Error('finish_reason=length')
+    return JSON.stringify({
+      decisions: ids.map((id) => ({ id, action: 'extend', holdDays: 30, reason: 'test' })),
+    })
+  }
+}
+
+const batchQuotes = (n) => quotesOf(batchTop(n).map((t) => ({ secid: t.secid, price: 1600 })))
+
+test('decideActions：第 2 批失败只影响该批，第 1/3 批决策仍返回（重试仍失败）', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  await seedBatch(dir, 25, basis) // 批次：1-10 / 11-20 / 21-25
+  const bad = new Set(batchCodes(25).slice(10, 20)) // 第 2 批（含其 5 只重试）
+  const calls = []
+  const logs = []
+  const deps = {
+    quotes: batchQuotes(25),
+    chatOnce: batchChatStub((codes) => codes.some((c) => bad.has(c)), calls),
+  }
+  const r = await decideActions(dir, {}, { chain: 'A', today, deps, onLog: (m) => logs.push(m) })
+
+  assert.equal(r.decided, 25)
+  assert.equal(r.changed, 15, '第 1、3 批共 15 只落地，第 2 批被放弃')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('A', basis, '600000')].holdDays, 30, '第 1 批已决策')
+  assert.equal(actions.positions[actionKey('A', basis, '600024')].holdDays, 30, '第 3 批已决策')
+  assert.equal(actions.positions[actionKey('A', basis, '600010')], undefined, '第 2 批未决策')
+
+  const failLogs = logs.filter((m) => /批失败/.test(m))
+  assert.ok(failLogs.length > 0, '记录了失败批')
+  assert.ok(failLogs.every((m) => /第 2\/3 批/.test(m)), '只记录第 2 批失败')
+  assert.ok(failLogs[0].includes('600010,600011,600012,600013,600014,600015,600016,600017,600018,600019'), '失败批带代码列表')
+  assert.ok(failLogs[0].includes('finish_reason=length'), '失败批带错误信息')
+  assert.ok(logs.some((m) => /决策 15/.test(m)))
+})
+
+test('decideActions：失败批用 5 只重试成功，全部决策仍返回', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  await seedBatch(dir, 25, basis)
+  const calls = []
+  const logs = []
+  // 仅第 2 批的 10 只首轮失败；拆成 5 只重试时成功。
+  const deps = {
+    quotes: batchQuotes(25),
+    chatOnce: batchChatStub((codes) => codes.length === 10 && codes.includes('600010'), calls),
+  }
+  const r = await decideActions(dir, {}, { chain: 'A', today, deps, onLog: (m) => logs.push(m) })
+
+  assert.equal(r.decided, 25)
+  assert.equal(r.changed, 25, '重试成功后 25 只全部落地')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('A', basis, '600010')].holdDays, 30, '第 2 批经重试已决策')
+  assert.ok(logs.some((m) => /第 2\/3 批失败/.test(m)), '记录首轮失败')
+  assert.equal(logs.filter((m) => /重试成功/.test(m)).length, 2, '两个 5 只子批各成功一次')
+  assert.ok(!logs.some((m) => /第 2\/3 批失败.*放弃/.test(m)))
+})
+
+test('decideActions：失败批 5 只重试仍失败才放弃该批，其它批不受影响', async () => {
+  const dir = await tmp()
+  const basis = '2026-10-08'
+  const today = addTradingDays(basis, 4)
+  await seedBatch(dir, 12, basis) // 批次：1-10 / 11-12
+  const bad = new Set(['600010', '600011'])
+  const logs = []
+  const deps = {
+    quotes: batchQuotes(12),
+    chatOnce: batchChatStub((codes) => codes.some((c) => bad.has(c))),
+  }
+  const r = await decideActions(dir, {}, { chain: 'A', today, deps, onLog: (m) => logs.push(m) })
+
+  assert.equal(r.decided, 12)
+  assert.equal(r.changed, 10, '第 2 批重试仍失败 → 放弃，仅第 1 批落地')
+  const actions = await readJson(path.join(dir, 'recommend-actions.json'))
+  assert.equal(actions.positions[actionKey('A', basis, '600000')].holdDays, 30)
+  assert.equal(actions.positions[actionKey('A', basis, '600010')], undefined, '重试仍失败 → 不落库')
+  assert.ok(logs.some((m) => /第 2\/2 批失败/.test(m)))
+  assert.ok(logs.some((m) => /第 2 批重试失败.*放弃该批/.test(m)))
+})
+
 test('backfillEntryFlags：为未退出的 B 仓补 entryDefer/entryApproved；A 与已退出仓不动', async () => {
   const dir = await tmp()
   const basis = '2026-10-08'

@@ -1847,21 +1847,51 @@ export async function decideActions(
       remaining: tradingDaysUntil(today, a.end),
     }
   })
+  // A 链可能有 100+ 活跃仓；单批 10 只，避免一次输出过长被 token 截断。
+  // 批间相互隔离：任意一批失败都不影响其它批；失败批再用 5 只重试一次。
+  const EXIT_BATCH_SIZE = 10
+  const EXIT_RETRY_SIZE = 5
+  const chat = deps.chatOnce || chatOnce
+  const runExitBatch = async (part) => {
+    const text = await chat(cfg, [
+      { role: 'system', content: exitSystem(hintChain, stopLossPct, minHoldDays) },
+      { role: 'user', content: exitUser(part, { chain: hintChain, stopLossPct, minHoldDays }) },
+    ])
+    const arr = parseJsonLoose(text)?.decisions
+    return Array.isArray(arr) ? arr : []
+  }
+  const codesOf = (rs) => rs.map((r) => r.code).join(',')
   let decisions = new Map()
   try {
     const decide =
       deps.decide ||
       (async (rs) => {
-        // A 链可能有 100+ 活跃仓；一次输出所有决策会超 token。按 25 只分批，合并决策。
         const out = []
-        for (let i = 0; i < rs.length; i += 25) {
-          const part = rs.slice(i, i + 25)
-          const text = await chatOnce(cfg, [
-            { role: 'system', content: exitSystem(hintChain, stopLossPct, minHoldDays) },
-            { role: 'user', content: exitUser(part, { chain: hintChain, stopLossPct, minHoldDays }) },
-          ])
-          const arr = parseJsonLoose(text)?.decisions
-          if (Array.isArray(arr)) out.push(...arr)
+        const batchCount = Math.ceil(rs.length / EXIT_BATCH_SIZE)
+        for (let i = 0, b = 1; i < rs.length; i += EXIT_BATCH_SIZE, b += 1) {
+          const part = rs.slice(i, i + EXIT_BATCH_SIZE)
+          try {
+            out.push(...(await runExitBatch(part)))
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            onLog(
+              `[${chain}] AI 决策第 ${b}/${batchCount} 批失败（${part.length} 只：${codesOf(part)}）：${msg}；` +
+                `改用 ${EXIT_RETRY_SIZE} 只重试`,
+            )
+            // 失败批拆小重试：每个 5 只子批独立容错，仍失败的子批才放弃。
+            for (let j = 0; j < part.length; j += EXIT_RETRY_SIZE) {
+              const sub = part.slice(j, j + EXIT_RETRY_SIZE)
+              try {
+                out.push(...(await runExitBatch(sub)))
+                onLog(`[${chain}] AI 决策第 ${b} 批重试成功（${sub.length} 只：${codesOf(sub)}）`)
+              } catch (e2) {
+                const msg2 = e2 instanceof Error ? e2.message : String(e2)
+                onLog(
+                  `[${chain}] AI 决策第 ${b} 批重试失败（${sub.length} 只：${codesOf(sub)}）：${msg2}；放弃该批`,
+                )
+              }
+            }
+          }
         }
         return out
       })
