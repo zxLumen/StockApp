@@ -2344,3 +2344,320 @@ button.member-row:hover {
 .lab-table tbody tr:hover { background: var(--zx-panel2); }
 .lab-summary { margin-top: 10px; }
 .lab-spark { width: 100%; height: 90px; margin: 8px 0; background: var(--zx-panel); border: 1px solid var(--zx-border); border-radius: 8px; }
+
+/* ---------- 移动端（iPhone 13 / 14 Pro Max 等 ≤640px） ----------
+ * 只做 PWA 壳与响应式：顶部导航换行 + 页签横向滑动、表格进横向容器、
+ * 点击区 ≥44px、刘海屏 safe-area；不改桌面布局与业务逻辑。
+ */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  html,
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  #root,
+  .app {
+    min-height: 100dvh;
+  }
+
+  .app {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* 顶栏：品牌 + 搜索 + 设置一行，页签单独一行横向滑动 */
+  .top {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px
+      calc(12px + env(safe-area-inset-left));
+  }
+
+  .brand {
+    font-size: 15px;
+  }
+
+  .top-search {
+    order: 2;
+    flex: 1 1 150px;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .top-search input,
+  .search input {
+    min-height: 44px;
+  }
+
+  .top > .btn.ghost {
+    order: 3;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .tabs {
+    order: 4;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    border-radius: 12px;
+    padding: 2px;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: none;
+    padding: 10px 14px;
+    min-height: 44px;
+  }
+
+  .body {
+    gap: 12px;
+    padding: 12px calc(12px + env(safe-area-inset-right)) 20px calc(12px + env(safe-area-inset-left));
+  }
+
+  .side {
+    margin-top: 4px;
+  }
+
+  /* 首页指数卡：390 宽放两列，避免一屏只有一张卡 */
+  .idx-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .idx-card {
+    padding: 10px 12px;
+  }
+
+  .idx-price {
+    font-size: 20px;
+  }
+
+  .news a {
+    min-height: 44px;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .news-meta {
+    font-size: 11px;
+  }
+
+  /* 板块榜：列多，放进横向容器，别把 8 列压成不可读 */
+  .boards-wide {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .boards-wide .board-row {
+    min-width: 600px;
+  }
+
+  /* 策略实验室表格 */
+  .lab-wrap {
+    padding: 12px 0 28px;
+  }
+
+  .table-scroll .lab-table {
+    min-width: 620px;
+  }
+
+  /* 板块详情：成分股列多，横向滚动保住股票名可读 */
+  .members {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .member-row {
+    min-width: 500px;
+  }
+
+  /* K 线浮窗按实际宽度夹在卡片内，避免贴右边缘时把页面撑宽 */
+  .kline-tip {
+    max-width: calc(100% - 12px);
+  }
+
+  /* 模拟持仓表格 */
+  .pos-list {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pos-row {
+    min-width: 620px;
+  }
+
+  .pos-row.trade {
+    min-width: 760px;
+  }
+
+  /* 每日推荐卡片头：允许换行，收益/周期/买入分/展开不再被截断 */
+  .rec-wrap {
+    padding: 0 0 16px;
+  }
+
+  .rec-row {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: 8px 10px;
+  }
+
+  .rec-rank {
+    width: 18px;
+  }
+
+  .rec-name {
+    flex: 1 1 55%;
+    min-width: 0;
+  }
+
+  .rec-day,
+  .rec-since,
+  .rec-hold,
+  .rec-exit {
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .rec-score {
+    align-self: center;
+  }
+
+  .rec-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .rec-summary {
+    padding: 0 10px 4px;
+  }
+
+  .rec-detail {
+    padding: 4px 10px 10px;
+  }
+
+  .rec-due-item {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .rec-due-name,
+  .rec-due-num,
+  .rec-due-pct {
+    min-width: 0;
+  }
+
+  .rec-due-meta {
+    flex: 1 1 100%;
+  }
+
+  .rec-head {
+    gap: 8px;
+  }
+
+  .rec-chain-tab,
+  .pos-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .rec-nav-btn {
+    width: 44px;
+  }
+
+  .board-head button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .pos-row {
+    min-height: 44px;
+  }
+
+  .chip,
+  .lab-select {
+    min-width: 44px;
+  }
+
+  .rec-cal {
+    right: 0;
+    width: min(280px, calc(100vw - 28px));
+  }
+
+  /* 详情页：价格单独一行，返回/加自选保持 44px 点击区 */
+  .detail-head {
+    gap: 10px;
+  }
+
+  .detail-price {
+    margin-left: 0;
+  }
+
+  .facts {
+    gap: 6px 14px;
+    font-size: 12px;
+  }
+
+  /* 弹窗留出刘海/底部安全区 */
+  .modal {
+    padding: calc(20px + env(safe-area-inset-top)) 12px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .modal-box {
+    max-height: 88dvh;
+  }
+
+  /* 移动端点按目标 ≥44px */
+  .top .tab,
+  .btn,
+  .link,
+  .chip,
+  .news-more,
+  .search-row,
+  .idx-card,
+  .mini-card,
+  .pick-card,
+  .rank-row,
+  .member-row,
+  .board-row,
+  .watch-main,
+  .watch-del,
+  .rec-toggle,
+  .rec-date-btn,
+  .rec-nav-btn,
+  .rec-cal-head button,
+  .rec-cal-ym,
+  .rec-cal-pick button,
+  .rec-cal-day,
+  .rec-due-head,
+  .rec-due-item,
+  .pos-sec-head,
+  .pos-pager-btn,
+  .lab-tab,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  .watch-del {
+    width: 44px;
+    padding: 0;
+  }
+}

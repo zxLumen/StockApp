@@ -116,7 +116,8 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
             {' · '}均超额 <b className={tone(rec.summary.meanExcess)}>{pct(rec.summary.meanExcess)}</b>
             {rec.summary.pending > 0 && ` · 待开盘 ${rec.summary.pending}`}
           </div>
-          <table className="lab-table">
+          <div className="table-scroll">
+            <table className="lab-table">
             <thead>
               <tr>
                 <th>#</th><th>股票</th><th>买点</th><th>状态</th><th>持有</th><th>收益</th><th>超额</th>
@@ -135,7 +136,8 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
@@ -149,7 +151,8 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
           </div>
           <div className="lab-note">模拟持仓 · 截至 {pos.asOf} · 金额法（总盈亏/累计投入） · 对照 {pos.benchName}</div>
           <Spark data={pos.equity} />
-          <table className="lab-table">
+          <div className="table-scroll">
+            <table className="lab-table">
             <thead><tr><th>持仓</th><th>股数</th><th>成本</th><th>现价</th><th>盈亏</th><th>收益</th></tr></thead>
             <tbody>
               {pos.open.map((p) => (
@@ -163,8 +166,10 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
                 </tr>
               ))}
             </tbody>
-          </table>
-          <table className="lab-table">
+            </table>
+          </div>
+          <div className="table-scroll">
+            <table className="lab-table">
             <thead><tr><th>已了结</th><th>卖出日</th><th>卖价</th><th>股数</th><th>盈亏</th></tr></thead>
             <tbody>
               {pos.closed.map((p) => (
@@ -177,14 +182,16 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
       {tab === 'rank' && rank && (
         <div>
           <div className="lab-note">截至 {rank.asOf || '—'} · 按金额法收益率排序 · 一个月后再看完整口径</div>
-          <table className="lab-table">
+          <div className="table-scroll">
+            <table className="lab-table">
             <thead><tr><th>#</th><th>策略</th><th>来源</th><th>持有</th><th>收益率</th><th>累计盈亏</th><th>持仓/了结</th></tr></thead>
             <tbody>
               {rank.items.map((r, i) => (
@@ -199,7 +206,8 @@ export default function LabView({ onPick }: { onPick: (s: { code: string; name: 
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
     </div>

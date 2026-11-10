@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   BaselineSeries,
   CandlestickSeries,
@@ -127,6 +127,8 @@ export default function KLineChart({
   // 记录上一次渲染的「尾部 bar」：尾不变而根数变多＝往前 prepend，需要平移视窗避免跳动。
   const prevView = useRef<{ last: string; len: number } | null>(null)
   const [tip, setTip] = useState<Tip | null>(null)
+  const tipRef = useRef<HTMLDivElement | null>(null)
+  const [tipW, setTipW] = useState(168)
 
   // 分时只画最新交易日（服务端已过滤，这里再兜一层）；其余周期用全量多日数据。
   const viewBars = useMemo(() => (timeshare ? lastDayBars(bars) : bars), [bars, timeshare])
@@ -412,7 +414,21 @@ export default function KLineChart({
 
   const boxW = boxRef.current?.clientWidth ?? 0
   const boxH = boxRef.current?.clientHeight ?? height
-  const tipW = 168
+
+  // tooltip 的实际宽度会被 MA5/MA10/MA20 那一行撑到 ~310px（不是固定 168），
+  // 手机上按 168 估算会把浮窗推出屏幕、产生横向滚动。先渲染再按实际宽度夹住。
+  useLayoutEffect(() => {
+    if (!tip) return
+    const w = tipRef.current?.offsetWidth
+    if (w && Math.abs(w - tipW) > 1) setTipW(w)
+  }, [tip, tipW])
+
+  const tipLeft = (() => {
+    const w = Math.min(tipW, Math.max(120, boxW - 12))
+    const preferred = tip?.x != null ? tip.x + 14 : 6
+    if (preferred + w <= boxW - 6) return preferred
+    return Math.max(6, Math.min((tip?.x ?? 0) - w - 8, boxW - w - 6))
+  })()
 
   // K 线 tooltip 的 O/H/L/C 着色基准＝该 bar 的昨收（close − change）；缺失时退化为按涨跌方向。
   const refClose = tip?.bar.change != null ? tip.bar.close - tip.bar.change : null
@@ -427,8 +443,9 @@ export default function KLineChart({
       {tip && (
         <div
           className="kline-tip"
+          ref={tipRef}
           style={{
-            left: tip.x + 14 + tipW > boxW ? Math.max(6, tip.x - tipW - 8) : tip.x + 14,
+            left: tipLeft,
             top: Math.max(6, Math.min(tip.y - 6, boxH - (timeshare ? 190 : 216))),
           }}
         >

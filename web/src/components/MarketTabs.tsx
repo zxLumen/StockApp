@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Market } from '../types'
 
 const TABS: { key: Market; label: string }[] = [
@@ -17,8 +18,16 @@ export default function MarketTabs({
   value: Market
   onChange: (m: Market) => void
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  // 手机端页签横向滚动：切页 / 恢复会话态时把当前页签滚进可视区，避免「高亮在屏幕外」。
+  useEffect(() => {
+    const active = listRef.current?.querySelector<HTMLElement>('.tab.is-active')
+    active?.scrollIntoView({ block: 'nearest', inline: 'center' })
+  }, [value])
+
   return (
-    <div className="tabs" role="tablist">
+    <div className="tabs" role="tablist" ref={listRef}>
       {TABS.map((t) => (
         <button
           key={t.key}
