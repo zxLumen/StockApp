@@ -129,7 +129,7 @@ function pickSummary(top: RecommendStock[] | undefined) {
   }
 }
 
-/** 每日推荐：regime 双链路（tilt ≥ 阈值走 A 成交额池+AI，否则走 B 稳健池+多因子）的 Top10，点开看详情。 */
+/** 每日推荐：线上固定 A（成交额池 + AI）Top10；B（稳健池 + 多因子）已转研究 shadow，仅归档对照。 */
 export default function PickView({ onPick }: { onPick: (s: { code: string; name: string; secid: string }) => void }) {
   const [date, setDate] = useSessionState<string>('recDate', '')
   /** 展示哪条链路：dual=每日按 regime 选中的那份（默认）；B=稳健池多因子链路；A=成交额池 AI 链路。 */
@@ -226,7 +226,8 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
   const dateSet = new Set(dates)
   const summary = useMemo(() => pickSummary(data?.top), [data])
 
-  // 链路切换：双链路（按 regime 选中的那份）↔ A 激进（成交额池 + AI）↔ B 保守（稳健池 + 多因子）。
+  // 链路切换：双链路（线上固定 A）↔ A 激进（成交额池 + AI）↔ B 保守（研究 shadow，仅归档）。
+  // B 已退役为 shadow-only：线上 pickChain 默认恒 A，B 仅在 STOCK_ENABLE_B=1 且 tilt≥0.6 时可选。
   const chainSwitch = (
     <div className="rec-chain-switch" role="tablist" aria-label="选择链路">
       {([['dual', '双链路'], ['A', 'A 激进'], ['B', 'B 保守']] as [RecommendChain, string][]).map(([c, label]) => (
@@ -252,6 +253,9 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
         <div className="rec-head">
           <h2>每日推荐</h2>
           {chainSwitch}
+          <em className="rec-chain-shadow" title="B 链路（稳健池 + 多因子）留出集表现不佳，已退出线上择链；仍照常计算并归档，仅供研究对照。">
+            B 已转研究（shadow）
+          </em>
           {dates.length > 0 && (
             <label className="rec-dates-select">
               日期
@@ -267,9 +271,9 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
           )}
         </div>
         <div className="note">
-          该链路今日推荐尚未生成。服务器会在收盘后自动跑双链路：当日动量倾斜 ≥ 阈值走「成交额池 +
-          AI 选股」（激进），否则走「稳健池 + 多因子」（保守），挑出 Top10；两条链路各自的前瞻归档
-          是「B 保守」与「A 激进」的来源。
+          该链路今日推荐尚未生成。服务器会在收盘后照常跑 A、B 两条链路：线上固定走「成交额池 +
+          AI 选股」（A）；「稳健池 + 多因子」（B）已转研究（shadow），仅归档供对照。「B 保守」页签
+          查看的是 B 的前瞻归档。
         </div>
       </div>
     )
@@ -282,6 +286,9 @@ export default function PickView({ onPick }: { onPick: (s: { code: string; name:
       <div className="rec-head">
         <h2>每日推荐</h2>
         {chainSwitch}
+        <em className="rec-chain-shadow" title="B 链路（稳健池 + 多因子）留出集表现不佳，已退出线上择链；仍照常计算并归档，仅供研究对照。">
+          B 已转研究（shadow）
+        </em>
         <span className="note small">
           <em className={`rec-chain ${meta.cls}`}>{meta.badge}</em>{' '}
           {data.date} 生效 · {meta.poolLabel} {data.pool.size} → 初筛 {data.pool.filtered ?? '—'} → 评估 {data.pool.candidates} → Top{data.top.length}

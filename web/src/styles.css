@@ -2122,6 +2122,16 @@ button.member-row:hover {
   background: rgba(76, 139, 245, 0.2);
   color: #cfe1ff;
 }
+/* B 退役说明：线上择链固定 A，B 仅研究 shadow 归档 */
+.rec-chain-shadow {
+  font-size: 11px;
+  font-style: normal;
+  color: #d1a24a;
+  border: 1px dashed rgba(209, 162, 74, 0.5);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
 
 /* ---------- 模拟推荐持仓 ---------- */
 .pos-wrap {

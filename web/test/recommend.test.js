@@ -35,21 +35,34 @@ import {
   FORWARD_B_DIR,
 } from '../lib/recommend.js'
 
-test('pickChain：逐日 tilt 门控（≥阈值走 B 进攻链路，否则走 A 防御链路）', () => {
-  // 2026-11-07 按实测 beta 对调角色：B 高 beta(1.30~1.53) 用于强市，A 低 beta(0.62/-0.87) 用于弱市。
-  assert.equal(pickChain(1.0, 0.6), 'B')
-  assert.equal(pickChain(0.6, 0.6), 'B', '边界含等号')
-  assert.equal(pickChain(0.59, 0.6), 'A')
-  assert.equal(pickChain(0.0, 0.6), 'A', '弱市 → 防御 A（旧实现错误地走了高 beta B）')
-  // 中间值同样按阈值切（37% 的交易日落在这段）。
-  assert.equal(pickChain(0.41, 0.6), 'A')
-  assert.equal(pickChain(0.66, 0.6), 'B')
-  // 阈值可配（日后用真实前瞻数据重标定）。
-  assert.equal(pickChain(0.41, 0.3), 'B')
-  // 拿不到 tilt / 阈值非法 → 走低 beta 的 A，不在数据缺失时赌高 beta。
-  assert.equal(pickChain(NaN, 0.6), 'A')
-  assert.equal(pickChain(null, 0.6), 'A')
-  assert.equal(pickChain(1.0, NaN), 'A')
+test('pickChain：B 已退役（shadow-only），无开关恒 A；开关 + tilt≥0.6 才得 B', () => {
+  const prev = process.env.STOCK_ENABLE_B
+  // 默认（未设置 STOCK_ENABLE_B）：无论 tilt 多高都走 A。
+  delete process.env.STOCK_ENABLE_B
+  try {
+    assert.equal(pickChain(1.0, 0.6), 'A', '无开关恒 A（B 不再线上可选）')
+    assert.equal(pickChain(0.8, 0.6), 'A')
+    assert.equal(pickChain(0.9, 0.3), 'A', '调低 thr 也不放行')
+    assert.equal(pickChain(NaN, 0.6), 'A')
+
+    // 开关打开（研究/回测）：回到逐日 tilt 门控，且 tilt 不得低于 0.6。
+    process.env.STOCK_ENABLE_B = '1'
+    assert.equal(pickChain(0.8, 0.6), 'B', '开关 + tilt 0.8 → B')
+    assert.equal(pickChain(0.6, 0.6), 'B', '边界含等号')
+    assert.equal(pickChain(0.59, 0.6), 'A')
+    assert.equal(pickChain(0.8, 0.3), 'B')
+    assert.equal(pickChain(0.41, 0.3), 'A', '硬门槛 0.6 优先于自定义 thr')
+    assert.equal(pickChain(NaN, 0.6), 'A', '开关 + 缺 tilt → A')
+    assert.equal(pickChain(null, 0.6), 'A')
+    assert.equal(pickChain(0.8, NaN), 'A')
+
+    // 开关值必须是 '1'，其它值视同关闭。
+    process.env.STOCK_ENABLE_B = 'true'
+    assert.equal(pickChain(0.8, 0.6), 'A')
+  } finally {
+    if (prev === undefined) delete process.env.STOCK_ENABLE_B
+    else process.env.STOCK_ENABLE_B = prev
+  }
 })
 
 test('resolveChainPayload：优先落 tilt 选中的那条；那条挂了退回另一条；全挂返回 null', () => {
@@ -431,11 +444,10 @@ test('runRecommendRefresh：A/B 两条都重算、两条归档都写；A 日也�
   assert.equal(b.regime.chain, 'B')
 })
 
-test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回另一条并记 fellBack', async () => {
+test('runRecommendRefresh：B 日（仅开 STOCK_ENABLE_B 时）覆盖 dual 为 B；选中的那条挂了退回另一条并记 fellBack', async () => {
   const date = '2026-10-12'
   const basis = '2026-10-09'
-  // B 日：tilt=0.9 ≥ 0.6 → 选 B（强市进攻），dual 应被 B 覆盖
-  const dirB = await mkWritable(date, basis, 'B')
+  // B 日：tilt=0.9 ≥ 0.6，但 B 已退役 → 默认仍走 A；只有显式开研究开关才选 B。
   const fakeRun = async (o) => ({
     date,
     generatedAt: new Date().toISOString(),
@@ -444,18 +456,31 @@ test('runRecommendRefresh：B 日覆盖 dual 为 B；选中的那条挂了退回
     pool: { size: 1, filtered: 1, candidates: 1 },
     top: [{ code: o.selectMode === 'ai' ? 'aaa' : 'bbb' }],
   })
-  await runRecommendRefresh({
-    dataDir: dirB,
-    cfg: {},
-    thr: 0.6,
-    deps: { basisDate: basis, tilt: 0.9 },
-    poolA: () => [],
-    pool: () => [],
-    runDaily: fakeRun,
-    onLog: () => {},
-  })
+  const run = () =>
+    runRecommendRefresh({
+      dataDir: dirB,
+      cfg: {},
+      thr: 0.6,
+      deps: { basisDate: basis, tilt: 0.9 },
+      poolA: () => [],
+      pool: () => [],
+      runDaily: fakeRun,
+      onLog: () => {},
+    })
+  let dirB = await mkWritable(date, basis, 'B')
+  const pDefault = await run()
+  assert.equal(pDefault.regime.chain, 'A', '无开关：tilt 0.9 也只走 A（B 已退役）')
+  dirB = await mkWritable(date, basis, 'B')
+  const prev = process.env.STOCK_ENABLE_B
+  process.env.STOCK_ENABLE_B = '1'
+  try {
+    await run()
+  } finally {
+    if (prev === undefined) delete process.env.STOCK_ENABLE_B
+    else process.env.STOCK_ENABLE_B = prev
+  }
   const dualB = await readJson(path.join(dirB, 'recommend', `${date}.json`))
-  assert.equal(dualB.top[0].code, 'bbb', 'B 日 dual 覆盖为 B')
+  assert.equal(dualB.top[0].code, 'bbb', '开关打开后 B 日 dual 覆盖为 B')
   assert.equal(dualB.regime.chain, 'B')
 
   // A 挂了 + tilt 选 A → dual 退回 B，regime.fellBack=true（cron 仍要出当天排行）

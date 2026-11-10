@@ -575,20 +575,28 @@ export async function resolveTilt(deps = {}, basisDate) {
   }
 }
 
+/** B 链路是否允许进入线上（默认关闭 = shadow-only）。B 仍照常计算并写前瞻归档。 */
+export const bChainEnabled = () => process.env.STOCK_ENABLE_B === '1'
+
+/** B 退役后的硬门槛：即使调低 thr，也不得在 tilt < 0.6 时启用 B。 */
+export const B_RETIRE_MIN_TILT = 0.6
+
 /**
  * regime 双链路择链：**逐日**看 tilt 决定走 A 还是 B（不是按月）。
  *   tilt >= thr → 'B'：稳健池 + 客观多因子（实测高 beta 1.30~1.53，强市进攻）
  *   tilt <  thr → 'A'：成交额池 + AI 初筛 + 买入评分（实测低 beta 0.62 / -0.87，弱市防御）
  *
- * 2026-11-07 修正：旧实现把两条链路的角色写反了。`docs/runs/DUAL-GATE-2026-11-07.md`
- * 实测 20 天（10-09~11-05）A 超额 +0.78%、B 超额 -4.63%；按旧映射 tilt 恒 0 → 始终选 B，
- * 等于弱市天天满仓高 beta。角色按实测 beta 对调，阈值与选股逻辑不动。
- * 拿不到 tilt / 阈值非法 → 走 A（低 beta 防御），不在数据缺失时赌高 beta。
- * 纯函数（无 IO），供单测与调用方共用。
+ * 2026-11-10 **B 退役为 shadow-only**（`docs/runs/B-RETIRE-2026-11-10.md`）：
+ * 留出集 pooled n=190 均值 -9.28%、胜率 10%（A +0.58% / 71.6%），B 不再作为线上可选链路。
+ * 默认恒走 A；仅当 `STOCK_ENABLE_B=1` **且** tilt ≥ max(thr, 0.6) 时才放行 B（研究/回测用）。
+ * B 链路照常计算并写 `recommend-factors-fwd/` 前瞻归档，lab/shadow 不受影响。
+ * 拿不到 tilt / 阈值非法 → 走 A，不在数据缺失时赌高 beta。
+ * 纯函数（除读环境开关外无 IO），供单测与调用方共用。
  */
 export function pickChain(tilt, thr) {
+  if (!bChainEnabled()) return 'A'
   if (!Number.isFinite(tilt) || !Number.isFinite(thr)) return 'A'
-  return tilt >= thr ? 'B' : 'A'
+  return tilt >= Math.max(thr, B_RETIRE_MIN_TILT) ? 'B' : 'A'
 }
 
 /**
@@ -890,6 +898,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  *
  * 择链口径与回测评估 `scripts/eval-ab-combo.js` 完全一致（逐日 tilt，非按月）。
  * 2026-11-07 按实测 beta 对调了 A/B 角色（见 pickChain），阈值与选股逻辑未动。
+ * 2026-11-10 B 退役为 shadow-only：默认恒 A，B 仍照常跑并归档（见 pickChain）。
  *
  * 两条都用 dryRun 跑 —— 复用 runRecommendDaily 的全部选股逻辑而不复制一份，
  * 只有**被选中的**那份写进 outSubdir（所以前端读法完全不变）。
@@ -910,8 +919,9 @@ export async function runRecommendRegime(opts = {}) {
   const chain = pickChain(tilt, thr)
   const useA = chain === 'A'
   onLog(
-    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ ${useA ? 'A 链路：成交额池 + AI 选股（防御/低 beta）' : 'B 链路：稳健池 + 客观因子（进攻/高 beta）'}`,
+    `市场状态 tilt=${tilt.toFixed(2)}（阈值 ${thr}）→ ${useA ? 'A 链路：成交额池 + AI 选股（防御/低 beta）' : 'B 链路：稳健池 + 客观因子（研究开关已开）'}`,
   )
+  if (!bChainEnabled()) onLog('B 已转研究（shadow-only）：仅照常跑并归档，不参与线上择链（需 STOCK_ENABLE_B=1 才可选）')
   if (isTiltDataIssue(tiltDiag.reason)) {
     onLog(`⚠ tilt 数据质量异常（${tiltDiag.reason}），按 0 处理（走防御 A）`)
   }
