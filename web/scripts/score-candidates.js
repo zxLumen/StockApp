@@ -22,7 +22,7 @@ import {
 } from '../lib/recommend.js'
 import { financeFactors } from '../lib/finance.js'
 import { regimeTilt } from '../lib/factors.js'
-import { eventWindowDays } from '../lib/model-config.js'
+import { eventWindowDays, objectiveDeviationRange } from '../lib/model-config.js'
 import { eventScores } from '../lib/ann-factor.js'
 import { buildNameIndex, buildDailyInfo } from '../lib/news-factor.js'
 
@@ -42,8 +42,8 @@ const FORCE = has('--force')
 const REGIME = has('--regime')
 const OUTDIR = has('--out') ? argv[argv.indexOf('--out') + 1] : REGIME ? 'llm-rank-regime' : 'llm-rank'
 const INDEX = '1.000300'
-const DEV_LO = Number(process.env.RECOMMEND_DEV_LO) || 15
-const DEV_HI = Number(process.env.RECOMMEND_DEV_HI) || 40
+// 客观初筛 MA20 偏离区间：默认读 config/model.json（env 仅调参覆盖）。
+const { lo: DEV_LO, hi: DEV_HI } = objectiveDeviationRange()
 
 const slice = (bars, D) => bars.filter((b) => b.time <= D)
 

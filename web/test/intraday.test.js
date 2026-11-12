@@ -10,7 +10,7 @@ import {
   slotLabel,
   slotTs,
   tsToSlot,
-} from '../src/lib/intraday.ts'
+} from '../src/lib/intraday.js'
 
 test('barDay：取分钟时间戳的日期部分', () => {
   assert.equal(barDay('2026-10-08 09:31'), '2026-10-08')

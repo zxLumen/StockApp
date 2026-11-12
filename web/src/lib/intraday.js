@@ -6,6 +6,9 @@
  * 但 lightweight-charts 是线性时间轴，做不到。这里的做法是：
  * 把每个分钟映射成连续槽位 slot（0..239），绘图用「当日 00:00 + slot 分钟」的
  * 伪时间戳，轴刻度再用 slotLabel(slot) 反算回真实墙钟，于是午休天然不占位。
+ *
+ * 刻意写成不带类型的 .js —— 这样 `node --test` 能直接 import 它跑测试
+ * （项目测试栈是纯 node --test，不带 TS/JSX transform）；类型声明见 intraday.d.ts。
  */
 
 const AM_OPEN = 9 * 60 + 30 // 09:30
@@ -17,7 +20,7 @@ const AM_MINUTES = AM_CLOSE - AM_OPEN // 120
 export const SESSION_SLOTS = AM_MINUTES + (PM_CLOSE - PM_OPEN) + 1 // 241
 
 /** "2026-10-08 09:31" → 交易日日期 "2026-10-08"；非该形态返回 ''。 */
-export function barDay(time: string): string {
+export function barDay(time) {
   return /^\d{4}-\d{2}-\d{2}/.test(time) ? time.slice(0, 10) : ''
 }
 
@@ -25,7 +28,7 @@ export function barDay(time: string): string {
  * 分钟时间 → 槽位。09:30 记 0、11:30 记 119；13:00 记 120、15:00 记 239。
  * 不在交易时段（午休 / 盘前盘后）返回 null。
  */
-export function sessionSlot(time: string): number | null {
+export function sessionSlot(time) {
   const m = /(\d{2}):(\d{2})/.exec(time.slice(11, 16))
   if (!m) return null
   const mins = Number(m[1]) * 60 + Number(m[2])
@@ -34,28 +37,28 @@ export function sessionSlot(time: string): number | null {
   return null
 }
 
-const hhmm = (mins: number) =>
+const hhmm = (mins) =>
   `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
 
 /** 槽位 → 真实墙钟刻度，用于自定义轴格式化。 */
-export function slotLabel(slot: number): string {
+export function slotLabel(slot) {
   const s = Math.max(0, Math.min(SESSION_SLOTS - 1, Math.round(slot)))
   return s <= AM_MINUTES ? hhmm(AM_OPEN + s) : hhmm(PM_OPEN + (s - AM_MINUTES))
 }
 
 /** 交易日 "2026-10-08" 的伪起点时间戳（秒）：按 UTC 00:00 取，仅用于内部线性排布。 */
-export function dayStartTs(day: string): number {
+export function dayStartTs(day) {
   const [y, mo, d] = day.split('-').map(Number)
   return Math.floor(Date.UTC(y, mo - 1, d, 0, 0, 0) / 1000)
 }
 
 /** 槽位 → 伪时间戳（秒）。 */
-export function slotTs(day: string, slot: number): number {
+export function slotTs(day, slot) {
   return dayStartTs(day) + slot * 60
 }
 
 /** 伪时间戳（秒）→ 槽位，供轴刻度回调使用。 */
-export function tsToSlot(day: string, ts: number): number {
+export function tsToSlot(day, ts) {
   return Math.round((ts - dayStartTs(day)) / 60)
 }
 
@@ -68,10 +71,10 @@ export function tsToSlot(day: string, ts: number): number {
  * 会让均价线被压到图底部。用 close 加权对个股/ETF 同样成立，对指数才正确。
  * 量缺失/为 0 时沿用上一根均价，开头无值则为 null。
  */
-export function avgPrices(bars: Array<{ close?: number | null; volume?: number | null }>): Array<number | null> {
+export function avgPrices(bars) {
   let cumPv = 0
   let cumVol = 0
-  let last: number | null = null
+  let last = null
   return bars.map((b) => {
     const c = Number(b.close)
     const v = Number(b.volume)
@@ -85,7 +88,7 @@ export function avgPrices(bars: Array<{ close?: number | null; volume?: number |
 }
 
 /** 取最后一个交易日的所有分钟 bar（服务端已按天过滤，这里再兜一层）。 */
-export function lastDayBars<T extends { time: string }>(bars: T[]): T[] {
+export function lastDayBars(bars) {
   const day = bars.length ? barDay(bars[bars.length - 1].time) : ''
   return day ? bars.filter((b) => barDay(b.time) === day) : bars
 }

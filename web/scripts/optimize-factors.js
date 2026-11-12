@@ -14,6 +14,7 @@ import { objectiveFilter, mapLimit } from '../lib/rank.js'
 import { computeFactors, compositeScores, DEFAULT_WEIGHTS, regimeTilt } from '../lib/factors.js'
 import { financeFactors } from '../lib/finance.js'
 import { eventScores } from '../lib/ann-factor.js'
+import { objectiveDeviationRange } from '../lib/model-config.js'
 
 const CV = process.argv.includes('--cv')
 // 公告事件回看窗口天数：`--event-window=10`（默认 5）。用于做窗口稳健性检查。
@@ -126,9 +127,9 @@ function poolAt(universe, allBars, D) {
 
 async function featuresByDay(universe, allBars, days, idxClose, idxBars) {
   const out = new Map()
-  // regime 自适应偏离上限：跌市收紧（15%）、涨市放宽（40%），让上涨市能纳入强势领涨股。
-  const DEV_LO = Number(process.env.RECOMMEND_DEV_LO) || 15
-  const DEV_HI = Number(process.env.RECOMMEND_DEV_HI) || 40
+  // regime 自适应偏离上限：跌市收紧、涨市放宽；默认读 config/model.json，
+  // `RECOMMEND_DEV_LO/HI` 仅用于调参覆盖（原实现把 15/40 写死，模型改值不会跟着变）。
+  const { lo: DEV_LO, hi: DEV_HI } = objectiveDeviationRange()
   for (const D of days) {
     const pool = poolAt(universe, allBars, D)
     const tilt = regimeTilt((idxBars || []).filter((b) => b.time <= D))

@@ -13,7 +13,12 @@ export const MODEL = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
 export const MODEL_VERSION = MODEL.version || 'unknown'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null)
-const envNum = (k) => num(process.env[k])
+const envNum = (k) => {
+  const raw = process.env[k]
+  // 空字符串按「未设置」处理：否则 Number('') === 0 会静默把参数覆盖成 0。
+  if (raw == null || String(raw).trim() === '') return null
+  return num(raw)
+}
 const pick = (envKey, val) => envNum(envKey) ?? num(val)
 
 /** 双链路 tilt 门控阈值。 */
@@ -36,6 +41,15 @@ export const factorWeights = () => {
 }
 /** 客观初筛参数。 */
 export const objectiveConfig = () => ({ ...(MODEL.objective || {}) })
+/**
+ * 客观初筛的 MA20 偏离区间（lo=跌市收紧、hi=涨市放宽）。
+ * 默认取 config/model.json 的 `objective.maxDeviation` / `objective.devHi`；
+ * `RECOMMEND_DEV_LO` / `RECOMMEND_DEV_HI` 仅用于调参/回测覆盖。
+ */
+export const objectiveDeviationRange = () => ({
+  lo: pick('RECOMMEND_DEV_LO', MODEL.objective?.maxDeviation),
+  hi: pick('RECOMMEND_DEV_HI', MODEL.objective?.devHi),
+})
 /** 选股 / 池子参数。 */
 export const selectConfig = () => ({ ...(MODEL.select || {}) })
 /** 公告事件因子回看窗口（**交易日**个数，见 lib/ann-factor.js）。 */

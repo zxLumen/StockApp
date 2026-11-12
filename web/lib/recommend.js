@@ -13,7 +13,7 @@ import { aSharePool, objectiveFilter, mapLimit, monthChangeFromBars, ma20Deviati
 import { computeFactors, compositeScores, regimeTiltDetail, isTiltDataIssue } from './factors.js'
 import { financeFactors } from './finance.js'
 import { cachedKline } from './kline-cache.js'
-import { tiltThreshold, selectConfig } from './model-config.js'
+import { tiltThreshold, selectConfig, objectiveDeviationRange } from './model-config.js'
 import { nextTradingDay, addTradingDays, isTradingDay, tradingLag, STALE_CLOSED_DAYS } from './trading-days.js'
 
 export { nextTradingDay }
@@ -687,10 +687,10 @@ export async function runRecommendDaily({
   }
 
   // ① 客观初筛：只用方向中性的规则把 500 压到 objTarget（默认 200），方向交给模型。
-  // regime 自适应偏离上限：跌市收紧（15%，避追高）、涨市放宽（40%，纳入强势领涨股）。
-  // 与 optimize-factors 的 DEV_LO/DEV_HI 保持一致（先验，经 2026 检验）。
-  const devHi = Number(process.env.RECOMMEND_DEV_HI) || OBJECTIVE.devHi
-  const maxDeviation = OBJECTIVE.maxDeviation + tilt * (devHi - OBJECTIVE.maxDeviation)
+  // regime 自适应偏离上限：跌市收紧、涨市放宽。lo/hi 与 optimize-factors 共用
+  // `objectiveDeviationRange()`（默认 config/model.json，env 仅调参覆盖）。
+  const { lo: devLo, hi: devHi } = objectiveDeviationRange()
+  const maxDeviation = devLo + tilt * (devHi - devLo)
   const filtered = await objectiveFilter(pool, {
     target: objTarget,
     onLog,
