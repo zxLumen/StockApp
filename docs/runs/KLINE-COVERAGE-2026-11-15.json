@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-15T00:31:26.367Z",
+  "generatedAt": "2026-11-15T00:53:07.343Z",
   "cacheDir": "/home/ubuntu/Projects/StockApp/web/data/kline-cache",
   "target": {
     "start": "2024-01-02",
@@ -10,12 +10,12 @@
   "tradingDays2024": 242,
   "summary": {
     "universe": 1888,
-    "universePass": 1626,
-    "universePassPct": 86.12,
-    "universeCovered": 1785,
-    "eligibleBefore2024": 1785,
-    "eligibleCovered": 1785,
-    "eligibleFullTradingDays": 1724,
+    "universePass": 1628,
+    "universePassPct": 86.23,
+    "universeCovered": 1786,
+    "eligibleBefore2024": 1786,
+    "eligibleCovered": 1786,
+    "eligibleFullTradingDays": 1725,
     "post2024Listed": 72,
     "extra": 771,
     "total": 2659
@@ -1139,6 +1139,21 @@
       "gapRanges": [],
       "pass": false,
       "reason": "bars 862 < 1000（2024 已完整覆盖；历史长度受上市日/新浪 1023 上限限制）"
+    },
+    {
+      "secid": "1.601059",
+      "name": "信达证券",
+      "inUniverse": true,
+      "bars": 861,
+      "first": "2023-02-01",
+      "last": "2026-09-14",
+      "bars2024": 242,
+      "covered2024": true,
+      "fullTradingDays": true,
+      "missing2024": 0,
+      "gapRanges": [],
+      "pass": false,
+      "reason": "bars 861 < 1000（2024 已完整覆盖；历史长度受上市日/新浪 1023 上限限制）"
     },
     {
       "secid": "1.688146",
@@ -2554,57 +2569,6 @@
       ],
       "pass": false,
       "reason": "历史不足（612 根，首日 2024-05-09；上市晚/上游只给这么多）"
-    },
-    {
-      "secid": "1.600837",
-      "name": "海通证券",
-      "inUniverse": true,
-      "bars": 600,
-      "first": "2022-07-18",
-      "last": "2025-02-05",
-      "bars2024": 225,
-      "covered2024": true,
-      "fullTradingDays": false,
-      "missing2024": 17,
-      "gapRanges": [
-        "2024-09-06~2024-10-09"
-      ],
-      "pass": false,
-      "reason": "2024 内缺 17 个交易日（2024-09-06~2024-10-09；停牌/上游缺口）"
-    },
-    {
-      "secid": "1.601059",
-      "name": "信达证券",
-      "inUniverse": true,
-      "bars": 600,
-      "first": "2024-02-28",
-      "last": "2026-09-14",
-      "bars2024": 207,
-      "covered2024": false,
-      "fullTradingDays": false,
-      "missing2024": 35,
-      "gapRanges": [
-        "2024-01-02~2024-02-27"
-      ],
-      "pass": false,
-      "reason": "仅 600 根（首日 2024-02-28；旧 limit=600 或上市晚，未达 1000）"
-    },
-    {
-      "secid": "1.601989",
-      "name": "中国重工",
-      "inUniverse": true,
-      "bars": 600,
-      "first": "2023-02-09",
-      "last": "2025-08-12",
-      "bars2024": 232,
-      "covered2024": true,
-      "fullTradingDays": false,
-      "missing2024": 10,
-      "gapRanges": [
-        "2024-09-03~2024-09-18"
-      ],
-      "pass": false,
-      "reason": "2024 内缺 10 个交易日（2024-09-03~2024-09-18；停牌/上游缺口）"
     },
     {
       "secid": "0.301392",
@@ -20274,8 +20238,8 @@
       "secid": "1.600837",
       "name": "海通证券",
       "inUniverse": true,
-      "bars": 600,
-      "first": "2022-07-18",
+      "bars": 1023,
+      "first": "2020-10-21",
       "last": "2025-02-05",
       "bars2024": 225,
       "covered2024": true,
@@ -20284,7 +20248,7 @@
       "gapRanges": [
         "2024-09-06~2024-10-09"
       ],
-      "pass": false,
+      "pass": true,
       "reason": "2024 内缺 17 个交易日（2024-09-06~2024-10-09；停牌/上游缺口）"
     },
     {
@@ -20728,18 +20692,16 @@
       "secid": "1.601059",
       "name": "信达证券",
       "inUniverse": true,
-      "bars": 600,
-      "first": "2024-02-28",
+      "bars": 861,
+      "first": "2023-02-01",
       "last": "2026-09-14",
-      "bars2024": 207,
-      "covered2024": false,
-      "fullTradingDays": false,
-      "missing2024": 35,
-      "gapRanges": [
-        "2024-01-02~2024-02-27"
-      ],
+      "bars2024": 242,
+      "covered2024": true,
+      "fullTradingDays": true,
+      "missing2024": 0,
+      "gapRanges": [],
       "pass": false,
-      "reason": "仅 600 根（首日 2024-02-28；旧 limit=600 或上市晚，未达 1000）"
+      "reason": "bars 861 < 1000（2024 已完整覆盖；历史长度受上市日/新浪 1023 上限限制）"
     },
     {
       "secid": "1.601066",
@@ -22069,8 +22031,8 @@
       "secid": "1.601989",
       "name": "中国重工",
       "inUniverse": true,
-      "bars": 600,
-      "first": "2023-02-09",
+      "bars": 1023,
+      "first": "2021-05-13",
       "last": "2025-08-12",
       "bars2024": 232,
       "covered2024": true,
@@ -22079,7 +22041,7 @@
       "gapRanges": [
         "2024-09-03~2024-09-18"
       ],
-      "pass": false,
+      "pass": true,
       "reason": "2024 内缺 10 个交易日（2024-09-03~2024-09-18；停牌/上游缺口）"
     },
     {

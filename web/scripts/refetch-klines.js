@@ -25,6 +25,14 @@ const FORCE = has('--force')
 const DRY = has('--dry-run')
 const NEED_EARLY = '2024-03-01'
 const SLEEP = opt('--sleep', 90) || 90
+const RETRY = opt('--retry', 2)
+// 定向重抓：只处理指定 secid（逗号分隔）。用于修补「首日 ≤ NEED_EARLY 但仍是旧 600 根」的漏网票。
+const ONLY = (() => {
+  const i = argv.indexOf('--secid')
+  const v = i >= 0 ? argv[i + 1] : ''
+  const set = new Set(String(v || '').split(',').map((s) => s.trim()).filter(Boolean))
+  return set.size ? set : null
+})()
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const dir = path.join(DATA_DIR, 'kline-cache')
@@ -42,29 +50,46 @@ const earliestOf = async (secid) => {
 
 let todo = []
 for (const secid of secids) {
+  if (ONLY) {
+    if (ONLY.has(secid)) todo.push(secid)
+    continue
+  }
   const e = await earliestOf(secid)
   if (FORCE || e == null || e > NEED_EARLY) todo.push(secid)
 }
 
-console.log(`[refetch] 宇宙并集 ${secids.size} 只，需要重抓 ${todo.length} 只（目标最早 ≤ ${NEED_EARLY}，limit=${LIMIT}）`)
+console.log(
+  `[refetch] 宇宙并集 ${secids.size} 只，需要重抓 ${todo.length} 只（目标最早 ≤ ${NEED_EARLY}，limit=${LIMIT}${ONLY ? `，定向 ${ONLY.size} 只` : ''}）`,
+)
 if (DRY) process.exit(0)
 
 let ok = 0
 let fail = 0
+const failed = []
 for (const [i, secid] of todo.entries()) {
-  try {
-    const k = await sinaKline(secid, { period: 'd', limit: LIMIT })
-    if (k?.bars?.length) {
-      await writeJson(path.join(dir, `${secid}.json`), k)
-      ok += 1
-    } else {
-      fail += 1
+  let done = false
+  let lastErr = null
+  for (let attempt = 0; attempt <= RETRY && !done; attempt += 1) {
+    try {
+      const k = await sinaKline(secid, { period: 'd', limit: LIMIT })
+      if (k?.bars?.length) {
+        await writeJson(path.join(dir, `${secid}.json`), k)
+        ok += 1
+        done = true
+      } else {
+        lastErr = new Error('上游无 bars')
+      }
+    } catch (e) {
+      lastErr = e
     }
-  } catch (e) {
+    if (!done && attempt < RETRY) await sleep(Math.max(SLEEP, 500))
+  }
+  if (!done) {
     fail += 1
-    if (fail <= 20) console.warn(`  ${secid} 失败: ${e instanceof Error ? e.message : e}`)
+    failed.push(secid)
+    if (fail <= 20) console.warn(`  ${secid} 失败: ${lastErr instanceof Error ? lastErr.message : lastErr}`)
   }
   if ((i + 1) % 100 === 0) console.log(`  进度 ${i + 1}/${todo.length}（ok ${ok} / fail ${fail}）`)
   await sleep(SLEEP)
 }
-console.log(`[refetch] 完成：ok ${ok} / fail ${fail}`)
+console.log(`[refetch] 完成：ok ${ok} / fail ${fail}${failed.length ? `；失败清单 ${failed.join(',')}` : ''}`)
