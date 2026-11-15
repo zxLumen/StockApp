@@ -1,0 +1,187 @@
+{
+  "generatedAt": "2026-11-15T00:27:54.495Z",
+  "compared": 20460,
+  "mismatch": 0,
+  "rows": [
+    {
+      "secid": "0.000001",
+      "name": "平安银行",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.000963",
+      "name": "华东医药",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.002281",
+      "name": "光迅科技",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.002669",
+      "name": "康达新材",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.300054",
+      "name": "鼎龙股份",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.300255",
+      "name": "常山药业",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.300454",
+      "name": "深信服",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.300629",
+      "name": "新劲刚",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.300790",
+      "name": "宇瞳光学",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "0.301021",
+      "name": "英诺激光",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.600011",
+      "name": "华能国际",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.600392",
+      "name": "盛和资源",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.600900",
+      "name": "长江电力",
+      "bars": 1023,
+      "first": "2022-08-22",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.601816",
+      "name": "京沪高铁",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.603659",
+      "name": "璞泰来",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.688050",
+      "name": "爱博医疗",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.688159",
+      "name": "有方科技",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.688259",
+      "name": "创耀科技",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.688366",
+      "name": "昊海生科",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    },
+    {
+      "secid": "1.688589",
+      "name": "力合微",
+      "bars": 1023,
+      "first": "2022-08-23",
+      "last": "2026-11-13",
+      "mismatch": 0,
+      "samples": []
+    }
+  ]
+}
