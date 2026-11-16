@@ -40,6 +40,9 @@ const secids = new Set()
 for (const f of ['universe-stable.json', 'universe-amount-10.json']) {
   for (const x of await readJson(path.join(dir, f), [])) if (x?.secid) secids.add(x.secid)
 }
+// 基准指数必须一起补：它是「超额收益」的分母，漏掉它会让 2024 上半年全部算不出超额
+// （optimize-factors 用 1.000300 做基准，缺 2024-01~05 会让这几个月静默变 NA）。
+secids.add('1.000300')
 
 const earliestOf = async (secid) => {
   const j = await readJson(path.join(dir, `${secid}.json`), null)

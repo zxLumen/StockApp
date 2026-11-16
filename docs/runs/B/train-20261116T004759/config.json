@@ -1,0 +1,29 @@
+{
+  "scheme": "B-only",
+  "stage": "train",
+  "version": "2024-train-20261116",
+  "trainWindow": "2024-01-01 ~ 2024-12-31",
+  "valWindow": "2025-01-01 ~ 2025-12-31",
+  "testWindow": "2026 未触碰（脚本硬护栏拒绝 >=2026 年份；日K 载入即截断到 2025-12-31）",
+  "universe": "data/kline-cache/universe-stable.json（1451 只，稳健池）",
+  "benchmark": "1.000300（沪深300；本次补抓到 1023 根，起点 2022-08-23）",
+  "grid": {
+    "preset": "narrow",
+    "size": 45,
+    "params": {
+      "reversal": 0.2,
+      "q": 0.3,
+      "event": 0.3,
+      "upShadow": [0, 0.2, 0.4],
+      "midRev": [0.1, 0.2, 0.3, 0.35, 0.4],
+      "turnStd": [0, 0.3, 0.5],
+      "tiltMode": true
+    }
+  },
+  "selection": "仅用训练集（2024）逐月 T+10 超额的最差月最大化；验证集只读不选",
+  "labelCap": "结算日 <= 决策日所在年份 12-31（训练不借 2025、验证不碰 2026）",
+  "command": "cd web && node scripts/optimize-factors.js --train 2024 --val 2025 --narrow",
+  "freezeCommand": "node scripts/freeze-model.js --scheme B --stage train --version 2024-train-20261116 --weights '{\"reversal\":0.2,\"upShadow\":0.4,\"midRev\":0.35,\"q\":0.3,\"event\":0.3,\"turnStd\":0.5}' --thr 0.6",
+  "thr": 0.6,
+  "thrNote": "thr 不在本轮 narrow 网格内搜索，沿用生产值 0.6（B 退役护栏下限，未改动）"
+}

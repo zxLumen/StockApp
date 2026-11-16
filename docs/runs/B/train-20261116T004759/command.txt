@@ -1,0 +1,1 @@
+/home/ubuntu/Projects/StockApp/web/scripts/freeze-model.js --scheme B --stage train --version 2024-train-20261116 --weights {"reversal":0.2,"upShadow":0.4,"midRev":0.35,"q":0.3,"event":0.3,"turnStd":0.5} --thr 0.6

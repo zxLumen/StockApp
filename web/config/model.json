@@ -1,6 +1,6 @@
 {
   "_note": "推荐系统的可训练参数（『模型』）。由训练流水线产出；此处为引导值（等同旧代码常量）。改这里即可改策略，不必改代码。",
-  "version": "b-2024-train-abs+cap3",
+  "version": "2024-train-20261116",
   "dualChain": {
     "thr": 0.6
   },
@@ -12,8 +12,8 @@
     "eventWindowDays": 5,
     "weights": {
       "reversal": 0.2,
-      "midRev": 0.4,
-      "upShadow": 0,
+      "midRev": 0.35,
+      "upShadow": 0.4,
       "q": 0.3,
       "ep": 0,
       "event": 0.3,

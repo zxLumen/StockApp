@@ -1,0 +1,59 @@
+{
+  "trainYear": "2024",
+  "valYear": "2025",
+  "grid": 45,
+  "selection": "train-only (min monthly T+10 excess in train months)",
+  "chosen": {
+    "tag": "rv0.2 mr0.35 sh0.4 lv0 q0.3 ep0 ev0.3 ts0.5 lt0",
+    "weights": {
+      "reversal": 0.2,
+      "upShadow": 0.4,
+      "midRev": 0.35,
+      "q": 0.3,
+      "event": 0.3,
+      "turnStd": 0.5
+    }
+  },
+  "stats": {
+    "T+5": {
+      "trainMean": -0.13178173265437776,
+      "trainWorstMonth": -1.6182984314651967,
+      "valMean": 0.1887585832681501,
+      "valWorstMonth": -1.390728849440384,
+      "trainPooled": -0.16440151845871648,
+      "valPooled": 0.1531777655848486,
+      "trainSamples": 2370,
+      "valSamples": 2377
+    },
+    "T+10": {
+      "trainMean": 0.030436096645091965,
+      "trainWorstMonth": -2.9060765675859197,
+      "valMean": 0.13687976750849593,
+      "valWorstMonth": -1.7870071190803745,
+      "trainPooled": -0.047659438381763376,
+      "valPooled": 0.09270000965905395,
+      "trainSamples": 2320,
+      "valSamples": 2327
+    },
+    "T+20": {
+      "trainMean": 0.06035268097841188,
+      "trainWorstMonth": -5.000929156400402,
+      "valMean": 0.20044675499977224,
+      "valWorstMonth": -3.565668083129391,
+      "trainPooled": 0.023212783595298346,
+      "valPooled": 0.14885838191422363,
+      "trainSamples": 2220,
+      "valSamples": 2228
+    }
+  },
+  "pearson": {
+    "T+5": 0.27792586119042195,
+    "T+10": 0.013805149097709572,
+    "T+20": -0.11575065523650598
+  },
+  "access": {
+    "max": "2025-12-31",
+    "cappedSells": 15750
+  },
+  "valEnd": "2025-12-31"
+}

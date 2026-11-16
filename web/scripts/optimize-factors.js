@@ -42,6 +42,22 @@ const TRAIN_RANGES = monthsOf(TRAIN_YEAR)
 const VAL_RANGES = monthsOf(VAL_YEAR)
 // 一次评估同时覆盖训练月与验证月；TRAIN/HOLD_KEYS 用于分组报告。
 const RANGES = [...TRAIN_RANGES, ...VAL_RANGES]
+// ── 测试集红线（硬护栏）────────────────────────────────────────────────
+// 本脚本只允许「2024 训练 / 2025 验证」。任何 >= 2026 的调用直接拒绝运行；
+// 日K 在载入时截断到验证年年底，所以 2026 的**一根 bar 都进不了计算**。
+// 结算标签另按「决策日所在年份年底」封口：训练标签不跨到验证年、验证标签不跨到 2026。
+for (const y of [TRAIN_YEAR, VAL_YEAR]) {
+  if (!/^\d{4}$/.test(y) || Number(y) >= 2026) {
+    throw new Error(`[opt] 拒绝运行：window year ${y} 触及测试集（2026 红线）`)
+  }
+}
+const VAL_END = `${VAL_YEAR}-12-31`
+const LABEL_CAP = (d) => `${String(d).slice(0, 4)}-12-31`
+/** 访问审计：实际被计算消费的最大日期 / 因封口被跳过的结算样本数。 */
+const ACCESS = { max: '', cappedSells: 0 }
+const noteAccess = (t) => {
+  if (t && t > ACCESS.max) ACCESS.max = t
+}
 const TRAIN_KEYS = TRAIN_RANGES.map((r) => r.key)
 const HOLD_KEYS = VAL_RANGES.map((r) => r.key)
 const INDEX = '1.000300'
@@ -176,6 +192,7 @@ function metrics(days, featsByDay, allBars, idxBars, weights) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, FINAL)
     const idxBase = closeAt(idxBars, D)
+    noteAccess(D)
     for (const [c] of ranked) {
       const bars = allBars.get(c.secid)
       const base = closeAt(bars, D)
@@ -183,6 +200,12 @@ function metrics(days, featsByDay, allBars, idxBars, weights) {
       for (const n of HORIZONS) {
         const b = barAfter(bars, D, n)
         if (!b?.close) continue
+        // 红线：结算日不得越过决策日所在年份年底（训练不借验证年、验证不碰 2026）。
+        if (b.time > LABEL_CAP(D)) {
+          ACCESS.cappedSells += 1
+          continue
+        }
+        noteAccess(b.time)
         const r = (b.close / base - 1) * 100
         rets.get(n).push(r)
         const idxSell = closeAt(idxBars, b.time)
@@ -192,7 +215,8 @@ function metrics(days, featsByDay, allBars, idxBars, weights) {
   }
   const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN)
   const win = (a) => (a.length ? a.filter((x) => x > 0).length / a.length : NaN)
-  return { avg, win, rets, excs }
+  const nOf = Object.fromEntries(HORIZONS.map((n) => [n, rets.get(n).length]))
+  return { avg, win, rets, excs, n: nOf }
 }
 
 async function main() {
@@ -200,10 +224,11 @@ async function main() {
   const universe = await loadUniverse()
   const pairs = await mapLimit(universe, 12, async (s) => {
     const k = await cachedKline(s.secid).catch(() => null)
-    return [s.secid, k?.bars || []]
+    // 红线：载入即截断到验证年年底，2026 的 bar 一根都不参与后续计算。
+    return [s.secid, (k?.bars || []).filter((b) => b.time <= VAL_END)]
   })
   const allBars = new Map(pairs.filter(([, b]) => b.length))
-  const idxBars = (await cachedKline(INDEX).catch(() => null))?.bars || []
+  const idxBars = ((await cachedKline(INDEX).catch(() => null))?.bars || []).filter((b) => b.time <= VAL_END)
   const idxClose = new Map(idxBars.map((b) => [b.time, b.close]))
   const union = [...new Set([...allBars.values()].flatMap((bars) => bars.map((b) => b.time)))].sort()
 
@@ -378,6 +403,7 @@ async function main() {
         ex: Object.fromEntries(HORIZONS.map((n) => [n, m.avg(m.excs.get(n))])),
         ab: Object.fromEntries(HORIZONS.map((n) => [n, m.avg(m.rets.get(n))])),
         win: Object.fromEntries(HORIZONS.map((n) => [n, m.win(m.rets.get(n)) * 100])),
+        n: m.n,
       }
     }
     const ex10 = RANGES.map((r) => per[r.key].ex[10])
@@ -441,6 +467,91 @@ async function main() {
   )
   console.log(`  训练最差月 vs 验证均 的相关系数：${Number.isFinite(corr) ? corr.toFixed(3) : 'NA'}` +
     `（越接近 0 越说明「按训练集最差月选优」不可信；负值意味着越优化越糟）`)
+
+  // ── 完整分列报告：训练集选优 → 验证集结果（唯一诚实口径）─────────────
+  // 月等权均值沿用既有口径；池化均值按样本数加权，仅作辅助（末月 T+20 受标签封口影响）。
+  const n2 = (x) => (Number.isFinite(x) ? x.toFixed(2) : 'NA')
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
+  const worst = (xs) => (xs.length ? Math.min(...xs) : NaN)
+  const monthly = (r, keys, h) => keys.map((k) => r.per[k].ex[h]).filter(Number.isFinite)
+  const pooled = (r, keys, h) => {
+    let s = 0
+    let n = 0
+    for (const k of keys) {
+      const v = r.per[k].ex[h]
+      const c = r.per[k].n?.[h] || 0
+      if (Number.isFinite(v) && c) {
+        s += v * c
+        n += c
+      }
+    }
+    return n ? s / n : NaN
+  }
+  const stat = {}
+  console.log(`\n=== 训练集(${TRAIN_YEAR})选优 → 验证集(${VAL_YEAR})分列（T+5/T+10/T+20，超额 %，月等权）===`)
+  for (const h of HORIZONS) {
+    const tr = monthly(best, TRAIN_KEYS, h)
+    const ho = monthly(best, HOLD_KEYS, h)
+    stat[`T+${h}`] = {
+      trainMean: mean(tr),
+      trainWorstMonth: worst(tr),
+      valMean: mean(ho),
+      valWorstMonth: worst(ho),
+      trainPooled: pooled(best, TRAIN_KEYS, h),
+      valPooled: pooled(best, HOLD_KEYS, h),
+      trainSamples: TRAIN_KEYS.reduce((s, k) => s + (best.per[k].n?.[h] || 0), 0),
+      valSamples: HOLD_KEYS.reduce((s, k) => s + (best.per[k].n?.[h] || 0), 0),
+    }
+    const s = stat[`T+${h}`]
+    console.log(
+      `  T+${h}: 训练均 ${n2(s.trainMean)}（最差月 ${n2(s.trainWorstMonth)}，n=${s.trainSamples}）` +
+        ` | 验证均 ${n2(s.valMean)}（最差月 ${n2(s.valWorstMonth)}，n=${s.valSamples}）` +
+        ` | 池化 训 ${n2(s.trainPooled)} / 验 ${n2(s.valPooled)}`,
+    )
+    console.log(`    训练逐月 ${TRAIN_KEYS.map((k) => `${k.slice(5)}:${n2(best.per[k].ex[h])}`).join(' ')}`)
+    console.log(`    验证逐月 ${HOLD_KEYS.map((k) => `${k.slice(5)}:${n2(best.per[k].ex[h])}`).join(' ')}`)
+    console.log(`    样本数   训练 ${TRAIN_KEYS.map((k) => `${k.slice(5)}:${best.per[k].n?.[h] || 0}`).join(' ')}`)
+    console.log(`             验证 ${HOLD_KEYS.map((k) => `${k.slice(5)}:${best.per[k].n?.[h] || 0}`).join(' ')}`)
+  }
+  const cors = {}
+  console.log('  训练-验证 pearson（同一批配置，训练均 vs 验证均）：')
+  for (const h of HORIZONS) {
+    const c = pearson(
+      results.map((r) => avgOf(r, TRAIN_KEYS, h)),
+      results.map((r) => avgOf(r, HOLD_KEYS, h)),
+    )
+    cors[`T+${h}`] = Number.isFinite(c) ? c : null
+    console.log(`    T+${h}: ${Number.isFinite(c) ? c.toFixed(3) : 'NA'}`)
+  }
+  // 红线自检：凡本次计算消费过的日期都必须在验证年年底之前。
+  if (ACCESS.max > VAL_END) throw new Error(`[opt] 越界访问 ${ACCESS.max} > ${VAL_END}（测试集红线）`)
+  console.log(
+    `\n[audit] 2026 访问 0 次；计算消费的最大日期 ${ACCESS.max}；` +
+      `因标签封口跳过的结算样本 ${ACCESS.cappedSells}；载入即截断至 ${VAL_END}`,
+  )
+
+  const freezeW = Object.fromEntries(
+    Object.entries(best.w).filter(([k]) => k !== 'tiltMode' && k !== 'tiltGain'),
+  )
+  console.log('\n===RESULT_JSON_BEGIN===')
+  console.log(
+    JSON.stringify(
+      {
+        trainYear: TRAIN_YEAR,
+        valYear: VAL_YEAR,
+        grid: results.length,
+        selection: 'train-only (min monthly T+10 excess in train months)',
+        chosen: { tag: tagOf(best.w), weights: freezeW },
+        stats: stat,
+        pearson: cors,
+        access: ACCESS,
+        valEnd: VAL_END,
+      },
+      null,
+      2,
+    ),
+  )
+  console.log('===RESULT_JSON_END===')
 
   // 单参数检验：**固定生产权重**，只改 event 权重。相比全网格搜索（相关 -0.217、CV 更差），
   // 只动一个参数过拟合面小得多，是判断「事件因子本身有没有增量」的干净口径。
