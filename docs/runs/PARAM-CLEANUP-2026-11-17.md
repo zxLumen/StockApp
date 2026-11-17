@@ -37,4 +37,7 @@ npm run typecheck
 
 ## 部署
 
-待 push 后补：CI run / 镜像 digest / stock.zxlumen.cn 200。
+- push `ec0e5de` → CI run `43987810336`，docker / deploy 双 job 全绿（47s / 39s）
+- 镜像 digest：`sha256:e3535ff74a4175bf138d940f3dc5db0bc9099eb3cf3dc886612e6d799774e35b`
+- 部署前自动回滚点：`ghcr.io/zxlumen/stock-web:rollback-20261117-082856`（sha256 `7e50fcc8…`）
+- 线上：`https://stock.zxlumen.cn/` 200（0.22s）、`/api/status` 200、`manifest.webmanifest` 仍为 `application/manifest+json`
