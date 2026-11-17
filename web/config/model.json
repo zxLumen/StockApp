@@ -43,6 +43,7 @@
   "select": {
     "poolPages": 5,
     "topCandidates": 100,
+    "candPool": 30,
     "finalPicks": 10,
     "maxPerIndustry": 3
   }

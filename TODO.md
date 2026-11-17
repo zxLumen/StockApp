@@ -31,7 +31,7 @@
   - [x] 因子权重 `DEFAULT_WEIGHTS` → `config/model.json` `factors.weights`（`web/lib/factors.js:220`、`web/lib/model-config.js:31-41`）；当前仍是引导值，Stage 3 训练后替换
   - [x] 门控 `thr` / `regimeTilt` lo·hi → `config/model.json` `dualChain.thr` / `tilt.lo·hi`（`web/lib/model-config.js:24-30`）；B 退役另有硬下限 0.6（`web/lib/recommend.js:581-599`，策略护栏）
   - [x] `OBJECTIVE` / `RECOMMEND_DEV_HI` → `config/model.json` `objective.*`；新增 `objectiveDeviationRange()` 统一训练/打分脚本的 15/40 来源（`web/lib/model-config.js:42-52`、`web/scripts/optimize-factors.js:130-132`、`web/scripts/score-candidates.js:45-46`）
-  - [ ] `poolPages / topCandidates / finalPicks / maxPerIndustry` → `config/model.json` `select.*` 已接；残留 `runRecommendRegime` A 链 `topCandidates: 100`（`web/lib/recommend.js:947`）与 B 链 `candPool=30`（`:915` / `:953`），预计 **<2h**
+  - [x] `poolPages / topCandidates / finalPicks / maxPerIndustry` → `config/model.json` `select.*` 全部已接；2026-11-17 补 `select.candPool=30`，`runRecommendRegime` A 链改用 `SEL.topCandidates`、两处 `candPool` 改用 `SEL.candPool`（行为值保持 100/30）
   - [x] 训练脚本窗口参数化：`optimize-factors` 支持 `--train <year> --val <year>`，`RANGES/TRAIN_KEYS/HOLD_KEYS` 由年份自动展开（`web/scripts/optimize-factors.js:27-46`）
   - [x] 事件因子窗口参数化：`config/model.json` `factors.eventWindowDays`（默认 5）；改**交易日**口径（`lib/ann-factor.js` `eventWindowDays`，含其间自然日），`basisDate` 对齐前一交易日；`recommend.js` 每日自动归档当日公告
   - [x] `HIDDEN_RECOMMEND_*` 审计：保留硬编码展示窗口 `2026-03-01~09-30`（`web/lib/recommend.js:1147-1149`），纯展示隔离、不参与训练、不参数化（按 11-12 决定不动）

@@ -912,7 +912,7 @@ export async function archiveForwardChains(dataDir, { payloadA, payloadB, tilt, 
  * @param {number} [opts.finalPicks=10] B 链路候选数 / 两条的最终推荐数
  */
 export async function runRecommendRegime(opts = {}) {
-  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, candPool = 30, deps = {}, onLog = () => {} } = opts
+  const { dataDir, cfg, thr = tiltThreshold(), poolPages = SEL.poolPages, finalPicks = SEL.finalPicks, candPool = SEL.candPool, deps = {}, onLog = () => {} } = opts
 
   const basisDate = deps.basisDate || bjDate()
   const { tilt, tiltDiag } = await resolveTilt(deps, basisDate)
@@ -944,7 +944,7 @@ export async function runRecommendRegime(opts = {}) {
 
   const payloadA = await safeRun('A', {
     selectMode: 'ai',
-    topCandidates: 100,
+    topCandidates: SEL.topCandidates,
     deps: { ...deps, pool: () => aSharePool({ pages: poolPages }) },
   })
   const payloadB = await safeRun('B', {
@@ -1018,7 +1018,7 @@ export async function runRecommendRefresh(opts = {}) {
     cfg,
     thr = tiltThreshold(),
     finalPicks = SEL.finalPicks,
-    candPool = 30,
+    candPool = SEL.candPool,
     pool,
     poolA,
     deps = {},
